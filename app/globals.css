@@ -12,11 +12,9 @@
   }
 }
 
-@font-face {
-  font-family: 'Liberation Serif';
-  src: url('/fonts/LiberationSerif-Regular.ttf') format('truetype');
-  font-weight: normal;
-  font-style: normal;
+@theme {
+  --font-liberation: var(--font-liberation-serif), serif;
+  --font-noto: var(--font-noto-serif), serif;
 }
 
 @layer base {}
