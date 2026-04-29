@@ -4,220 +4,220 @@ export default function Home() {
   return (
     <>
       <div className="hidden md:block min-h-screen w-full bg-[#FDF9EF]">
-      <div className="flex w-full flex-col items-start">{/*Main*/}
-        <div className="flex px-12 pt-12 pb-24 flex-col justify-center items-center self-stretch"> {/*Hero Section */}
-          <div className="grid w-full max-w-[1400px] mx-auto gap-16 grid-rows-[600px] grid-cols-12">
-            <div className="flex flex-col items-start gap-6 row-start-1 row-span-1 col-start-1 col-span-5 justify-self-stretch self-center">{/*Text Content*/}
-              <div className="flex flex-col items-start self-stretch">
-                <p className="self-stretch text-[#5F5E5E] text-[12px]/[16px] not-italic font-normal tracking-[2.4px] uppercase">VOLUME IV • WINTER EDITION</p>
-              </div>
-              <div className="flex flex-col items-start self-stretch">
-                <h1 className="self-stretch text-[#041729] font-noto text-[96px]/[96px] not-italic font-normal tracking-[-9.6px] mb-[20px]">The Art Of</h1>
-                <h1 className="self-stretch text-[#041729] font-noto text-[96px]/[normal] not-italic font-normal">Quiet</h1>
-                <h1 className="self-stretch text-[#041729] font-noto text-[96px]/[96px] not-italic font-normal tracking-[-9.6px] mt-[-20px]">Reading</h1>
-              </div>
-              <div className="flex w-[448px] max-w-[448px] pt-[7.25px] flex-col items-start">
-                <p className="text-[#5F5E5E] text-[18px]/[29.25px] not-italic font-normal">A selection of hand-picked titles exploring the
-                  intersection of philosophy, solitude, and the modern
-                  world.</p>
-              </div>
-              <div className="flex pt-4 items-center gap-8 self-stretch">
-                <button className="flex py-5 px-10 flex-col justify-center items-center rounded-md bg-[#041729] text-[#FDF9EF] align-center text-sm not-italic font-semibold tracking-[1.4px] uppercase">EXPLORE COLLECTION</button>
-                <button className="flex pb-1 flex-col justify-center items-center border-b border-solid border-b-[#C4C6CD] text-[#041729] align-center text-sm not-italic font-semibold tracking-[1.4px] uppercase">
-                  VIEW JOURNALS
-                </button>
-              </div>
-            </div>
-            <div className="flex h-[600px] justify-center items-center row-span-1 row-start-1 col-span-7 col-start-6 self-stretch -space-x-16">{/*Book Display*/}
-              <div className="relative flex w-[240px] rotate-[-6deg] flex-col justify-center items-start aspect-[2/3] mt-[10%] opacity-80 z-0">
-                <div className="absolute inset-0 w-full h-full shadow-xl bg-transparent rounded-sm"></div>
-                <img src="/leftbook.png" className="w-full h-full rounded-sm object-cover" alt="Left book" />
-                <div className="absolute inset-0 w-full h-full bg-black/5 rounded-sm"></div>
-              </div>
-              <div className="relative flex w-[320px] h-[480px] flex-col justify-center items-start aspect-[2/3] z-10 shadow-2xl rounded-sm">
-                <img src="/mainbook.png" className="w-full h-full rounded-sm object-cover border-l border-4 border-[#041729]/20" alt="Main book" />
-                <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-black/20 via-transparent to-transparent rounded-sm"></div>
-              </div>
-              <div className="relative flex w-[240px] rotate-6 flex-col justify-center items-start aspect-[2/3] mb-[10%] opacity-80 z-0">
-                <div className="absolute inset-0 w-full h-full shadow-xl bg-transparent rounded-sm"></div>
-                <img src="/rightbook.png" className="w-full h-full rounded-sm object-cover" alt="Right book" />
-                <div className="absolute inset-0 w-full h-full bg-black/5 rounded-sm"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="flex py-32 px-12 flex-col items-start self-stretch bg-[#F7F3E9]">{/*Curated Collection Section*/}
-          <div className="flex max-w-[1400px] w-full mx-auto flex-col items-start gap-20 self-stretch">{/*Container 1  */}
-            <div className="flex justify-between items-end self-stretch">{/*Container 2 */}
-              <div className="flex flex-col gap-6 max-w-2xl">
-                <h2 className="text-[#041729] font-noto text-[48px] font-normal leading-tight">The Curator's Choice</h2>
-                <p className="text-[#5F5E5E] text-[16px] font-normal leading-relaxed">A refined selection of this month's most profound narratives, curated by our resident bibliophiles and literary critics.</p>
-              </div>
-              <div className="flex gap-4">
-                 <button className="w-12 h-12 flex justify-center items-center rounded-full border border-[#C4C6CD] hover:bg-[#041729] hover:text-[#FDF9EF] transition-colors text-[#041729]">
-                   &larr;
-                 </button>
-                 <button className="w-12 h-12 flex justify-center items-center rounded-full border border-[#C4C6CD] hover:bg-[#041729] hover:text-[#FDF9EF] transition-colors text-[#041729]">
-                   &rarr;
-                 </button>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-4 gap-6 self-stretch">
-              {/* Book Item 1 */}
-              <div className="flex flex-col gap-4">
-                <div className="w-full aspect-[2/3] bg-gray-200">
-                  <img src="/book1.png" className="w-full h-full object-cover rounded-sm" alt="Meditations on Light" />
+        <div className="flex w-full flex-col items-start">{/*Main*/}
+          <div className="flex px-12 pt-12 pb-24 flex-col justify-center items-center self-stretch"> {/*Hero Section */}
+            <div className="grid w-full max-w-[1400px] mx-auto gap-16 grid-rows-[600px] grid-cols-12">
+              <div className="flex flex-col items-start gap-6 row-start-1 row-span-1 col-start-1 col-span-5 justify-self-stretch self-center">{/*Text Content*/}
+                <div className="flex flex-col items-start self-stretch">
+                  <p className="self-stretch text-[#5F5E5E] text-[12px]/[16px] not-italic font-normal tracking-[2.4px] uppercase">VOLUME IV • WINTER EDITION</p>
                 </div>
-                <div className="flex flex-col pt-5 gap-2">
-                  <h3 className="text-[#041729] font-noto text-[20px] leading-tight">Meditations on Light</h3>
-                  <p className="text-[#5F5E5E] text-[12px] font-semibold tracking-[1.2px] uppercase">JULIANNA V. ARIS</p>
+                <div className="flex flex-col items-start self-stretch">
+                  <h1 className="self-stretch text-[#041729] font-noto text-[96px]/[96px] not-italic font-normal tracking-[-9.6px] mb-[20px]">The Art Of</h1>
+                  <h1 className="self-stretch text-[#041729] font-noto text-[96px]/[normal] not-italic font-normal">Quiet</h1>
+                  <h1 className="self-stretch text-[#041729] font-noto text-[96px]/[96px] not-italic font-normal tracking-[-9.6px] mt-[-20px]">Reading</h1>
+                </div>
+                <div className="flex w-[448px] max-w-[448px] pt-[7.25px] flex-col items-start">
+                  <p className="text-[#5F5E5E] text-[18px]/[29.25px] not-italic font-normal">A selection of hand-picked titles exploring the
+                    intersection of philosophy, solitude, and the modern
+                    world.</p>
+                </div>
+                <div className="flex pt-4 items-center gap-8 self-stretch">
+                  <a href="../library" className="flex py-5 px-10 flex-col justify-center items-center rounded-md bg-[#041729] text-[#FDF9EF] align-center text-sm not-italic font-semibold tracking-[1.4px] uppercase hover:bg-[#042904] hover:scale-110 transition-all cursor-pointer">EXPLORE COLLECTION</a>
+                  <a href="../journals" className="relative flex pb-1 flex-col justify-center items-center border-b border-solid border-b-[#C4C6CD] text-[#041729] align-center text-sm not-italic font-semibold tracking-[1.4px] uppercase hover:text-[#042904] hover:scale-110 transition-all duration-300 cursor-pointer after:content-[''] after:absolute after:bottom-[-1px] after:left-1/2 after:h-[2px] after:w-0 after:-translate-x-1/2 after:bg-[#000000] after:transition-all after:duration-300 hover:after:w-full">
+                    VIEW JOURNALS
+                  </a>
                 </div>
               </div>
-              
-              {/* Book Item 2 */}
-              <div className="flex flex-col gap-4">
-                <div className="w-full aspect-[2/3] bg-gray-200">
-                  <img src="/book2.png" className="w-full h-full object-cover rounded-sm" alt="Echoes of the Sea" />
+              <div className="flex h-[600px] justify-center items-center row-span-1 row-start-1 col-span-7 col-start-6 self-stretch -space-x-16">{/*Book Display*/}
+                <div className="relative flex w-[240px] rotate-[-6deg] flex-col justify-center items-start aspect-[2/3] mt-[10%] opacity-80 z-0">
+                  <div className="absolute inset-0 w-full h-full shadow-xl bg-transparent rounded-sm"></div>
+                  <img src="/leftbook.png" className="w-full h-full rounded-sm object-cover" alt="Left book" />
+                  <div className="absolute inset-0 w-full h-full bg-black/5 rounded-sm"></div>
                 </div>
-                <div className="flex flex-col pt-5 gap-2">
-                  <h3 className="text-[#041729] font-noto text-[20px] leading-tight">Echoes of the Sea</h3>
-                  <p className="text-[#5F5E5E] text-[12px] font-semibold tracking-[1.2px] uppercase">SAMUEL NORTH</p>
+                <div className="relative flex w-[320px] h-[480px] flex-col justify-center items-start aspect-[2/3] z-10 shadow-2xl rounded-sm">
+                  <img src="/mainbook.png" className="w-full h-full rounded-sm object-cover border-l border-4 border-[#041729]/20" alt="Main book" />
+                  <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-black/20 via-transparent to-transparent rounded-sm"></div>
                 </div>
-              </div>
-              
-              {/* Book Item 3 */}
-              <div className="flex flex-col gap-4">
-                <div className="w-full aspect-[2/3] bg-gray-200">
-                  <img src="/book3.png" className="w-full h-full object-cover rounded-sm" alt="Fragments of Time" />
-                </div>
-                <div className="flex flex-col pt-5 gap-2">
-                  <h3 className="text-[#041729] font-noto text-[20px] leading-tight">Fragments of Time</h3>
-                  <p className="text-[#5F5E5E] text-[12px] font-semibold tracking-[1.2px] uppercase">ELIAS THORNE</p>
-                </div>
-              </div>
-              
-              {/* Book Item 4 */}
-              <div className="flex flex-col gap-4">
-                <div className="w-full aspect-[2/3] bg-gray-200">
-                  <img src="/book4.png" className="w-full h-full object-cover rounded-sm" alt="The Last Inkwell" />
-                </div>
-                <div className="flex flex-col pt-5 gap-2">
-                  <h3 className="text-[#041729] font-noto text-[20px] leading-tight">The Last Inkwell</h3>
-                  <p className="text-[#5F5E5E] text-[12px] font-semibold tracking-[1.2px] uppercase">CLARA BEAUVOIR</p>
+                <div className="relative flex w-[240px] rotate-6 flex-col justify-center items-start aspect-[2/3] mb-[10%] opacity-80 z-0">
+                  <div className="absolute inset-0 w-full h-full shadow-xl bg-transparent rounded-sm"></div>
+                  <img src="/rightbook.png" className="w-full h-full rounded-sm object-cover" alt="Right book" />
+                  <div className="absolute inset-0 w-full h-full bg-black/5 rounded-sm"></div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+          <div className="flex py-32 px-12 flex-col items-start self-stretch bg-[#F7F3E9]">{/*Curated Collection Section*/}
+            <div className="flex max-w-[1400px] w-full mx-auto flex-col items-start gap-20 self-stretch">{/*Container 1  */}
+              <div className="flex justify-between items-end self-stretch">{/*Container 2 */}
+                <div className="flex flex-col gap-6 max-w-2xl">
+                  <h2 className="text-[#041729] font-noto text-[48px] font-normal leading-tight">The Curator's Choice</h2>
+                  <p className="text-[#5F5E5E] text-[16px] font-normal leading-relaxed">A refined selection of this month's most profound narratives, curated by our resident bibliophiles and literary critics.</p>
+                </div>
+                <div className="flex gap-4">
+                  <button className="w-12 h-12 flex justify-center items-center rounded-full border border-[#C4C6CD] hover:bg-[#041729] hover:text-[#FDF9EF] transition-colors text-[#041729]">
+                    &larr;
+                  </button>
+                  <button className="w-12 h-12 flex justify-center items-center rounded-full border border-[#C4C6CD] hover:bg-[#041729] hover:text-[#FDF9EF] transition-colors text-[#041729]">
+                    &rarr;
+                  </button>
+                </div>
+              </div>
 
-        {/* The Literary Journal Section */}
-        <div className="flex py-32 px-12 flex-col items-start self-stretch bg-[#FDF9EF]">
-          <div className="flex max-w-[1400px] w-full mx-auto flex-col items-start gap-24 self-stretch">
-            
-            <div className="flex flex-col gap-4">
-               <p className="text-[#5F5E5E] text-xs font-semibold tracking-[2.4px] uppercase">THE EDITORIAL ARCHIVE</p>
-               <h2 className="text-[#041729] font-noto text-[64px] font-normal tracking-[-2.56px] leading-[1]">The Literary Journal</h2>
+              <div className="grid grid-cols-4 gap-6 self-stretch">
+                {/* Book Item 1 */}
+                <div className="flex flex-col gap-4">
+                  <div className="w-full aspect-[2/3] bg-gray-200">
+                    <img src="/book1.png" className="w-full h-full object-cover rounded-sm" alt="Meditations on Light" />
+                  </div>
+                  <div className="flex flex-col pt-5 gap-2">
+                    <h3 className="text-[#041729] font-noto text-[20px] leading-tight">Meditations on Light</h3>
+                    <p className="text-[#5F5E5E] text-[12px] font-semibold tracking-[1.2px] uppercase">JULIANNA V. ARIS</p>
+                  </div>
+                </div>
+
+                {/* Book Item 2 */}
+                <div className="flex flex-col gap-4">
+                  <div className="w-full aspect-[2/3] bg-gray-200">
+                    <img src="/book2.png" className="w-full h-full object-cover rounded-sm" alt="Echoes of the Sea" />
+                  </div>
+                  <div className="flex flex-col pt-5 gap-2">
+                    <h3 className="text-[#041729] font-noto text-[20px] leading-tight">Echoes of the Sea</h3>
+                    <p className="text-[#5F5E5E] text-[12px] font-semibold tracking-[1.2px] uppercase">SAMUEL NORTH</p>
+                  </div>
+                </div>
+
+                {/* Book Item 3 */}
+                <div className="flex flex-col gap-4">
+                  <div className="w-full aspect-[2/3] bg-gray-200">
+                    <img src="/book3.png" className="w-full h-full object-cover rounded-sm" alt="Fragments of Time" />
+                  </div>
+                  <div className="flex flex-col pt-5 gap-2">
+                    <h3 className="text-[#041729] font-noto text-[20px] leading-tight">Fragments of Time</h3>
+                    <p className="text-[#5F5E5E] text-[12px] font-semibold tracking-[1.2px] uppercase">ELIAS THORNE</p>
+                  </div>
+                </div>
+
+                {/* Book Item 4 */}
+                <div className="flex flex-col gap-4">
+                  <div className="w-full aspect-[2/3] bg-gray-200">
+                    <img src="/book4.png" className="w-full h-full object-cover rounded-sm" alt="The Last Inkwell" />
+                  </div>
+                  <div className="flex flex-col pt-5 gap-2">
+                    <h3 className="text-[#041729] font-noto text-[20px] leading-tight">The Last Inkwell</h3>
+                    <p className="text-[#5F5E5E] text-[12px] font-semibold tracking-[1.2px] uppercase">CLARA BEAUVOIR</p>
+                  </div>
+                </div>
+              </div>
             </div>
-            
-            <div className="grid grid-cols-12 gap-16 self-stretch">
-               {/* Featured Article */}
-               <div className="col-span-8 flex flex-col gap-8">
-                 <div className="w-full aspect-[16/9] bg-gray-200 relative rounded-sm overflow-hidden">
+          </div>
+
+          {/* The Literary Journal Section */}
+          <div className="flex py-32 px-12 flex-col items-start self-stretch bg-[#FDF9EF]">
+            <div className="flex max-w-[1400px] w-full mx-auto flex-col items-start gap-24 self-stretch">
+
+              <div className="flex flex-col gap-4">
+                <p className="text-[#5F5E5E] text-xs font-semibold tracking-[2.4px] uppercase">THE EDITORIAL ARCHIVE</p>
+                <h2 className="text-[#041729] font-noto text-[64px] font-normal tracking-[-2.56px] leading-[1]">The Literary Journal</h2>
+              </div>
+
+              <div className="grid grid-cols-12 gap-16 self-stretch">
+                {/* Featured Article */}
+                <div className="col-span-8 flex flex-col gap-8">
+                  <div className="w-full aspect-[16/9] bg-gray-200 relative rounded-sm overflow-hidden">
                     <img src="/article_main.png" className="w-full h-full object-cover" alt="Article main" />
                     <div className="absolute inset-0 bg-black/5 mix-blend-multiply"></div>
-                 </div>
-                 <div className="flex flex-col gap-6">
+                  </div>
+                  <div className="flex flex-col gap-6">
                     <div className="flex gap-4 items-center">
-                       <span className="bg-[#041729] text-[#FDF9EF] px-3 py-1 text-[10px] font-bold tracking-[1.5px] uppercase">ESSAY</span>
-                       <span className="text-[#C4C6CD] text-[10px] font-bold tracking-[1.5px] uppercase">12 MIN READ</span>
+                      <span className="bg-[#041729] text-[#FDF9EF] px-3 py-1 text-[10px] font-bold tracking-[1.5px] uppercase">ESSAY</span>
+                      <span className="text-[#C4C6CD] text-[10px] font-bold tracking-[1.5px] uppercase">12 MIN READ</span>
                     </div>
                     <h3 className="text-[#041729] font-noto text-[48px] leading-[1.1] tracking-[-0.96px]">Why We Still Need the Physical Touch of Paper</h3>
                     <p className="text-[#5F5E5E] text-[18px] leading-[1.6] max-w-3xl">In an era of digital transience, the weight of a book and the scent of aged ink provide an anchor to reality. An exploration of tactile memory and the architecture of reading...</p>
-                    <button className="flex items-center gap-2 text-[#041729] text-sm font-semibold tracking-[1.4px] uppercase mt-4 border-b border-[#C4C6CD] w-fit pb-1 hover:border-[#041729] transition-colors">
+                    <button className="flex items-center gap-2 text-[#041729] text-sm font-semibold tracking-[1.4px] uppercase mt-4 border-b border-[#C4C6CD] w-fit pb-1 hover:border-[#041729] transition-colors relative after:content-[''] after:absolute after:bottom-[-1px] after:left-1/2 after:h-[2px] after:w-0 after:-translate-x-1/2 after:bg-[#000000] after:transition-all after:duration-300 hover:after:w-full">
                       READ ARTICLE
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12H19" stroke="#041729" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                        <path d="M12 5L19 12L12 19" stroke="#041729" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M5 12H19" stroke="#041729" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M12 5L19 12L12 19" stroke="#041729" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </button>
-                 </div>
-               </div>
-               
-               {/* Sidebar Articles */}
-               <div className="col-span-4 flex flex-col border-l border-[#e5e7eb] pl-16 gap-12">
+                  </div>
+                </div>
+
+                {/* Sidebar Articles */}
+                <div className="col-span-4 flex flex-col border-l border-[#e5e7eb] pl-16 gap-12">
                   {/* Small Article 1 */}
                   <div className="flex gap-6 items-start">
-                     <div className="w-24 h-24 bg-[#F1EEE4] rounded-sm shrink-0 overflow-hidden">
-                       <img src="/article1.png" className="w-full h-full object-cover opacity-90 mix-blend-multiply" alt="Article 1" />
-                     </div>
-                     <div className="flex flex-col gap-3">
-                        <h4 className="text-[#041729] font-noto text-[20px] leading-tight">The Forgotten Marginalia of 19th Century Poets</h4>
-                        <p className="text-[#C4C6CD] text-[10px] font-bold tracking-[1.5px] uppercase">EDITORIAL</p>
-                     </div>
+                    <div className="w-24 h-24 bg-[#F1EEE4] rounded-sm shrink-0 overflow-hidden">
+                      <img src="/article1.png" className="w-full h-full object-cover opacity-90 mix-blend-multiply" alt="Article 1" />
+                    </div>
+                    <div className="flex flex-col gap-3">
+                      <h4 className="text-[#041729] font-noto text-[20px] leading-tight">The Forgotten Marginalia of 19th Century Poets</h4>
+                      <p className="text-[#C4C6CD] text-[10px] font-bold tracking-[1.5px] uppercase">EDITORIAL</p>
+                    </div>
                   </div>
-                  
+
                   {/* Small Article 2 */}
                   <div className="flex gap-6 items-start">
-                     <div className="w-24 h-24 bg-[#F1EEE4] rounded-sm shrink-0 overflow-hidden">
-                       <img src="/article2.png" className="w-full h-full object-cover opacity-90 mix-blend-multiply" alt="Article 2" />
-                     </div>
-                     <div className="flex flex-col gap-3">
-                        <h4 className="text-[#041729] font-noto text-[20px] leading-tight">Morning Rituals: The Sanctuary of Early Reading</h4>
-                        <p className="text-[#C4C6CD] text-[10px] font-bold tracking-[1.5px] uppercase">PERSPECTIVE</p>
-                     </div>
+                    <div className="w-24 h-24 bg-[#F1EEE4] rounded-sm shrink-0 overflow-hidden">
+                      <img src="/article2.png" className="w-full h-full object-cover opacity-90 mix-blend-multiply" alt="Article 2" />
+                    </div>
+                    <div className="flex flex-col gap-3">
+                      <h4 className="text-[#041729] font-noto text-[20px] leading-tight">Morning Rituals: The Sanctuary of Early Reading</h4>
+                      <p className="text-[#C4C6CD] text-[10px] font-bold tracking-[1.5px] uppercase">PERSPECTIVE</p>
+                    </div>
                   </div>
-                  
+
                   {/* Small Article 3 */}
                   <div className="flex gap-6 items-start">
-                     <div className="w-24 h-24 bg-[#F1EEE4] rounded-sm shrink-0 overflow-hidden">
-                       <img src="/article3.png" className="w-full h-full object-cover opacity-90 mix-blend-multiply" alt="Article 3" />
-                     </div>
-                     <div className="flex flex-col gap-3">
-                        <h4 className="text-[#041729] font-noto text-[20px] leading-tight">Finding Stillness in the Middle of the Storm</h4>
-                        <p className="text-[#C4C6CD] text-[10px] font-bold tracking-[1.5px] uppercase">REVIEW</p>
-                     </div>
+                    <div className="w-24 h-24 bg-[#F1EEE4] rounded-sm shrink-0 overflow-hidden">
+                      <img src="/article3.png" className="w-full h-full object-cover opacity-90 mix-blend-multiply" alt="Article 3" />
+                    </div>
+                    <div className="flex flex-col gap-3">
+                      <h4 className="text-[#041729] font-noto text-[20px] leading-tight">Finding Stillness in the Middle of the Storm</h4>
+                      <p className="text-[#C4C6CD] text-[10px] font-bold tracking-[1.5px] uppercase">REVIEW</p>
+                    </div>
                   </div>
-                  
+
                   <button className="w-full py-4 border border-[#041729] text-[#041729] text-sm font-semibold tracking-[1.4px] uppercase mt-auto hover:bg-[#041729] hover:text-[#FDF9EF] transition-colors">
                     ACCESS FULL ARCHIVE
                   </button>
-               </div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Newsletter Section */}
-        <div className="flex py-32 px-12 flex-col items-center justify-center self-stretch bg-[#FDF9EF]">
-           <div className="flex w-full max-w-[1400px] mx-auto border border-[#C4C6CD] rounded-xl p-24 flex-col items-center justify-center text-center gap-12 relative overflow-hidden bg-[#F7F3E9]">
+          {/* Newsletter Section */}
+          <div className="flex py-32 px-12 flex-col items-center justify-center self-stretch bg-[#FDF9EF]">
+            <div className="flex w-full max-w-[1400px] mx-auto border border-[#C4C6CD] rounded-xl p-24 flex-col items-center justify-center text-center gap-12 relative overflow-hidden bg-[#F7F3E9]">
               <div className="flex flex-col gap-6 z-10 max-w-2xl items-center">
-                 <h2 className="text-[#041729] font-noto text-[48px]">Join the Inner Circle</h2>
-                 <p className="text-[#5F5E5E] text-[16px] leading-[1.6]">Receive our monthly curation of rare finds, exclusive journals, and literary events directly in your inbox. No noise, just literature.</p>
+                <h2 className="text-[#041729] font-noto text-[48px]">Join the Inner Circle</h2>
+                <p className="text-[#5F5E5E] text-[16px] leading-[1.6]">Receive our monthly curation of rare finds, exclusive journals, and literary events directly in your inbox. No noise, just literature.</p>
               </div>
               <div className="flex w-full max-w-md z-10 border border-[#C4C6CD] bg-[#FDF9EF] rounded-sm p-1">
-                 <input type="email" placeholder="Email Address" className="flex-1 bg-transparent px-4 py-3 text-[#5F5E5E] outline-none text-sm placeholder:text-[#C4C6CD]" />
-                 <button className="bg-[#041729] text-[#FDF9EF] px-8 py-3 text-sm font-semibold tracking-[1.4px] uppercase rounded-sm hover:bg-[#041729]/90 transition-colors">SUBSCRIBE</button>
+                <input type="email" placeholder="Email Address" className="flex-1 bg-transparent px-4 py-3 text-[#5F5E5E] outline-none text-sm placeholder:text-[#C4C6CD]" />
+                <button className="bg-[#041729] text-[#FDF9EF] px-8 py-3 text-sm font-semibold tracking-[1.4px] uppercase rounded-sm hover:bg-[#041729]/90 transition-colors">SUBSCRIBE</button>
               </div>
-           </div>
-        </div>
+            </div>
+          </div>
 
-        {/* Footer */}
-        <footer className="flex py-12 px-12 flex-col items-start self-stretch bg-[#F7F3E9] border-t border-[#e5e7eb]">
-           <div className="flex w-full max-w-[1400px] mx-auto justify-between items-center">
+          {/* Footer */}
+          <footer className="flex py-12 px-12 flex-col items-start self-stretch bg-[#F7F3E9] border-t border-[#e5e7eb]">
+            <div className="flex w-full max-w-[1400px] mx-auto justify-between items-center">
               <div className="flex flex-col gap-2">
-                 <h2 className="font-noto text-[24px] text-[#041729]">The Private Library</h2>
-                 <p className="text-[#5F5E5E] text-[10px] tracking-[1.5px] uppercase mt-1">© 2024 THE PRIVATE LIBRARY. A SANCTUARY FOR THE WRITTEN WORD.</p>
+                <h2 className="font-noto text-[24px] text-[#041729]">The Private Library</h2>
+                <p className="text-[#5F5E5E] text-[10px] tracking-[1.5px] uppercase mt-1">© 2024 THE PRIVATE LIBRARY. A SANCTUARY FOR THE WRITTEN WORD.</p>
               </div>
               <div className="flex gap-8 text-[10px] font-semibold tracking-[1.5px] uppercase text-[#5F5E5E]">
-                 <a href="#" className="hover:text-[#041729] transition-colors">THE CURATOR'S NOTE</a>
-                 <a href="#" className="hover:text-[#041729] transition-colors">PRIVACY</a>
-                 <a href="#" className="hover:text-[#041729] transition-colors">TERMS OF SERVICE</a>
-                 <a href="#" className="hover:text-[#041729] transition-colors">COLOPHON</a>
+                <a href="#" className="hover:text-[#041729] transition-colors">THE CURATOR'S NOTE</a>
+                <a href="#" className="hover:text-[#041729] transition-colors">PRIVACY</a>
+                <a href="#" className="hover:text-[#041729] transition-colors">TERMS OF SERVICE</a>
+                <a href="#" className="hover:text-[#041729] transition-colors">COLOPHON</a>
               </div>
-           </div>
-        </footer>
+            </div>
+          </footer>
+        </div>
       </div>
-    </div>
 
       <div className="block md:hidden w-full bg-[#FDF9EF] pb-[96px]">
         <div className="flex w-full flex-col items-start">{/*Mobile Main*/}
@@ -230,7 +230,7 @@ export default function Home() {
               </div>
               <div className="flex flex-col z-10 gap-4">
                 <p className="text-[#FDF9EF] text-[10px] font-bold tracking-[1.5px] uppercase">FEATURED EDITORIAL</p>
-                <h2 className="text-[#FDF9EF] font-noto text-[40px] leading-[1.1] tracking-[-1px]">The Art of<br/>Quiet Reading</h2>
+                <h2 className="text-[#FDF9EF] font-noto text-[40px] leading-[1.1] tracking-[-1px]">The Art of<br />Quiet Reading</h2>
                 <p className="text-[#FDF9EF]/90 text-[14px] leading-[1.6]">In an era of endless notifications, the true luxury is a moment of uninterrupted focus.…</p>
                 <button className="bg-[#FDF9EF] text-[#041729] px-6 py-3 rounded-md text-[12px] font-semibold tracking-[1.2px] uppercase w-fit mt-2">READ ESSAY</button>
               </div>
@@ -243,7 +243,7 @@ export default function Home() {
               <h3 className="text-[#041729] font-noto text-[28px] leading-tight">Curator's Choice</h3>
               <a href="#" className="text-[#5F5E5E] text-[10px] font-bold tracking-[1.5px] uppercase pb-1">VIEW ALL</a>
             </div>
-            <div className="flex gap-4 overflow-x-auto snap-x pb-4 -mx-4 px-4" style={{scrollbarWidth: 'none', msOverflowStyle: 'none'}}>
+            <div className="flex gap-4 overflow-x-auto snap-x pb-4 -mx-4 px-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               {/* Card 1 */}
               <div className="flex flex-col gap-3 min-w-[160px] max-w-[160px] snap-start">
                 <div className="w-full aspect-[2/3] bg-gray-200 shadow-md rounded-sm border border-[#e5e7eb] overflow-hidden">
@@ -282,7 +282,7 @@ export default function Home() {
             <div className="border-b border-[#E6E2D8] pb-4">
               <h3 className="text-[#041729] font-noto text-[28px] leading-tight">The Literary Journal</h3>
             </div>
-            
+
             <div className="flex flex-col gap-8">
               {/* Article 1 */}
               <div className="flex flex-col gap-4 bg-[#FDF9EF] rounded-sm shadow-sm overflow-hidden pb-4">
@@ -296,7 +296,7 @@ export default function Home() {
                   <p className="text-[#C4C6CD] text-[10px] font-bold tracking-[1.5px] uppercase mt-2">OCT 12, 2023</p>
                 </div>
               </div>
-              
+
               {/* Article 2 */}
               <div className="flex flex-col gap-4 bg-[#FDF9EF] rounded-sm shadow-sm overflow-hidden pb-4">
                 <div className="w-full aspect-[16/9] bg-gray-200">
@@ -310,7 +310,7 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            
+
             <button className="w-full py-4 border border-[#041729] text-[#041729] text-[12px] font-semibold tracking-[1.2px] uppercase rounded-md mt-2 hover:bg-[#041729] hover:text-[#FDF9EF] transition-colors">
               BROWSE ARCHIVE
             </button>
