@@ -193,8 +193,8 @@ export default function Library() {
                     <div className="flex items-center gap-2 text-[#041729] text-sm uppercase tracking-[1.4px] font-semibold">
                         ERA:
                         <select className="bg-transparent border-none outline-none text-[#041729] text-sm uppercase tracking-[1.4px] font-semibold">
-                            <option value="enlightenment" selected disabled>ENLIGHTENMENT</option>
-                            <option value="romanticism">Romanticism</option>
+                            <option value="enlightenment">ENLIGHTENMENT</option>
+                            <option value="romanticism" >Romanticism</option>
                             <option value="victorian-era">Victorian Era</option>
                             <option value="anthology">Anthology</option>
                             <option value="archival-recovery">Archival Recovery</option>
