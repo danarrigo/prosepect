@@ -1,5 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
+import { login } from "../lib/users/actions";
+
 
 export default function LoginPage() {
   return (
@@ -32,7 +34,7 @@ export default function LoginPage() {
             {/* Asymmetric accent */}
             <div className="absolute w-24 h-24 bg-[#ECE8DE]/50 rounded-xl -right-6 -top-6" />
 
-            <form className="relative z-10 flex flex-col w-full">
+            <form className="relative z-10 flex flex-col w-full" action={login}>
               {/* Email Field */}
               <div className="flex flex-col">
                 <label htmlFor="email" className="font-noto text-sm text-[#041729] mb-2 tracking-[0.057em]">
@@ -42,6 +44,7 @@ export default function LoginPage() {
                   <input
                     type="email"
                     id="email"
+                    name="email"
                     placeholder="scholar@example.com"
                     className="w-full bg-transparent border-none outline-none font-sans text-base text-[#041729] placeholder:text-[#5F5E5E]/50"
                   />
@@ -57,6 +60,7 @@ export default function LoginPage() {
                   <input
                     type="password"
                     id="passphrase"
+                    name="password"
                     placeholder="••••••••"
                     className="w-full bg-transparent border-none outline-none font-sans text-base text-[#041729] placeholder:text-[#5F5E5E]/50"
                   />
