@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { signUp } from "../lib/users/actions"
 
 export default function SignupPage() {
   return (
@@ -37,7 +38,7 @@ export default function SignupPage() {
         {/* Registration Card */}
         <div className="w-full bg-white/80 backdrop-blur-[12px] shadow-[0px_12px_32px_0px_rgba(28,28,22,0.06)] rounded-sm p-8 sm:p-14 flex flex-col gap-10">
 
-          <form className="flex flex-col w-full gap-8">
+          <form className="flex flex-col w-full gap-8" action={signUp}>
             {/* Full Name Field */}
             <div className="flex flex-col gap-2">
               <label htmlFor="fullName" className="font-noto text-sm text-[#041729] tracking-[0.025em]">
@@ -47,6 +48,7 @@ export default function SignupPage() {
                 <input
                   type="text"
                   id="fullName"
+                  name="fullName"
                   placeholder="J. Doe"
                   className="w-full bg-transparent border-none outline-none font-sans text-base text-[#041729] placeholder:text-[#C4C6CD]"
                 />
@@ -62,6 +64,7 @@ export default function SignupPage() {
                 <input
                   type="email"
                   id="email"
+                  name="email"
                   placeholder="j.doe@example.com"
                   className="w-full bg-transparent border-none outline-none font-sans text-base text-[#041729] placeholder:text-[#C4C6CD]"
                 />
@@ -77,6 +80,7 @@ export default function SignupPage() {
                 <input
                   type="password"
                   id="passphrase"
+                  name="password"
                   placeholder="••••••••"
                   className="w-full bg-transparent border-none outline-none font-sans text-base text-[#041729] placeholder:text-[#C4C6CD]"
                 />
