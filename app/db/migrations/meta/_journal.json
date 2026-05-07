@@ -8,6 +8,13 @@
       "when": 1778035994136,
       "tag": "0000_crazy_squirrel_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778155943368,
+      "tag": "0001_awesome_jack_flag",
+      "breakpoints": true
     }
   ]
 }

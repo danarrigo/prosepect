@@ -1,0 +1,39 @@
+import { redis } from "../redis";
+import { generateOTP, createOTPHash } from "@/app/lib/utils";
+
+export async function addOTPEntry(fullName: string, email: string, password: string) {
+    const OTPVal = generateOTP();
+    const OTPHash = createOTPHash(OTPVal);
+    console.log(`[Development] Generated OTP for ${email}: ${OTPVal}`);
+    await redis.set(`signup:otp:${email}`, OTPHash);
+    await redis.set(`signup:data:${email}`, JSON.stringify({ fullName, email, password }));
+    await redis.expire(`signup:otp:${email}`, 60 * 5);
+    await redis.expire(`signup:data:${email}`, 60 * 5);
+}
+
+export async function getOTPData(email: string): Promise<{ fullName: string, email: string, password: string } | null> {
+    const result = await redis.get(`signup:data:${email}`);
+    if (result) {
+        return JSON.parse(result);
+    }
+    return null
+}
+
+export async function validateOTP(otp: string, email: string): Promise<boolean> {
+    const val = await redis.get(`signup:otp:${email}`);
+    if (!val) {
+        console.log("OTP has expired");
+        return false;
+    }
+    const hashedOTP = createOTPHash(otp);
+    if (hashedOTP != val) {
+        console.log("invalid OTP");
+        return false;
+    }
+    return true;
+}
+
+export async function deleteOTPEntry(email: string) {
+    await redis.del(`signup:otp:${email}`);
+    await redis.del(`signup:data:${email}`);
+}
