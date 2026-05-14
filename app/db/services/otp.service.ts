@@ -3,6 +3,12 @@ import { generateOTP, createOTPHash } from "@/app/lib/utils";
 import { sendOTP } from "@/app/lib/emailservices"
 
 export async function addOTPEntry(fullName: string, email: string, password: string) {
+    if (await redis.exists(`signup:otp:${email}`)) {
+        return false;
+    }
+    if (await redis.exists(`login:data:${email}`)) {
+        return false;
+    }
     const OTPVal = generateOTP();
     const OTPHash = createOTPHash(OTPVal);
     await redis.set(`signup:otp:${email}`, OTPHash);
@@ -10,6 +16,11 @@ export async function addOTPEntry(fullName: string, email: string, password: str
     await redis.expire(`signup:otp:${email}`, 60 * 5);
     await redis.expire(`signup:data:${email}`, 60 * 5);
     await sendOTP(email, OTPVal);
+    return true;
+}
+
+export async function isOTPPending(email: string): Promise<boolean> {
+    return await redis.exists(`signup:otp:${email}`) !== 0;
 }
 
 export async function getOTPData(email: string): Promise<{ fullName: string, email: string, password: string } | null> {
