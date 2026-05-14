@@ -24,9 +24,9 @@ export default function SignupPage() {
       </div>
 
       {/* Main Content */}
-      <div className="relative z-10 w-full max-w-[512px] flex flex-col items-center gap-12">
+      <div className="relative z-10 w-full max-w-[512px] flex flex-col items-center gap-8">
         {/* Header */}
-        <div className="flex flex-col items-center gap-4">
+        <div className="flex flex-col items-center gap-2">
           <h1 className="font-noto text-4xl text-[#041729] tracking-[-0.05em] text-center">
             Prosepect
           </h1>
@@ -35,16 +35,16 @@ export default function SignupPage() {
           </p>
         </div>
 
-        {/* Registration Card */}
-        <div className="w-full bg-white/80 backdrop-blur-[12px] shadow-[0px_12px_32px_0px_rgba(28,28,22,0.06)] rounded-sm p-8 sm:p-14 flex flex-col gap-10">
+        {/* Registration Card - Enhanced Glassmorphism */}
+        <div className="w-full bg-white/70 backdrop-blur-[16px] border border-white/40 shadow-[0px_24px_48px_rgba(4,23,41,0.08)] rounded-sm p-8 sm:p-10 flex flex-col gap-8 transition-all duration-500">
 
-          <form className="flex flex-col w-full gap-8" action={signUp}>
+          <form className="flex flex-col w-full gap-6" action={signUp}>
             {/* Full Name Field */}
             <div className="flex flex-col gap-2">
-              <label htmlFor="fullName" className="font-noto text-sm text-[#041729] tracking-[0.025em]">
+              <label htmlFor="fullName" className="font-noto text-sm text-[#041729] tracking-[0.025em] hover:scale-101 transition-all duration-300">
                 Full Name
               </label>
-              <div className="bg-[#ECE8DE] rounded-sm px-4 py-[13px]">
+              <div className="bg-[#ECE8DE]/80 rounded-sm px-4 py-[13px] border border-[#041729]/5 focus-within:border-[#041729]/20 transition-all">
                 <input
                   type="text"
                   id="fullName"
@@ -57,10 +57,10 @@ export default function SignupPage() {
 
             {/* Email Field */}
             <div className="flex flex-col gap-2">
-              <label htmlFor="email" className="font-noto text-sm text-[#041729] tracking-[0.025em]">
+              <label htmlFor="email" className="font-noto text-sm text-[#041729] tracking-[0.025em] hover:scale-101 transition-all duration-300">
                 Email Address
               </label>
-              <div className="bg-[#ECE8DE] rounded-sm px-4 py-[13px]">
+              <div className="bg-[#ECE8DE]/80 rounded-sm px-4 py-[13px] border border-[#041729]/5 focus-within:border-[#041729]/20 transition-all">
                 <input
                   type="email"
                   id="email"
@@ -73,10 +73,10 @@ export default function SignupPage() {
 
             {/* Passphrase Field */}
             <div className="flex flex-col gap-2">
-              <label htmlFor="passphrase" className="font-noto text-sm text-[#041729] tracking-[0.025em]">
+              <label htmlFor="passphrase" className="font-noto text-sm text-[#041729] tracking-[0.025em] hover:scale-101 transition-all duration-300">
                 Passphrase
               </label>
-              <div className="bg-[#ECE8DE] rounded-sm px-4 py-[13px]">
+              <div className="bg-[#ECE8DE]/80 rounded-sm px-4 py-[13px] border border-[#041729]/5 focus-within:border-[#041729]/20 transition-all">
                 <input
                   type="password"
                   id="passphrase"
@@ -90,7 +90,7 @@ export default function SignupPage() {
             {/* Submit Button */}
             <button
               type="submit"
-              className="flex items-center justify-center w-full rounded-sm py-4 px-6 text-[#FFFFFF] shadow-[0px_12px_32px_0px_rgba(28,28,22,0.06)] hover:opacity-90 focus:outline-none hover:scale-110 transition-all duration-300"
+              className="flex items-center justify-center w-full rounded-sm py-4 px-6 text-[#FFFFFF] shadow-[0px_12px_32px_0px_rgba(28,28,22,0.06)] hover:opacity-90 focus:outline-none hover:scale-[1.02] active:scale-[0.98] transition-all duration-300"
               style={{
                 background: "radial-gradient(circle at 50% 50%, #041729 0%, #1A2C3E 100%)"
               }}
@@ -102,7 +102,7 @@ export default function SignupPage() {
           </form>
 
           {/* Horizontal Border & Footer Link */}
-          <div className="border-t border-[#C4C6CD]/15 pt-8 w-full flex justify-center">
+          <div className="border-t border-[#041729]/10 pt-6 w-full flex justify-center">
             <Link
               href="/login"
               className="font-sans font-medium text-sm text-[#5F5E5E] hover:text-[#041729] transition-colors"
@@ -110,7 +110,6 @@ export default function SignupPage() {
               Already have a key? Enter the sanctuary.
             </Link>
           </div>
-
         </div>
       </div>
     </main>

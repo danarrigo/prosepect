@@ -21,4 +21,13 @@
 
 @layer components {}
 
-@layer utilites {}
+@layer utilities {
+  @keyframes watermark-float {
+    0%, 100% { transform: rotate(-12deg) translateY(0px) translateX(0px); }
+    50% { transform: rotate(-10deg) translateY(-30px) translateX(15px); }
+  }
+
+  .animate-watermark {
+    animation: watermark-float 25s ease-in-out infinite;
+  }
+}
