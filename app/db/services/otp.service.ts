@@ -1,14 +1,15 @@
 import { redis } from "../redis";
 import { generateOTP, createOTPHash } from "@/app/lib/utils";
+import { sendOTP } from "@/app/lib/emailservices"
 
 export async function addOTPEntry(fullName: string, email: string, password: string) {
     const OTPVal = generateOTP();
     const OTPHash = createOTPHash(OTPVal);
-    console.log(`[Development] Generated OTP for ${email}: ${OTPVal}`);
     await redis.set(`signup:otp:${email}`, OTPHash);
     await redis.set(`signup:data:${email}`, JSON.stringify({ fullName, email, password }));
     await redis.expire(`signup:otp:${email}`, 60 * 5);
     await redis.expire(`signup:data:${email}`, 60 * 5);
+    await sendOTP(email, OTPVal);
 }
 
 export async function getOTPData(email: string): Promise<{ fullName: string, email: string, password: string } | null> {
