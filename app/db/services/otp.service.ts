@@ -11,10 +11,11 @@ export async function addOTPEntry(fullName: string, email: string, password: str
     }
     const OTPVal = generateOTP();
     const OTPHash = createOTPHash(OTPVal);
-    await redis.set(`signup:otp:${email}`, OTPHash);
-    await redis.set(`signup:data:${email}`, JSON.stringify({ fullName, email, password }));
-    await redis.expire(`signup:otp:${email}`, 60 * 5);
-    await redis.expire(`signup:data:${email}`, 60 * 5);
+
+    // Combine set and expire for efficiency
+    await redis.set(`signup:otp:${email}`, OTPHash, { ex: 60 * 5 });
+    await redis.set(`signup:data:${email}`, { fullName, email, password }, { ex: 60 * 5 });
+
     await sendOTP(email, OTPVal);
     return true;
 }
@@ -24,11 +25,8 @@ export async function isOTPPending(email: string): Promise<boolean> {
 }
 
 export async function getOTPData(email: string): Promise<{ fullName: string, email: string, password: string } | null> {
-    const result = await redis.get(`signup:data:${email}`);
-    if (result) {
-        return JSON.parse(result);
-    }
-    return null
+    const result = await redis.get<{ fullName: string, email: string, password: string }>(`signup:data:${email}`);
+    return result;
 }
 
 export async function validateOTP(otp: string, email: string): Promise<boolean> {

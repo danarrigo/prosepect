@@ -11,12 +11,13 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@upstash/redis": "^1.38.0",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.3",
     "pg": "^8.20.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "redis": "^5.12.1",
     "resend": "^6.12.3"
   },
   "devDependencies": {
