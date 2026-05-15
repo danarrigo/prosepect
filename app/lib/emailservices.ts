@@ -4,7 +4,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 export async function sendOTP(email: string, otp: string) {
     const { data, error } = await resend.emails.send({
-        from: 'onboarding@resend.dev',
+        from: 'noreply@mail.prosepect.com',
         to: email,
         subject: 'OTP for Prosepect account creation',
         html: `
