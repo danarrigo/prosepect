@@ -16,7 +16,7 @@ const notoSerif = Noto_Serif({
 });
 
 const liberationSerif = localFont({
-  src: "../public/fonts/LiberationSerif-Regular.ttf",
+  src: "../../public/fonts/LiberationSerif-Regular.ttf",
   variable: "--font-liberation-serif",
 });
 
