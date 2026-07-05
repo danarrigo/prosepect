@@ -1,6 +1,12 @@
+import { auth } from "../../auth";
+import { redirect } from "next/navigation";
 
+export default async function CuratedPage() {
+  const session = await auth();
+  if (!session) {
+    redirect("/signup");
+  }
 
-export default function Home() {
   return (
     <>
       <div className="hidden md:block min-h-screen w-full bg-[#FDF9EF]">
