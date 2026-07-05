@@ -3,6 +3,8 @@
 import { addOTPEntry, getOTPData, validateOTP, deleteOTPEntry, isOTPPending } from "@/app/db/services/otp.service";
 import { createUser, getUserByEmail } from "../../db/queries/users"
 import { redirect } from "next/navigation";
+import { signIn } from "@/auth";
+import { AuthError } from "next-auth";
 
 export async function signUp(formData: FormData): Promise<void> {
     const fullName = formData.get("fullName") as string;
@@ -39,13 +41,22 @@ export async function signUpValidation(formData: FormData): Promise<void> {
 export async function login(formData: FormData): Promise<void> {
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
-    const existingUser = await getUserByEmail(email);
-    if (existingUser && existingUser.password == password) {
-        redirect("/curated");
-    } else if (!existingUser && await isOTPPending(email)) {
-        // If user doesn't exist in DB but has pending OTP, redirect to verify
-        redirect(`/verify-otp?email=${encodeURIComponent(email)}`);
-    } else {
-        throw new Error("Failed to login");
+
+    try {
+        await signIn("credentials", {
+            email,
+            password,
+            redirectTo: "/curated",
+        });
+    } catch (error) {
+        if (error instanceof AuthError) {
+            // Check if user was just waiting for OTP instead of failing login
+            if (await isOTPPending(email)) {
+                redirect(`/verify-otp?email=${encodeURIComponent(email)}`);
+            }
+            throw new Error("Failed to login: Invalid credentials");
+        }
+        // Rethrow any other errors (Next.js redirect throws an error internally)
+        throw error;
     }
 }
