@@ -3,10 +3,16 @@ import GitHub from "next-auth/providers/github"
 import Credentials from "next-auth/providers/credentials"
 import { DrizzleAdapter } from "@auth/drizzle-adapter"
 import { db } from "./app/db"
+import { users, accounts, sessions, verificationTokens } from "./app/db/schema"
 import { getUserByEmail } from "./app/db/queries/users"
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: DrizzleAdapter(db),
+  adapter: DrizzleAdapter(db, {
+    usersTable: users,
+    accountsTable: accounts,
+    sessionsTable: sessions,
+    verificationTokensTable: verificationTokens,
+  }),
   session: { strategy: "jwt" },
   providers: [
     GitHub,
