@@ -35,7 +35,13 @@ export async function signUpValidation(formData: FormData): Promise<void> {
 
     await createUser(userData.fullName, userData.email, userData.password);
     await deleteOTPEntry(email);
-    redirect("/curated");
+    
+    // Automatically log the user in now that their account is created
+    await signIn("credentials", {
+        email: userData.email,
+        password: userData.password,
+        redirectTo: "/curated",
+    });
 }
 
 export async function login(formData: FormData): Promise<void> {
