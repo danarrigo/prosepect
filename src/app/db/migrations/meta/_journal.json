@@ -15,6 +15,13 @@
       "when": 1778155943368,
       "tag": "0001_awesome_jack_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783232824749,
+      "tag": "0002_acoustic_dagger",
+      "breakpoints": true
     }
   ]
 }
