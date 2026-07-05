@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 //CREATE
 export async function createUser(fullName: string, email: string, password: string) {
     const result = await db.insert(users).values({
-        fullName,
+        name: fullName,
         email,
         password
     })
@@ -34,7 +34,7 @@ export async function getUserByEmail(email: string) {
 //UPDATE
 export async function updateUser(id: string, fullName: string, email: string, password: string) {
     const result = await db.update(users).set({
-        fullName,
+        name: fullName,
         email,
         password
     }).where(eq(users.id, id))
