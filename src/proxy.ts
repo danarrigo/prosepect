@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 const publicRoutes = ["/login", "/signup", "/verify-otp"];
 const onboardingRoute = "/onboarding";
 
-export default auth((req) => {
+export const proxy = auth((req) => {
   const { nextUrl } = req;
   const isLoggedIn = !!req.auth;
   const hasHandle = !!(req.auth?.user as any)?.handle;
