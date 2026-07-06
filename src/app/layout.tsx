@@ -28,7 +28,7 @@ export default function Layout({ children }: { children: React.ReactNode; }) {
   return (
     <html lang="en" className={`${liberationSerif.variable} ${notoSerif.variable}`}>
       <body>
-        {!["login", "signup", "verify-otp"].includes(pageNow) && (
+        {!["login", "signup", "verify-otp", "onboarding"].includes(pageNow) && (
           <div id="TopAppBar" className="flex md:hidden justify-between py-4 px-6 items-center self-stretch bg-[#FDF9EF] shadow-[0_12px_32px_0_rgba(28,28,22,0.04)]">{/*Mobile Top Nav Bar*/}
             <div className="flex h-10 py-[1px] flex-col justify-center items-start">
               <button className="flex p-2 flex-col items-start appearance-none bg-transparent border-none outline-none">
@@ -45,7 +45,7 @@ export default function Layout({ children }: { children: React.ReactNode; }) {
             </div>
           </div>
         )}
-        {!["login", "signup", "verify-otp"].includes(pageNow) && (
+        {!["login", "signup", "verify-otp", "onboarding"].includes(pageNow) && (
           <div id="TopDesktopBar" className="hidden md:flex w-full flex-col items-start bg-[#FDF9EF]">{/*Desktop Top Nav Bar*/}
             <div className="flex max-w-[1920px] py-6 px-12 justify-between items-center self-stretch">
               <div className="flex items-center gap-12">
@@ -80,7 +80,7 @@ export default function Layout({ children }: { children: React.ReactNode; }) {
           </div>
         )}
         {children}
-        {!["login", "signup", "verify-otp"].includes(pageNow) && (
+        {!["login", "signup", "verify-otp", "onboarding"].includes(pageNow) && (
           <ul className="flex w-full pt-[12px] px-[28px] pb-[24px] items-center gap-6 fixed z-50 left-0 bottom-0 justify-around bg-[rgba(253,249,239,0.90)] rounded-t-lg rounded-r-lg flex-nowrap overflow-x-auto md:hidden">{/*Mobile bottom bar*/}
             <li><a href="/curated" className={`flex px-2 py-5 flex-col justify-center items-center gap-[-1px] rounded-xl transition-all ${pageNow === "curated" ? "bg-[#E6E2D8]" : "opacity-[0.7]"}`}><span className="flex pb-1 flex-col items-start"><span className="flex flex-col items-center"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="20" viewBox="0 0 22 20" fill={pageNow === "curated" ? "#041729" : "#5F5E5E"}>
               <path d="M11 19.5C10.2 18.8667 9.33333 18.375 8.4 18.025C7.46667 17.675 6.5 17.5 5.5 17.5C4.8 17.5 4.1125 17.5917 3.4375 17.775C2.7625 17.9583 2.11667 18.2167 1.5 18.55C1.15 18.7333 0.8125 18.725 0.4875 18.525C0.1625 18.325 0 18.0333 0 17.65V5.6C0 5.41667 0.0458333 5.24167 0.1375 5.075C0.229167 4.90833 0.366667 4.78333 0.55 4.7C1.31667 4.3 2.11667 4 2.95 3.8C3.78333 3.6 4.63333 3.5 5.5 3.5C6.46667 3.5 7.4125 3.625 8.3375 3.875C9.2625 4.125 10.15 4.5 11 5V17.1C11.85 16.5667 12.7417 16.1667 13.675 15.9C14.6083 15.6333 15.55 15.5 16.5 15.5C17.1 15.5 17.6875 15.55 18.2625 15.65C18.8375 15.75 19.4167 15.9 20 16.1V4.1C20.25 4.18333 20.4958 4.27083 20.7375 4.3625C20.9792 4.45417 21.2167 4.56667 21.45 4.7C21.6333 4.78333 21.7708 4.90833 21.8625 5.075C21.9542 5.24167 22 5.41667 22 5.6V17.65C22 18.0333 21.8375 18.325 21.5125 18.525C21.1875 18.725 20.85 18.7333 20.5 18.55C19.8833 18.2167 19.2375 17.9583 18.5625 17.775C17.8875 17.5917 17.2 17.5 16.5 17.5C15.5 17.5 14.5333 17.675 13.6 18.025C12.6667 18.375 11.8 18.8667 11 19.5ZM13 14.5V5L18 0V10L13 14.5ZM9 16.125V6.225C8.45 5.99167 7.87917 5.8125 7.2875 5.6875C6.69583 5.5625 6.1 5.5 5.5 5.5C4.88333 5.5 4.28333 5.55833 3.7 5.675C3.11667 5.79167 2.55 5.96667 2 6.2V16.125C2.58333 15.9083 3.1625 15.75 3.7375 15.65C4.3125 15.55 4.9 15.5 5.5 15.5C6.1 15.5 6.6875 15.55 7.2625 15.65C7.8375 15.75 8.41667 15.9083 9 16.125ZM9 16.125V6.225V16.125Z" fill={pageNow === "curated" ? "#041729" : "#5F5E5E"} />
@@ -96,7 +96,7 @@ export default function Layout({ children }: { children: React.ReactNode; }) {
             </svg></span></span><span className="flex flex-col items-center"><p className={`text-center text-[11px]/[16.5px] not-italic tracking-[1.1px] uppercase ${pageNow === "profile" ? "text-[#041729] font-semibold" : "text-[#5F5E5E] font-medium"}`}>PROFILE</p></span></a></li>
           </ul>
         )}
-        {!["login", "signup", "verify-otp"].includes(pageNow) && (
+        {!["login", "signup", "verify-otp", "onboarding"].includes(pageNow) && (
           <div className="hidden md:flex w-full flex-col items-start bg-[#F7F3E9] justify-end">{/*Desktop bottom bar*/}
             <div className="flex max-w-[1920px] py-16 px-12 justify-around items-center self-stretch">
               <div className="flex flex-col items-start gap-2">
