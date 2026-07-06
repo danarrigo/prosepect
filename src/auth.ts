@@ -29,11 +29,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const user = await getUserByEmail(credentials.email as string);
         if (user && user.password === credentials.password) {
           // Return user object without the password
-          return { id: user.id, name: user.name, email: user.email, image: user.image };
+          return { id: user.id, name: user.name, email: user.email, image: user.image, handle: user.handle };
         }
         
         return null;
       }
     })
   ],
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        const dbUser = await getUserByEmail(user.email as string);
+        if (dbUser) {
+           token.handle = dbUser.handle;
+        }
+      }
+      // If handle is missing in the token, try to fetch it (for after onboarding)
+      if (!token.handle && token.email) {
+        const dbUser = await getUserByEmail(token.email);
+        if (dbUser?.handle) {
+           token.handle = dbUser.handle;
+        }
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (token?.handle) {
+        (session.user as any).handle = token.handle;
+      }
+      return session;
+    }
+  },
 })

@@ -19,6 +19,20 @@ CREATE TABLE "sessions" (
 	"expires" timestamp NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "users" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"handle" text,
+	"name" text,
+	"email" text,
+	"emailVerified" timestamp,
+	"image" text,
+	"password" text,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "users_handle_unique" UNIQUE("handle"),
+	CONSTRAINT "users_email_unique" UNIQUE("email")
+);
+--> statement-breakpoint
 CREATE TABLE "verificationTokens" (
 	"identifier" text NOT NULL,
 	"token" text NOT NULL,
@@ -26,11 +40,5 @@ CREATE TABLE "verificationTokens" (
 	CONSTRAINT "verificationTokens_identifier_token_pk" PRIMARY KEY("identifier","token")
 );
 --> statement-breakpoint
-ALTER TABLE "users" ALTER COLUMN "email" DROP NOT NULL;--> statement-breakpoint
-ALTER TABLE "users" ALTER COLUMN "password" DROP NOT NULL;--> statement-breakpoint
-ALTER TABLE "users" ADD COLUMN "name" text;--> statement-breakpoint
-ALTER TABLE "users" ADD COLUMN "emailVerified" timestamp;--> statement-breakpoint
-ALTER TABLE "users" ADD COLUMN "image" text;--> statement-breakpoint
 ALTER TABLE "accounts" ADD CONSTRAINT "accounts_userId_users_id_fk" FOREIGN KEY ("userId") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "sessions" ADD CONSTRAINT "sessions_userId_users_id_fk" FOREIGN KEY ("userId") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "users" DROP COLUMN "fullName";
+ALTER TABLE "sessions" ADD CONSTRAINT "sessions_userId_users_id_fk" FOREIGN KEY ("userId") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;

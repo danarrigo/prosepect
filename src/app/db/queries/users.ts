@@ -36,6 +36,20 @@ export async function getUserAccounts(userId: string) {
     return result;
 }
 
+export async function getUserByHandle(handle: string) {
+    const result = await db.select({
+        id: users.id,
+        handle: users.handle,
+        name: users.name,
+        image: users.image,
+        created_at: users.created_at
+    })
+    .from(users)
+    .where(eq(users.handle, handle));
+    
+    return result[0];
+}
+
 //UPDATE
 export async function updateUser(id: string, fullName: string, email: string, password: string) {
     const result = await db.update(users).set({
@@ -46,6 +60,16 @@ export async function updateUser(id: string, fullName: string, email: string, pa
 
     return result;
 }
+
+export async function updateUserHandleAndName(id: string, handle: string, name: string) {
+    const result = await db.update(users).set({
+        handle,
+        name
+    }).where(eq(users.id, id));
+
+    return result;
+}
+
 
 //DELETE
 export async function deleteUser(id: string) {

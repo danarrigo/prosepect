@@ -1,9 +1,9 @@
 "use server"
 
 import { addOTPEntry, getOTPData, validateOTP, deleteOTPEntry, isOTPPending } from "@/app/db/services/otp.service";
-import { createUser, getUserByEmail } from "../../db/queries/users"
+import { createUser, getUserByEmail, updateUserHandleAndName, getUserByHandle } from "../../db/queries/users"
 import { redirect } from "next/navigation";
-import { signIn } from "@/auth";
+import { signIn, auth } from "@/auth";
 import { AuthError } from "next-auth";
 
 export async function signUp(formData: FormData): Promise<void> {
@@ -66,3 +66,35 @@ export async function login(formData: FormData): Promise<void> {
         throw error;
     }
 }
+
+export async function completeOnboarding(formData: FormData): Promise<void> {
+    const handle = formData.get("handle") as string;
+    const name = formData.get("name") as string;
+    
+    if (!handle || !name) {
+        throw new Error("Handle and name are required");
+    }
+    
+    // clean handle (remove @ if they typed it)
+    const cleanHandle = handle.startsWith('@') ? handle.slice(1) : handle;
+
+    const session = await auth();
+    if (!session?.user?.email) {
+        throw new Error("Unauthorized");
+    }
+
+    const user = await getUserByEmail(session.user.email);
+    if (!user) {
+        throw new Error("User not found");
+    }
+
+    // Check if handle is taken
+    const existing = await getUserByHandle(cleanHandle);
+    if (existing && existing.id !== user.id) {
+        throw new Error("Handle is already taken");
+    }
+
+    await updateUserHandleAndName(user.id, cleanHandle, name);
+    
+    redirect("/curated");
+}
