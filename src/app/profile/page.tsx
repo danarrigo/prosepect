@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { auth, signOut } from "@/auth";
-import { getUserByEmail } from "@/app/db/queries/users";
+import { auth, signOut, signIn } from "@/auth";
+import { getUserByEmail, getUserAccounts } from "@/app/db/queries/users";
 
 export default async function ProfilePage() {
   const session = await auth();
@@ -13,6 +13,10 @@ export default async function ProfilePage() {
   if (!user) {
     redirect("/login");
   }
+
+  const userAccounts = await getUserAccounts(user.id);
+  const hasGoogle = userAccounts.some(acc => acc.provider === 'google');
+  const hasGitHub = userAccounts.some(acc => acc.provider === 'github');
 
   const joinDate = user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : "Recently";
 
@@ -80,8 +84,54 @@ export default async function ProfilePage() {
             </div>
           </div>
 
+          {/* Connections Section */}
+          <div className="flex flex-col gap-6 md:col-span-2 mt-4">
+            <h2 className="text-[#041729] font-noto text-[24px]">Connections</h2>
+            <div className="flex flex-col md:flex-row gap-6">
+              {/* Google */}
+              <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-[#F7F3E9] p-8 rounded-sm border border-[#E6E2D8] shadow-sm text-center">
+                <span className="text-[#041729] text-[18px] font-semibold">Google</span>
+                {hasGoogle ? (
+                  <span className="text-[#008000] text-[14px] font-bold tracking-[1px] uppercase flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                    Connected
+                  </span>
+                ) : (
+                  <form action={async () => {
+                    "use server";
+                    await signIn("google", { redirectTo: "/profile" });
+                  }}>
+                    <button type="submit" className="px-6 py-2 border border-[#041729] bg-[#041729] text-[#FDF9EF] text-sm font-semibold tracking-[1.4px] uppercase hover:bg-transparent hover:text-[#041729] transition-colors rounded-sm cursor-pointer">
+                      Connect Google
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              {/* GitHub */}
+              <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-[#F7F3E9] p-8 rounded-sm border border-[#E6E2D8] shadow-sm text-center">
+                <span className="text-[#041729] text-[18px] font-semibold">GitHub</span>
+                {hasGitHub ? (
+                  <span className="text-[#008000] text-[14px] font-bold tracking-[1px] uppercase flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                    Connected
+                  </span>
+                ) : (
+                  <form action={async () => {
+                    "use server";
+                    await signIn("github", { redirectTo: "/profile" });
+                  }}>
+                    <button type="submit" className="px-6 py-2 border border-[#041729] bg-[#041729] text-[#FDF9EF] text-sm font-semibold tracking-[1.4px] uppercase hover:bg-transparent hover:text-[#041729] transition-colors rounded-sm cursor-pointer">
+                      Connect GitHub
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+
   );
 }

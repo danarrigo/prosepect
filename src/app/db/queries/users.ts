@@ -1,4 +1,4 @@
-import { users } from "../schema";
+import { users, accounts } from "../schema";
 import { db } from "../index";
 import { eq } from "drizzle-orm";
 
@@ -28,6 +28,11 @@ export async function getUserById(id: string) {
 
 export async function getUserByEmail(email: string) {
     const result = await db.query.users.findFirst({ where: eq(users.email, email) })
+    return result;
+}
+
+export async function getUserAccounts(userId: string) {
+    const result = await db.query.accounts.findMany({ where: eq(accounts.userId, userId) })
     return result;
 }
 
