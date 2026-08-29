@@ -1,0 +1,35 @@
+# Rust
+/target/
+
+# Node
+/node_modules/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+
+# Tests
+**/playwright-report/
+**/test-results/
+coverage/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local services
+.postgres/
+.mongodb/
+.minio/
+
+# Logs and crash dumps
+*.log
+core
+core.*
+npm-debug.log*

@@ -1,0 +1,20 @@
+{
+  "name": "prosepect",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @prosepect/web",
+    "build:web": "npm run build --workspace @prosepect/web",
+    "lint:web": "npm run lint --workspace @prosepect/web",
+    "test:web": "npm run test --workspace @prosepect/web",
+    "test:e2e": "npm run test:e2e --workspace @prosepect/web",
+    "typecheck:web": "npm run typecheck --workspace @prosepect/web",
+    "format:web": "npm run format --workspace @prosepect/web",
+    "format:check:web": "npm run format:check --workspace @prosepect/web",
+    "generate:api": "cargo run --quiet -p prosepect-api --bin export-openapi > openapi/openapi.json && npm run generate:api --workspace @prosepect/web"
+  }
+}
