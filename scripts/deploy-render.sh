@@ -329,7 +329,7 @@ if command -v psql >/dev/null 2>&1; then
   psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --set invite_email="$INVITE_EMAIL" <<'SQL'
 INSERT INTO account_invites (id, email)
 VALUES (gen_random_uuid(), LOWER(:'invite_email'))
-ON CONFLICT (email) DO NOTHING;
+ON CONFLICT DO NOTHING;
 SQL
 else
   warn "psql is unavailable. Add the invite through the Neon SQL editor."

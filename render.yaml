@@ -8,6 +8,14 @@ services:
     dockerContext: .
     healthCheckPath: /ready
     autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - .dockerignore
+        - Cargo.lock
+        - Cargo.toml
+        - apps/api/**
+        - migrations/**
+        - render.yaml
     envVars:
       - key: APP_ENV
         value: production
