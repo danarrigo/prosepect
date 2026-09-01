@@ -39,8 +39,6 @@ const eventAttendees = ref('')
 const eventAllDay = ref(false)
 const eventRecurrence = ref<EventRecurrence>('none')
 const eventRecurrenceUntil = ref('')
-const slotChooserOpen = ref(false)
-const selectedSlot = ref<Date | null>(null)
 const taskFormOpen = ref(false)
 const taskTitle = ref('')
 const taskDescription = ref('')
@@ -120,17 +118,6 @@ const selectedLabel = computed(() =>
 )
 const selectedWeekday = computed(() =>
   new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(selectedDate.value),
-)
-const selectedSlotLabel = computed(() =>
-  selectedSlot.value
-    ? new Intl.DateTimeFormat(undefined, {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(selectedSlot.value)
-    : '',
 )
 const eventDraftDurationMinutes = computed(() => {
   if (!eventStart.value || !eventEnd.value) return null
@@ -308,7 +295,6 @@ function goToToday() {
 }
 
 function openEventForm(date = selectedDate.value, startHour = 9) {
-  slotChooserOpen.value = false
   taskFormOpen.value = false
   editingEvent.value = null
   eventDeleteArmed.value = false
@@ -327,18 +313,7 @@ function openEventForm(date = selectedDate.value, startHour = 9) {
   eventFormOpen.value = true
 }
 
-function chooseCalendarItem(kind: 'event' | 'task') {
-  const slot = selectedSlot.value
-  if (!slot) return
-  if (kind === 'event') {
-    openEventForm(slot, slot.getHours())
-  } else {
-    openTaskForm(slot, slot.getHours())
-  }
-}
-
 function openTaskForm(date = selectedDate.value, startHour = 9) {
-  slotChooserOpen.value = false
   eventFormOpen.value = false
   const start = new Date(date)
   start.setHours(startHour, 0, 0, 0)
@@ -627,12 +602,9 @@ function timelineHourLabel(hour: number) {
   return `${String(hour).padStart(2, '0')}:00`
 }
 
-function openCalendarSlotChooser(hour: number) {
+function openScheduledTaskAtHour(hour: number) {
   if (hour >= 24) return
-  const slot = new Date(selectedDate.value)
-  slot.setHours(hour, 0, 0, 0)
-  selectedSlot.value = slot
-  slotChooserOpen.value = true
+  openTaskForm(selectedDate.value, hour)
 }
 
 function startTimelineMove(item: TimelineItemLayout, event: PointerEvent) {
@@ -962,58 +934,6 @@ function monthDays(cursor: Date) {
           <Plus :size="16" /> New event
         </button>
       </div>
-    </div>
-
-    <div
-      v-if="slotChooserOpen"
-      class="fixed inset-0 z-50 grid place-items-center p-4"
-      @keydown.esc="slotChooserOpen = false"
-    >
-      <button
-        class="absolute inset-0 bg-slate-950/30"
-        type="button"
-        aria-label="Close item chooser"
-        @click="slotChooserOpen = false"
-      />
-      <section
-        class="relative z-10 w-full max-w-md border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-950"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="slot-chooser-title"
-      >
-        <div class="flex items-start justify-between gap-4">
-          <div>
-            <h2 id="slot-chooser-title" class="text-lg font-semibold">Add to calendar</h2>
-            <p class="mt-1 text-sm text-slate-500">{{ selectedSlotLabel }}</p>
-          </div>
-          <button
-            class="icon-button"
-            type="button"
-            aria-label="Close"
-            @click="slotChooserOpen = false"
-          >
-            <X :size="18" />
-          </button>
-        </div>
-        <div class="mt-6 grid gap-3 sm:grid-cols-2">
-          <button
-            class="border border-slate-200 p-4 text-left transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-800 dark:hover:border-slate-600 dark:hover:bg-slate-900"
-            type="button"
-            @click="chooseCalendarItem('event')"
-          >
-            <span class="block text-sm font-semibold">Event</span>
-            <span class="mt-1 block text-xs text-slate-400">Meetings and appointments</span>
-          </button>
-          <button
-            class="border border-slate-200 p-4 text-left transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-800 dark:hover:border-slate-600 dark:hover:bg-slate-900"
-            type="button"
-            @click="chooseCalendarItem('task')"
-          >
-            <span class="block text-sm font-semibold">Task</span>
-            <span class="mt-1 block text-xs text-slate-400">Scheduled work to complete</span>
-          </button>
-        </div>
-      </section>
     </div>
 
     <div
@@ -1594,9 +1514,9 @@ function monthDays(cursor: Date) {
             type="button"
             :disabled="hour === 24"
             :aria-label="
-              hour < 24 ? `Create event or task at ${timelineHourLabel(hour)}` : undefined
+              hour < 24 ? `Create scheduled task at ${timelineHourLabel(hour)}` : undefined
             "
-            @click="openCalendarSlotChooser(hour)"
+            @click="openScheduledTaskAtHour(hour)"
           >
             <time
               class="pointer-events-none absolute -left-14 text-[10px] font-medium tabular-nums text-slate-400"

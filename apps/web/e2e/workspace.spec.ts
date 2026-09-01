@@ -21,6 +21,20 @@ test('opens the full calendar from Today and browses months', async ({ page }) =
   await expect(month).not.toHaveText(initialMonth ?? '')
 })
 
+test('opens a scheduled task directly from an empty calendar slot', async ({ page }) => {
+  await page.goto('/calendar?view=day')
+  await page.getByRole('button', { name: 'Create scheduled task at 09:00' }).click()
+
+  const form = page.getByRole('form', { name: 'New scheduled task' })
+  await expect(form).toBeVisible()
+  await expect(form.getByLabel('Starts')).toHaveValue(/T09:00$/)
+  await expect(form.getByLabel('Ends')).toHaveValue(/T10:00$/)
+  await expect(page.getByRole('dialog', { name: 'Add to calendar' })).toHaveCount(0)
+
+  await page.keyboard.press('Escape')
+  await expect(form).toBeHidden()
+})
+
 test('creates an event and browses day, week, month, and agenda views', async ({ page }) => {
   const eventName = `Calendar event ${test.info().project.name}-${Date.now().toString().slice(-6)}`
 
