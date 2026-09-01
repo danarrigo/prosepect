@@ -94,7 +94,7 @@ onBeforeUnmount(() => {
       </p>
       <a
         class="mt-8 inline-flex h-11 items-center justify-center rounded-md bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-950 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
-        href="/api/v1/auth/google/start"
+        :href="api.apiUrl('/api/v1/auth/google/start')"
       >
         Continue with Google
       </a>

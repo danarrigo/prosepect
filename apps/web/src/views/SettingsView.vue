@@ -189,7 +189,7 @@ async function deleteAccount() {
         <a
           v-if="integration && !integration.connected"
           class="primary-button"
-          href="/api/v1/auth/google/calendar/start"
+          :href="api.apiUrl('/api/v1/auth/google/calendar/start')"
           >Connect Google</a
         >
         <div v-else-if="integration?.connected" class="flex flex-wrap gap-2">

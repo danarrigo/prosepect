@@ -36,6 +36,12 @@ import type {
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 const USER_ID_KEY = 'prosepect.development-user-id'
+
+export function apiUrl(path: string, baseUrl = API_URL) {
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${normalizedBaseUrl}${normalizedPath}`
+}
 const client = createClient<paths>({ baseUrl: API_URL, credentials: 'include' })
 let csrfToken = ''
 
@@ -160,7 +166,7 @@ export async function uploadFile(
   if (csrfToken) headers.set('x-csrf-token', csrfToken)
   const userId = localStorage.getItem(USER_ID_KEY)
   if (userId) headers.set('x-prosepect-user-id', userId)
-  const response = await fetch(`${API_URL}/api/v1/files`, {
+  const response = await fetch(apiUrl('/api/v1/files'), {
     method: 'POST',
     body: form,
     headers,
