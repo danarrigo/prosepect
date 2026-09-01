@@ -1,6 +1,6 @@
 # Prosepect operations
 
-This guide covers the supported Docker Compose deployment and the hosted Vercel/Google Cloud deployment. TLS must terminate at the hosting platform or a trusted reverse proxy.
+This guide covers the supported Docker Compose deployment and the hosted Vercel/Render deployment. TLS must terminate at the hosting platform or a trusted reverse proxy.
 
 ## Production configuration
 
@@ -33,45 +33,43 @@ Only set `TRUST_PROXY_HEADERS=true` when untrusted clients cannot bypass the hos
 The supported hosted-beta topology is:
 
 - Vercel serves the Vue application at `https://prosepect.com`.
-- Google Cloud Run runs the Axum API at `https://api.prosepect.com`.
-- A Cloud Run Job executes `prosepect-worker --once` every 15 minutes through Cloud Scheduler.
+- Render Free runs the Axum API at `https://api.prosepect.com`.
+- GitHub Actions executes `prosepect-worker --once` every 15 minutes.
 - Neon PostgreSQL stores all canonical and operational state.
 - A private Cloudflare R2 bucket stores attachments through presigned URLs.
 
-A Google Cloud billing account is required even when usage remains within free allowances. Configure a billing alert. Free usage is not a hard spending cap.
+This topology does not require a Google Cloud billing account. Render Free is suitable for a personal beta, not a production SLA: the API sleeps after 15 idle minutes and can take about one minute to wake. Free services can be suspended when monthly allowances are exhausted. GitHub schedules can be delayed and public-repository schedules are disabled after 60 days without repository activity.
 
 ### Guided setup
 
 Run the checked-in wizard from the repository root:
 
 ```bash
-./scripts/deploy-cloud-run.sh
+./scripts/deploy-render.sh
 ```
 
-The wizard opens each required dashboard, captures secrets with hidden input, stores resumable values in ignored `.env.deploy`, uploads runtime secrets to Google Secret Manager, builds the container through Cloud Build, and deploys the service and job. Do not commit `.env.deploy`.
+The wizard opens each required dashboard, captures secrets with hidden input, stores resumable values in ignored `.env.deploy`, configures the scheduled worker's GitHub secrets, and guides the Render Blueprint and Vercel deployments. Do not commit `.env.deploy`.
 
-The deployment intentionally constrains the API to:
+### Render API
 
-- zero minimum instances;
-- one maximum instance;
-- one vCPU and 512 MiB memory;
-- request-based Cloud Run service billing;
-- a single worker task every 15 minutes.
+`render.yaml` defines one Singapore-region Docker web service on the Free plan. Render builds `apps/api/Dockerfile` with the repository root as its build context, checks `/ready`, and deploys changes from the default branch. The Blueprint prompts for PostgreSQL, Google, encryption, and R2 credentials rather than storing them in Git.
 
-These limits are appropriate for a personal beta and reduce accidental spend. Cold starts and delayed synchronization remain acceptable beta tradeoffs.
+Render must receive these canonical public values:
 
-### Hosted resources
+```text
+APP_URL                    https://prosepect.com
+CORS_ALLOWED_ORIGIN        https://prosepect.com
+GOOGLE_REDIRECT_URI        https://api.prosepect.com/api/v1/auth/google/callback
+BIND_ADDRESS               0.0.0.0:10000
+```
 
-The wizard creates or configures:
+Attach `api.prosepect.com` as a Render custom domain and add the DNS record Render displays. Managed TLS provisioning can take time.
 
-- Artifact Registry repository `prosepect`;
-- service account `prosepect-runtime`;
-- scheduler identity `prosepect-scheduler`;
-- Cloud Run service `prosepect-api`;
-- Cloud Run Job and Scheduler job `prosepect-worker`;
-- five Secret Manager secrets for PostgreSQL, Google, encryption, and R2 credentials.
+### Scheduled worker
 
-`deploy/gcp/cloudbuild.yaml` builds both API and worker binaries into one image. The API uses the image default command. The job overrides it with `prosepect-worker --once`.
+`.github/workflows/worker.yml` runs the one-shot worker at minutes 7, 22, 37, and 52 of each hour to avoid the busiest start-of-hour scheduling window. Overlapping runs are serialized. The job remains skipped until the wizard sets `PROSEPECT_WORKER_ENABLED=true` and writes all `PROSEPECT_*` repository secrets.
+
+The repository is public, so standard GitHub-hosted runners are free. Treat GitHub scheduling as best-effort, monitor failures, and manually run the workflow after changing synchronization configuration.
 
 ### Domains and OAuth
 
@@ -84,7 +82,7 @@ Google redirect           https://api.prosepect.com/api/v1/auth/google/callback
 CORS allowed origin       https://prosepect.com
 ```
 
-The Google OAuth client must use the redirect URI exactly. The Vercel production environment must set `VITE_API_URL=https://api.prosepect.com`. Cloud Run domain mappings can take time to provision a managed certificate.
+The Google OAuth client must use the redirect URI exactly. The Vercel production environment must set `VITE_API_URL=https://api.prosepect.com`.
 
 ## Docker Compose
 
@@ -157,7 +155,7 @@ docker compose run --rm --entrypoint /bin/sh -v "$PWD/backups:/backup" minio-ini
   'mc alias set local http://minio:9000 "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" && mc mirror local/prosepect /backup/objects'
 ```
 
-For the hosted beta, use `pg_dump` against Neon and copy R2 objects to an independent backup. To migrate to a server, restore the PostgreSQL dump, copy R2 objects into MinIO, configure the same environment contract, deploy Compose, and then switch DNS. Stop the Cloud Scheduler job before the final database cutover.
+For the hosted beta, use `pg_dump` against Neon and copy R2 objects to an independent backup. To migrate to a server, disable the GitHub synchronization workflow, restore the PostgreSQL dump, copy R2 objects into MinIO, configure the same environment contract, deploy Compose, and then switch DNS.
 
 Test restores in an isolated environment. Restore PostgreSQL first and objects second, then start the synchronization worker.
 

@@ -27,7 +27,7 @@ See [PRD.md](PRD.md) for the product contract.
 - **Data:** PostgreSQL for canonical product state, jobs, conflicts, and activity
 - **Files:** local filesystem in development or S3-compatible object storage
 - **Background work:** portable long-running or one-shot worker
-- **Hosted deployment:** Vercel SPA, Google Cloud Run API and scheduled worker, Neon PostgreSQL, and Cloudflare R2
+- **Hosted deployment:** Vercel SPA, Render Free API, GitHub Actions synchronization worker, Neon PostgreSQL, and Cloudflare R2
 - **Self-hosting:** Docker Compose with PostgreSQL, MinIO, API, worker, and web services
 
 ## Repository layout
@@ -35,7 +35,7 @@ See [PRD.md](PRD.md) for the product contract.
 ```text
 apps/api/          Axum API, synchronization service, and worker entrypoints
 apps/web/          Vue single-page application and Playwright tests
-deploy/gcp/        Cloud Build configuration for hosted releases
+render.yaml        Render Free API Blueprint
 migrations/        PostgreSQL migrations
 scripts/           Guided deployment setup
 openapi/           Generated OpenAPI contract
@@ -132,7 +132,7 @@ Commit both `openapi/openapi.json` and `apps/web/src/api/schema.d.ts`.
 
 ## Operations and deployment
 
-Production configuration, backups, worker behavior, observability, recovery, and Vercel/Cloud Run deployment are documented in [docs/OPERATIONS.md](docs/OPERATIONS.md). Run `scripts/deploy-cloud-run.sh` for the guided hosted setup.
+Production configuration, backups, worker behavior, observability, recovery, and Vercel/Render deployment are documented in [docs/OPERATIONS.md](docs/OPERATIONS.md). Run `scripts/deploy-render.sh` for the guided hosted setup.
 
 ## License
 

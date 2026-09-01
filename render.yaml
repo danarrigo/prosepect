@@ -1,0 +1,57 @@
+services:
+  - type: web
+    name: prosepect-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /ready
+    autoDeployTrigger: commit
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: BIND_ADDRESS
+        value: 0.0.0.0:10000
+      - key: RUST_LOG
+        value: prosepect_api=info,tower_http=info
+      - key: DATABASE_MAX_CONNECTIONS
+        value: "5"
+      - key: APP_URL
+        value: https://prosepect.com
+      - key: CORS_ALLOWED_ORIGIN
+        value: https://prosepect.com
+      - key: ALLOW_INSECURE_DEV_AUTH
+        value: "false"
+      - key: INVITE_ONLY
+        value: "true"
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+      - key: GOOGLE_REDIRECT_URI
+        value: https://api.prosepect.com/api/v1/auth/google/callback
+      - key: S3_REGION
+        value: auto
+      - key: S3_PUBLIC_ENDPOINT
+        sync: false
+      - key: S3_ALLOW_HTTP
+        value: "false"
+      - key: S3_VIRTUAL_HOSTED_STYLE
+        value: "false"
+      - key: MAX_FILE_SIZE_BYTES
+        value: "26214400"
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false

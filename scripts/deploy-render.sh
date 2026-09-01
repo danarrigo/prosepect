@@ -184,63 +184,23 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=9
+TOTAL_STAGES=7
 ENV_FILE="${PROSEPECT_DEPLOY_ENV:-.env.deploy}"
 
-require_command() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    warn "$1 is required but is not installed."
-    return 1
-  fi
-}
-
-upsert_google_secret() {
+require_value() {
   local name="$1" value="$2"
-  if gcloud secrets describe "$name" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
-    printf '%s' "$value" | gcloud secrets versions add "$name" \
-      --project "$GCP_PROJECT_ID" --data-file=- >/dev/null
-  else
-    printf '%s' "$value" | gcloud secrets create "$name" \
-      --project "$GCP_PROJECT_ID" --replication-policy=automatic --data-file=- >/dev/null
+  if [[ -z "$value" ]]; then
+    warn "$name is required."
+    exit 1
   fi
-  gcloud secrets add-iam-policy-binding "$name" \
-    --project "$GCP_PROJECT_ID" \
-    --member "serviceAccount:prosepect-runtime@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
-    --role roles/secretmanager.secretAccessor >/dev/null
-  printf '  %s✓ configured%s Google secret %s\n' "$GREEN" "$RESET" "$name"
 }
 
 banner "Prosepect free hosted deployment"
 
-stage "Google Cloud project"
-say "Choose the Google Cloud project that will run Prosepect. Billing must be enabled, but the deployment is constrained for the free allowances."
-open_url "https://console.cloud.google.com/projectselector2/home/dashboard"
-step "Create or select a project and copy its immutable Project ID, not its display name."
-ask GCP_PROJECT_ID "Google Cloud Project ID:"
-ask GCP_REGION "Cloud Run region [asia-southeast1]:"
-GCP_REGION="${GCP_REGION:-asia-southeast1}"
-write_env GCP_PROJECT_ID "$GCP_PROJECT_ID"
-write_env GCP_REGION "$GCP_REGION"
-chmod 600 "$ENV_FILE"
-open_url "https://console.cloud.google.com/billing/linkedaccount?project=${GCP_PROJECT_ID}"
-step "Link a billing account to the project and configure a small billing budget alert."
-pause "Press Enter after billing is enabled."
-if ! require_command gcloud || ! timeout 20s gcloud --version >/dev/null 2>&1; then
-  warn "The current gcloud installation is unavailable from WSL."
-  open_url "https://cloud.google.com/sdk/docs/install-sdk#linux"
-  step "Install the Linux x86_64 Google Cloud CLI inside WSL, then restart this wizard."
-  exit 1
-fi
-if [[ -z "$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null)" ]]; then
-  gcloud auth login
-fi
-gcloud config set project "$GCP_PROJECT_ID" >/dev/null
-gcloud config set run/region "$GCP_REGION" >/dev/null
-
 stage "Neon PostgreSQL"
-say "Neon supplies the free PostgreSQL database. Use a region geographically close to Cloud Run."
+say "Neon stores canonical product data, synchronization jobs, conflicts, and activity."
 open_url "https://console.neon.tech/app/projects"
-step "Create a project named prosepect."
+step "Create a project named prosepect in a region close to Singapore."
 step "Open Connect, select the direct connection rather than the pooled connection, and require TLS."
 ask_secret DATABASE_URL "Paste the direct PostgreSQL connection string:"
 if [[ "$DATABASE_URL" != postgres://* && "$DATABASE_URL" != postgresql://* ]]; then
@@ -251,7 +211,7 @@ write_env DATABASE_URL "$DATABASE_URL"
 chmod 600 "$ENV_FILE"
 
 stage "Cloudflare R2 attachments"
-say "R2 supplies private S3-compatible attachment storage within its free allowance."
+say "R2 stores private attachment bytes. Stop here if Cloudflare requests a payment authorization you do not accept."
 open_url "https://dash.cloudflare.com/?to=/:account/r2/overview"
 step "Create a private bucket named prosepect."
 step "Open Manage R2 API Tokens and create an Object Read & Write token restricted to that bucket."
@@ -260,160 +220,105 @@ S3_BUCKET="${S3_BUCKET:-prosepect}"
 ask S3_ENDPOINT "R2 S3 endpoint, such as https://ACCOUNT_ID.r2.cloudflarestorage.com:"
 ask_secret S3_ACCESS_KEY_ID "R2 Access Key ID:"
 ask_secret S3_SECRET_ACCESS_KEY "R2 Secret Access Key:"
+require_value S3_ENDPOINT "$S3_ENDPOINT"
+require_value S3_ACCESS_KEY_ID "$S3_ACCESS_KEY_ID"
+require_value S3_SECRET_ACCESS_KEY "$S3_SECRET_ACCESS_KEY"
 write_env S3_BUCKET "$S3_BUCKET"
-write_env S3_REGION "auto"
 write_env S3_ENDPOINT "$S3_ENDPOINT"
 write_env S3_PUBLIC_ENDPOINT "$S3_ENDPOINT"
 write_env S3_ACCESS_KEY_ID "$S3_ACCESS_KEY_ID"
 write_env S3_SECRET_ACCESS_KEY "$S3_SECRET_ACCESS_KEY"
-write_env S3_ALLOW_HTTP "false"
-write_env S3_VIRTUAL_HOSTED_STYLE "false"
 chmod 600 "$ENV_FILE"
 
 stage "Google OAuth and Calendar"
-say "Create one Google OAuth web client for login and incremental Calendar consent."
+say "Google OAuth provides login and optional incremental Calendar consent. This setup does not enable paid Google Cloud services."
+ask GCP_PROJECT_ID "Google Cloud Project ID [prosepect]:"
+GCP_PROJECT_ID="${GCP_PROJECT_ID:-prosepect}"
 open_url "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=${GCP_PROJECT_ID}"
 step "Enable the Google Calendar API."
 open_url "https://console.cloud.google.com/auth/overview?project=${GCP_PROJECT_ID}"
-step "Configure the OAuth consent screen. Add your Google account as a test user if the app remains in testing."
+step "Configure the OAuth consent screen and add your Google account as a test user if the app remains in testing."
 open_url "https://console.cloud.google.com/auth/clients?project=${GCP_PROJECT_ID}"
 step "Create a Web application client named Prosepect."
 step "Add https://prosepect.com as an authorized JavaScript origin."
 step "Add https://api.prosepect.com/api/v1/auth/google/callback as an authorized redirect URI."
 ask GOOGLE_CLIENT_ID "Google OAuth Client ID:"
 ask_secret GOOGLE_CLIENT_SECRET "Google OAuth Client Secret:"
+require_value GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"
+require_value GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
 TOKEN_ENCRYPTION_KEY=$(_existing TOKEN_ENCRYPTION_KEY || true)
 if [[ -z "$TOKEN_ENCRYPTION_KEY" ]]; then
   TOKEN_ENCRYPTION_KEY=$(openssl rand -base64 32)
 fi
 ask INVITE_EMAIL "Google account email to invite:"
+require_value INVITE_EMAIL "$INVITE_EMAIL"
+write_env GCP_PROJECT_ID "$GCP_PROJECT_ID"
 write_env GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"
 write_env GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
-write_env GOOGLE_REDIRECT_URI "https://api.prosepect.com/api/v1/auth/google/callback"
 write_env TOKEN_ENCRYPTION_KEY "$TOKEN_ENCRYPTION_KEY"
 write_env INVITE_EMAIL "$INVITE_EMAIL"
 chmod 600 "$ENV_FILE"
 
-stage "Google Cloud resources and secrets"
-say "This creates the artifact repository, service accounts, and five secret values."
-confirm "Create Google Cloud resources in ${GCP_PROJECT_ID}?" || exit 1
-gcloud services enable \
-  artifactregistry.googleapis.com \
-  cloudbuild.googleapis.com \
-  run.googleapis.com \
-  cloudscheduler.googleapis.com \
-  secretmanager.googleapis.com \
-  --project "$GCP_PROJECT_ID"
-if ! gcloud artifacts repositories describe prosepect \
-  --project "$GCP_PROJECT_ID" --location "$GCP_REGION" >/dev/null 2>&1; then
-  gcloud artifacts repositories create prosepect \
-    --project "$GCP_PROJECT_ID" --location "$GCP_REGION" \
-    --repository-format docker --description "Prosepect release images"
-fi
-for account in prosepect-runtime prosepect-scheduler; do
-  if ! gcloud iam service-accounts describe \
-    "${account}@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
-    --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
-    gcloud iam service-accounts create "$account" \
-      --project "$GCP_PROJECT_ID" --display-name "$account"
-  fi
-done
-upsert_google_secret prosepect-database-url "$DATABASE_URL"
-upsert_google_secret prosepect-google-client-secret "$GOOGLE_CLIENT_SECRET"
-upsert_google_secret prosepect-token-encryption-key "$TOKEN_ENCRYPTION_KEY"
-upsert_google_secret prosepect-s3-access-key-id "$S3_ACCESS_KEY_ID"
-upsert_google_secret prosepect-s3-secret-access-key "$S3_SECRET_ACCESS_KEY"
-
-stage "Build and deploy the API"
+stage "Render Free API"
+say "Render builds the reviewed Dockerfile and runs one free web-service instance. It sleeps after 15 idle minutes and can take about one minute to wake."
 if [[ -n "$(git status --porcelain)" ]]; then
-  warn "The repository is not clean. Deploy only the reviewed commit pushed to GitHub."
-  confirm "Build the current working tree anyway?" || exit 1
+  warn "The repository is not clean. Commit and push the reviewed deployment files before creating the Blueprint."
+  exit 1
 fi
-GIT_REVISION=$(git rev-parse --short HEAD)
-GCP_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/prosepect/prosepect:${GIT_REVISION}"
-write_env GCP_IMAGE "$GCP_IMAGE"
-confirm "Build and deploy image ${GCP_IMAGE}?" || exit 1
-gcloud builds submit . \
-  --project "$GCP_PROJECT_ID" \
-  --region "$GCP_REGION" \
-  --config deploy/gcp/cloudbuild.yaml \
-  --substitutions "_IMAGE=${GCP_IMAGE}"
-PUBLIC_ENV="APP_ENV=production,BIND_ADDRESS=0.0.0.0:3000,DATABASE_MAX_CONNECTIONS=5,APP_URL=https://prosepect.com,CORS_ALLOWED_ORIGIN=https://prosepect.com,ALLOW_INSECURE_DEV_AUTH=false,INVITE_ONLY=true,TRUST_PROXY_HEADERS=true,GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_REDIRECT_URI=https://api.prosepect.com/api/v1/auth/google/callback,S3_BUCKET=${S3_BUCKET},S3_REGION=auto,S3_ENDPOINT=${S3_ENDPOINT},S3_PUBLIC_ENDPOINT=${S3_ENDPOINT},S3_ALLOW_HTTP=false,S3_VIRTUAL_HOSTED_STYLE=false,MAX_FILE_SIZE_BYTES=26214400"
-SECRET_ENV="DATABASE_URL=prosepect-database-url:latest,GOOGLE_CLIENT_SECRET=prosepect-google-client-secret:latest,TOKEN_ENCRYPTION_KEY=prosepect-token-encryption-key:latest,S3_ACCESS_KEY_ID=prosepect-s3-access-key-id:latest,S3_SECRET_ACCESS_KEY=prosepect-s3-secret-access-key:latest"
-gcloud run deploy prosepect-api \
-  --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-  --image "$GCP_IMAGE" --service-account "prosepect-runtime@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
-  --allow-unauthenticated --port 3000 --cpu 1 --memory 512Mi \
-  --concurrency 40 --max-instances 1 --min-instances 0 --timeout 60 \
-  --set-env-vars "$PUBLIC_ENV" --set-secrets "$SECRET_ENV"
+open_url "https://render.com/deploy?repo=https://github.com/danarrigo/prosepect"
+step "Connect GitHub, select the main branch, and create the prosepect-api Blueprint on the Free plan."
+step "For each requested secret, paste the matching value from ${ENV_FILE}: DATABASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, S3_BUCKET, S3_ENDPOINT, S3_PUBLIC_ENDPOINT, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY."
+step "Wait for the initial Docker build and deployment to finish."
+pause "Press Enter after Render reports that prosepect-api is live."
+ask RENDER_API_URL "Render service URL, such as https://prosepect-api.onrender.com:"
+RENDER_API_URL="${RENDER_API_URL%/}"
+require_value RENDER_API_URL "$RENDER_API_URL"
+write_env RENDER_API_URL "$RENDER_API_URL"
+if ! curl --fail --silent --show-error --max-time 90 "${RENDER_API_URL}/ready" >/dev/null; then
+  warn "The Render readiness check failed. Inspect the service logs before continuing."
+  exit 1
+fi
+say "Render readiness passed."
 
-stage "Deploy and schedule the worker"
-say "The one-shot worker runs every 15 minutes to stay within the free compute allowance."
-gcloud run jobs deploy prosepect-worker \
-  --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-  --image "$GCP_IMAGE" --service-account "prosepect-runtime@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
-  --command prosepect-worker --args=--once --tasks 1 --max-retries 2 \
-  --task-timeout 5m --cpu 1 --memory 512Mi \
-  --set-env-vars "$PUBLIC_ENV" --set-secrets "$SECRET_ENV"
-gcloud run jobs add-iam-policy-binding prosepect-worker \
-  --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-  --member "serviceAccount:prosepect-scheduler@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
-  --role roles/run.invoker >/dev/null
-SCHEDULER_URI="https://run.googleapis.com/v2/projects/${GCP_PROJECT_ID}/locations/${GCP_REGION}/jobs/prosepect-worker:run"
-if gcloud scheduler jobs describe prosepect-worker \
-  --project "$GCP_PROJECT_ID" --location "$GCP_REGION" >/dev/null 2>&1; then
-  gcloud scheduler jobs update http prosepect-worker \
-    --project "$GCP_PROJECT_ID" --location "$GCP_REGION" \
-    --schedule "*/15 * * * *" --time-zone Etc/UTC \
-    --uri "$SCHEDULER_URI" --http-method POST \
-    --oauth-service-account-email "prosepect-scheduler@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
-    --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform"
+stage "Scheduled synchronization worker"
+say "GitHub Actions runs prosepect-worker --once every 15 minutes. Scheduled public-repository runners are free but can be delayed."
+set_secret PROSEPECT_DATABASE_URL "$DATABASE_URL"
+set_secret PROSEPECT_GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"
+set_secret PROSEPECT_GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
+set_secret PROSEPECT_TOKEN_ENCRYPTION_KEY "$TOKEN_ENCRYPTION_KEY"
+set_secret PROSEPECT_S3_BUCKET "$S3_BUCKET"
+set_secret PROSEPECT_S3_ENDPOINT "$S3_ENDPOINT"
+set_secret PROSEPECT_S3_ACCESS_KEY_ID "$S3_ACCESS_KEY_ID"
+set_secret PROSEPECT_S3_SECRET_ACCESS_KEY "$S3_SECRET_ACCESS_KEY"
+set_var PROSEPECT_WORKER_ENABLED "true"
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  gh workflow run worker.yml
+  say "Started the first synchronization worker run."
 else
-  gcloud scheduler jobs create http prosepect-worker \
-    --project "$GCP_PROJECT_ID" --location "$GCP_REGION" \
-    --schedule "*/15 * * * *" --time-zone Etc/UTC \
-    --uri "$SCHEDULER_URI" --http-method POST \
-    --oauth-service-account-email "prosepect-scheduler@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
-    --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform"
+  warn "Run 'gh workflow run worker.yml' after GitHub CLI authentication is restored."
 fi
-gcloud run jobs execute prosepect-worker \
-  --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
 
 stage "Domains and Vercel"
-say "Map api.prosepect.com to Cloud Run, then deploy the SPA at prosepect.com."
-if ! gcloud beta run domain-mappings describe \
-  --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-  --domain api.prosepect.com >/dev/null 2>&1; then
-  if ! gcloud beta run domain-mappings create \
-    --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-    --service prosepect-api --domain api.prosepect.com; then
-    warn "Google may require domain ownership verification before creating the mapping."
-    open_url "https://search.google.com/search-console/welcome"
-    step "Verify prosepect.com, then retry this stage by rerunning the wizard."
-    exit 1
-  fi
-fi
-gcloud beta run domain-mappings describe \
-  --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-  --domain api.prosepect.com --format='yaml(status.resourceRecords)'
-step "Add the displayed api.prosepect.com DNS record at your DNS provider."
+say "Attach api.prosepect.com to Render, then deploy the SPA at prosepect.com."
+open_url "https://dashboard.render.com"
+step "Open prosepect-api, then Settings and Custom Domains. Add api.prosepect.com."
+step "Add the DNS record Render displays and wait for its TLS certificate."
 open_url "https://vercel.com/new/clone?repository-url=https://github.com/danarrigo/prosepect"
 step "Import the repository with apps/web as Root Directory and enable including files outside the root."
 step "Set VITE_API_URL to https://api.prosepect.com for Production."
 step "Deploy, attach prosepect.com, and add the DNS records Vercel displays."
-pause "Press Enter when Vercel and both DNS records are configured."
+pause "Press Enter when Render, Vercel, and DNS are configured."
 
 stage "Invite and verify"
-say "The API migration creates the invite table before the first sign-in."
-API_READY="https://api.prosepect.com/ready"
+say "The API migrations create the invite table before the first sign-in."
 for attempt in $(seq 1 40); do
-  if curl --fail --silent "$API_READY" >/dev/null; then
+  if curl --fail --silent "https://api.prosepect.com/ready" >/dev/null; then
     break
   fi
   sleep 15
 done
-curl --fail --silent "$API_READY" >/dev/null
-if require_command psql; then
+curl --fail --silent "https://api.prosepect.com/ready" >/dev/null
+if command -v psql >/dev/null 2>&1; then
   psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --set invite_email="$INVITE_EMAIL" <<'SQL'
 INSERT INTO account_invites (id, email)
 VALUES (gen_random_uuid(), LOWER(:'invite_email'))
@@ -425,7 +330,7 @@ fi
 open_url "https://prosepect.com"
 step "Sign in with ${INVITE_EMAIL}."
 step "Create a task and event, upload and download an attachment, then connect Google Calendar."
-step "Check Cloud Run API logs and the latest prosepect-worker execution for errors."
+step "Check Render logs and the latest Synchronization worker workflow for errors."
 pause "Press Enter after the production smoke test passes."
 
 finish

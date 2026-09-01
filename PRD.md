@@ -250,11 +250,11 @@ Prosepect uses one monorepo containing:
 - API style: REST
 - API contract: OpenAPI
 - PostgreSQL access: SQLx with explicit SQL
-- Hosted runtime: Google Cloud Run container
+- Hosted runtime: Render container
 - Self-hosted runtime: long-running HTTP server
 - Background work: portable one-shot or long-running worker entrypoint
 
-Business logic must not depend directly on Cloud Run, Vercel, Neon, or a specific S3-compatible provider.
+Business logic must not depend directly on Render, GitHub Actions, Vercel, Neon, or a specific S3-compatible provider.
 
 ### 7.3 Frontend
 
@@ -324,15 +324,15 @@ Raw provider payloads are processed transiently and are not retained as duplicat
 
 - Domain: `prosepect.com`
 - Frontend: Vercel
-- Backend: Axum container on Google Cloud Run
-- Scheduled work: Cloud Run Job invoked by Cloud Scheduler every 15 minutes
+- Backend: Axum container on Render Free
+- Scheduled work: one-shot worker invoked by GitHub Actions every 15 minutes
 - PostgreSQL: Neon free tier during beta
 - Files: private Cloudflare R2 bucket
 - Access: invite-only
 - Price: free during beta
 - Target infrastructure cost: approximately $0 within provider free allowances
 
-A Google Cloud billing account is required. Provider pricing may change, free usage is not a hard spending cap, and usage must be monitored.
+The beta must not require an upfront payment authorization. Render may sleep the API after idle periods, GitHub schedules may be delayed, and free services may be suspended when provider allowances are exhausted.
 
 ### 8.2 Self-hosting
 
@@ -416,7 +416,7 @@ The product must include:
 
 - Complete Docker Compose self-hosting
 - Vercel frontend deployment
-- Cloud Run API and scheduled worker deployment
+- Render Free API and GitHub Actions worker deployment
 - Invite-only official beta
 - Operational documentation
 
