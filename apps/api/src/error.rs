@@ -15,6 +15,8 @@ pub enum AppError {
     InvalidRequest { status: StatusCode, message: String },
     #[error("authentication is required")]
     Unauthorized,
+    #[error("{0}")]
+    Forbidden(&'static str),
     #[error("{0} was not found")]
     NotFound(&'static str),
     #[error("route was not found")]
@@ -23,6 +25,10 @@ pub enum AppError {
     MethodNotAllowed,
     #[error("{0}")]
     Conflict(String),
+    #[error("{0} is not configured")]
+    NotConfigured(&'static str),
+    #[error("external integration failed")]
+    Integration(#[source] anyhow::Error),
     #[error("database operation failed")]
     Database(#[from] sqlx::Error),
 }
@@ -52,6 +58,7 @@ impl IntoResponse for AppError {
                 "authentication_required",
                 "authentication is required".to_owned(),
             ),
+            Self::Forbidden(message) => (StatusCode::FORBIDDEN, "forbidden", message.to_owned()),
             Self::NotFound(resource) => (
                 StatusCode::NOT_FOUND,
                 "not_found",
@@ -68,6 +75,19 @@ impl IntoResponse for AppError {
                 "method is not allowed for this route".to_owned(),
             ),
             Self::Conflict(message) => (StatusCode::CONFLICT, "conflict", message),
+            Self::NotConfigured(integration) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "integration_not_configured",
+                format!("{integration} is not configured"),
+            ),
+            Self::Integration(error) => {
+                tracing::error!(error = ?error, "external integration failed");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    "integration_error",
+                    "An external integration failed".to_owned(),
+                )
+            }
             Self::Database(error) => {
                 tracing::error!(error = ?error, "database operation failed");
                 (

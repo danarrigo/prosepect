@@ -6,7 +6,7 @@ COPY apps/api/Cargo.toml apps/api/Cargo.toml
 COPY apps/api/src apps/api/src
 COPY migrations migrations
 
-RUN cargo build --locked --release -p prosepect-api --bin prosepect-api
+RUN cargo build --locked --release -p prosepect-api --bin prosepect-api --bin worker
 
 FROM debian:bookworm-slim AS runtime
 
@@ -17,7 +17,8 @@ RUN apt-get update \
     && useradd --system --gid prosepect --home-dir /nonexistent prosepect
 
 COPY --from=builder /workspace/target/release/prosepect-api /usr/local/bin/prosepect-api
+COPY --from=builder /workspace/target/release/worker /usr/local/bin/prosepect-worker
 
 USER prosepect
 EXPOSE 3000
-ENTRYPOINT ["prosepect-api"]
+CMD ["prosepect-api"]

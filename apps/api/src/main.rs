@@ -22,10 +22,13 @@ async fn main() -> anyhow::Result<()> {
         "Prosepect API listening"
     );
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("HTTP server failed")
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("HTTP server failed")
 }
 
 fn init_tracing() {

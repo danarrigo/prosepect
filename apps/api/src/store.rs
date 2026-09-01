@@ -1,16 +1,19 @@
 use std::collections::HashSet;
 
 use chrono::{Months, TimeDelta, Utc};
+use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 use crate::{
     config::Config,
     error::{AppError, AppResult},
+    google_auth::{GoogleLoginResult, GoogleLoginStart},
     models::{
-        CreateProjectRequest, CreateTaskRequest, DevelopmentSession, Project, ProjectPage,
-        ReorderTasksRequest, Task, TaskPage, TaskRecurrence, TaskStatus, UpdateProjectRequest,
-        UpdateTaskRequest,
+        CreateProjectRequest, CreateTaskRequest, DailyPlan, LabelList, Project, ProjectPage,
+        ReorderTasksRequest, SessionResponse, Task, TaskPage, TaskRecurrence, TaskStatus,
+        TodoistImportRequest, TodoistImportResult, UpdateDailyFocusRequest, UpdateProjectRequest,
+        UpdateTaskRequest, UpdateUserSettingsRequest, UserProfile, UserSettings,
     },
 };
 
@@ -18,7 +21,7 @@ pub const DEVELOPMENT_USER_ID: Uuid = Uuid::from_u128(0x00000000_0000_4000_8000_
 
 #[derive(Clone)]
 pub struct Store {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 impl Store {
@@ -44,24 +47,463 @@ impl Store {
         Ok(())
     }
 
-    pub async fn ensure_development_user(&self) -> AppResult<DevelopmentSession> {
-        let session = sqlx::query_as::<_, DevelopmentSessionRow>(
+    pub async fn ensure_development_user(&self, user_id: Uuid) -> AppResult<UserProfile> {
+        let user = sqlx::query_as::<_, UserProfile>(
             r#"
             INSERT INTO users (id, email, display_name)
             VALUES ($1, $1::TEXT || '@development.invalid', '')
             ON CONFLICT (id) DO UPDATE
-            SET
-                email = EXCLUDED.email,
-                display_name = EXCLUDED.display_name,
-                updated_at = NOW()
-            RETURNING id
+            SET updated_at = NOW()
+            RETURNING id, email, display_name, avatar_url, timezone
             "#,
         )
-        .bind(DEVELOPMENT_USER_ID)
+        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(session.into())
+        Ok(user)
+    }
+
+    pub async fn create_session(&self, user: UserProfile) -> AppResult<CreatedSession> {
+        let token = random_token();
+        let csrf_token = random_token();
+        let expires_at = Utc::now() + TimeDelta::days(30);
+
+        sqlx::query(
+            r#"
+            INSERT INTO sessions (token_hash, user_id, csrf_token, expires_at)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(token_hash(&token))
+        .bind(user.id)
+        .bind(&csrf_token)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(CreatedSession {
+            token,
+            response: SessionResponse { user, csrf_token },
+        })
+    }
+
+    pub async fn authenticate_session(&self, token: &str) -> AppResult<SessionAuthentication> {
+        let session = sqlx::query_as::<_, SessionAuthentication>(
+            r#"
+            UPDATE sessions
+            SET last_seen_at = NOW()
+            WHERE token_hash = $1 AND expires_at > NOW()
+            RETURNING user_id, csrf_token
+            "#,
+        )
+        .bind(token_hash(token))
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+        Ok(session)
+    }
+
+    pub async fn user_profile(&self, user_id: Uuid) -> AppResult<UserProfile> {
+        sqlx::query_as::<_, UserProfile>(
+            "SELECT id, email, display_name, avatar_url, timezone FROM users WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(AppError::Unauthorized)
+    }
+
+    pub async fn user_settings(&self, user_id: Uuid) -> AppResult<UserSettings> {
+        sqlx::query_as::<_, UserSettings>(
+            r#"
+            INSERT INTO user_settings (user_id)
+            VALUES ($1)
+            ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+            RETURNING theme, automatic_daily_review, sync_conflict_policy, updated_at, version
+            "#,
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(AppError::from)
+    }
+
+    pub async fn update_user_settings(
+        &self,
+        user_id: Uuid,
+        request: UpdateUserSettingsRequest,
+    ) -> AppResult<UserSettings> {
+        self.user_settings(user_id).await?;
+        let settings = sqlx::query_as::<_, UserSettings>(
+            r#"
+            UPDATE user_settings
+            SET
+                theme = $2,
+                automatic_daily_review = $3,
+                sync_conflict_policy = $4,
+                updated_at = NOW(),
+                version = version + 1
+            WHERE user_id = $1 AND version = $5
+            RETURNING theme, automatic_daily_review, sync_conflict_policy, updated_at, version
+            "#,
+        )
+        .bind(user_id)
+        .bind(request.theme)
+        .bind(request.automatic_daily_review)
+        .bind(request.sync_conflict_policy)
+        .bind(request.expected_version)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(settings) = settings {
+            return Ok(settings);
+        }
+        let version =
+            sqlx::query_scalar::<_, i32>("SELECT version FROM user_settings WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        match version {
+            Some(version) => Err(AppError::Conflict(format!(
+                "settings changed since version {}; current version is {version}",
+                request.expected_version
+            ))),
+            None => Err(AppError::NotFound("settings")),
+        }
+    }
+
+    pub async fn email_can_sign_in(&self, email: &str) -> AppResult<bool> {
+        sqlx::query_scalar(
+            r#"
+            SELECT
+                EXISTS(SELECT 1 FROM users WHERE LOWER(email::TEXT) = LOWER($1))
+                OR EXISTS(
+                    SELECT 1 FROM account_invites
+                    WHERE LOWER(email::TEXT) = LOWER($1) AND used_at IS NULL
+                )
+            "#,
+        )
+        .bind(email)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(AppError::from)
+    }
+
+    pub async fn consume_account_invite(&self, email: &str, user_id: Uuid) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            UPDATE account_invites
+            SET used_at = NOW(), used_by = $2
+            WHERE LOWER(email::TEXT) = LOWER($1) AND used_at IS NULL
+            "#,
+        )
+        .bind(email)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_session(&self, token: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM sessions WHERE token_hash = $1")
+            .bind(token_hash(token))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn save_google_login_attempt(
+        &self,
+        login: &GoogleLoginStart,
+        user_id: Option<Uuid>,
+        purpose: &str,
+    ) -> AppResult<()> {
+        if !matches!(purpose, "login" | "calendar_connect") {
+            return Err(AppError::Validation("invalid OAuth purpose".to_owned()));
+        }
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("DELETE FROM oauth_login_attempts WHERE expires_at <= NOW()")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            r#"
+            INSERT INTO oauth_login_attempts (
+                state_hash, nonce, pkce_verifier, expires_at, user_id, purpose
+            )
+            VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes', $4, $5)
+            "#,
+        )
+        .bind(token_hash(&login.state))
+        .bind(&login.nonce)
+        .bind(&login.pkce_verifier)
+        .bind(user_id)
+        .bind(purpose)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub async fn consume_google_login_attempt(&self, state: &str) -> AppResult<OAuthLoginAttempt> {
+        sqlx::query_as::<_, OAuthLoginAttempt>(
+            r#"
+            DELETE FROM oauth_login_attempts
+            WHERE state_hash = $1 AND expires_at > NOW()
+            RETURNING nonce, pkce_verifier, user_id, purpose
+            "#,
+        )
+        .bind(token_hash(state))
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(AppError::Forbidden(
+            "the Google sign-in request expired or is invalid",
+        ))
+    }
+
+    pub async fn daily_plan(&self, user_id: Uuid, date: chrono::NaiveDate) -> AppResult<DailyPlan> {
+        let focus_tasks = sqlx::query_as::<_, Task>(
+            r#"
+            SELECT
+                tasks.id,
+                tasks.project_id,
+                tasks.parent_task_id,
+                tasks.title,
+                tasks.description,
+                tasks.due_at,
+                tasks.scheduled_start,
+                tasks.scheduled_end,
+                tasks.status,
+                tasks.priority,
+                tasks.recurrence,
+                tasks.labels,
+                tasks.remind_at,
+                tasks.position,
+                tasks.completed_at,
+                tasks.created_at,
+                tasks.updated_at,
+                tasks.version
+            FROM daily_focus_tasks focus
+            JOIN tasks ON tasks.id = focus.task_id AND tasks.user_id = focus.user_id
+            WHERE focus.user_id = $1 AND focus.focus_date = $2
+            ORDER BY focus.position
+            "#,
+        )
+        .bind(user_id)
+        .bind(date)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(DailyPlan { date, focus_tasks })
+    }
+
+    pub async fn update_daily_focus(
+        &self,
+        user_id: Uuid,
+        date: chrono::NaiveDate,
+        request: UpdateDailyFocusRequest,
+    ) -> AppResult<DailyPlan> {
+        if request.task_ids.len() > 3 {
+            return Err(AppError::Validation(
+                "a daily plan cannot contain more than three focus tasks".to_owned(),
+            ));
+        }
+        let unique: HashSet<_> = request.task_ids.iter().copied().collect();
+        if unique.len() != request.task_ids.len() {
+            return Err(AppError::Validation(
+                "focus task identifiers must be unique".to_owned(),
+            ));
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_optional(&mut *transaction)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        let owned = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*)
+            FROM tasks
+            WHERE user_id = $1 AND id = ANY($2) AND status <> 'completed'
+            "#,
+        )
+        .bind(user_id)
+        .bind(&request.task_ids)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if owned != request.task_ids.len() as i64 {
+            return Err(AppError::Validation(
+                "focus tasks must reference the user's incomplete tasks".to_owned(),
+            ));
+        }
+
+        sqlx::query("DELETE FROM daily_focus_tasks WHERE user_id = $1 AND focus_date = $2")
+            .bind(user_id)
+            .bind(date)
+            .execute(&mut *transaction)
+            .await?;
+        for (index, task_id) in request.task_ids.iter().enumerate() {
+            sqlx::query(
+                r#"
+                INSERT INTO daily_focus_tasks (user_id, focus_date, task_id, position)
+                VALUES ($1, $2, $3, $4)
+                "#,
+            )
+            .bind(user_id)
+            .bind(date)
+            .bind(task_id)
+            .bind(index as i16 + 1)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+
+        self.daily_plan(user_id, date).await
+    }
+
+    pub async fn list_labels(&self, user_id: Uuid) -> AppResult<LabelList> {
+        let items = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM labels WHERE user_id = $1 ORDER BY name",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(LabelList { items })
+    }
+
+    pub async fn upsert_google_user(&self, login: GoogleLoginResult) -> AppResult<UserProfile> {
+        let mut transaction = self.pool.begin().await?;
+        let user = sqlx::query_as::<_, UserProfile>(
+            r#"
+            INSERT INTO users (
+                id, google_subject, email, display_name, avatar_url
+            )
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (google_subject) DO UPDATE
+            SET
+                email = EXCLUDED.email,
+                display_name = EXCLUDED.display_name,
+                avatar_url = EXCLUDED.avatar_url,
+                updated_at = NOW()
+            RETURNING id, email, display_name, avatar_url, timezone
+            "#,
+        )
+        .bind(Uuid::now_v7())
+        .bind(&login.subject)
+        .bind(&login.email)
+        .bind(&login.display_name)
+        .bind(&login.avatar_url)
+        .fetch_one(&mut *transaction)
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO google_accounts (
+                user_id,
+                encrypted_access_token,
+                encrypted_refresh_token,
+                access_token_expires_at,
+                scopes
+            )
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id) DO UPDATE
+            SET
+                encrypted_access_token = CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM unnest(EXCLUDED.scopes) scope
+                        WHERE scope LIKE '%/auth/calendar%'
+                    ) THEN EXCLUDED.encrypted_access_token
+                    ELSE google_accounts.encrypted_access_token
+                END,
+                encrypted_refresh_token = CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM unnest(EXCLUDED.scopes) scope
+                        WHERE scope LIKE '%/auth/calendar%'
+                    ) THEN COALESCE(
+                        EXCLUDED.encrypted_refresh_token,
+                        google_accounts.encrypted_refresh_token
+                    )
+                    ELSE google_accounts.encrypted_refresh_token
+                END,
+                access_token_expires_at = CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM unnest(EXCLUDED.scopes) scope
+                        WHERE scope LIKE '%/auth/calendar%'
+                    ) THEN EXCLUDED.access_token_expires_at
+                    ELSE google_accounts.access_token_expires_at
+                END,
+                scopes = CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM unnest(EXCLUDED.scopes) scope
+                        WHERE scope LIKE '%/auth/calendar%'
+                    ) THEN EXCLUDED.scopes
+                    ELSE google_accounts.scopes
+                END,
+                updated_at = NOW()
+            "#,
+        )
+        .bind(user.id)
+        .bind(login.encrypted_access_token)
+        .bind(login.encrypted_refresh_token)
+        .bind(login.access_token_expires_at)
+        .bind(login.scopes)
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
+        Ok(user)
+    }
+
+    pub async fn update_google_credentials(
+        &self,
+        user_id: Uuid,
+        login: GoogleLoginResult,
+    ) -> AppResult<()> {
+        let matches_user = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM users
+                WHERE id = $1 AND google_subject = $2
+                  AND LOWER(email::TEXT) = LOWER($3)
+            )
+            "#,
+        )
+        .bind(user_id)
+        .bind(&login.subject)
+        .bind(&login.email)
+        .fetch_one(&self.pool)
+        .await?;
+        if !matches_user {
+            return Err(AppError::Forbidden(
+                "Google Calendar must be connected with the signed-in account",
+            ));
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO google_accounts (
+                user_id, encrypted_access_token, encrypted_refresh_token,
+                access_token_expires_at, scopes
+            ) VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id) DO UPDATE SET
+                encrypted_access_token = EXCLUDED.encrypted_access_token,
+                encrypted_refresh_token = COALESCE(
+                    EXCLUDED.encrypted_refresh_token,
+                    google_accounts.encrypted_refresh_token
+                ),
+                access_token_expires_at = EXCLUDED.access_token_expires_at,
+                scopes = EXCLUDED.scopes,
+                updated_at = NOW()
+            "#,
+        )
+        .bind(user_id)
+        .bind(login.encrypted_access_token)
+        .bind(login.encrypted_refresh_token)
+        .bind(login.access_token_expires_at)
+        .bind(login.scopes)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn create_project(
@@ -281,6 +723,154 @@ impl Store {
         }
     }
 
+    pub async fn import_todoist_project(
+        &self,
+        user_id: Uuid,
+        request: TodoistImportRequest,
+    ) -> AppResult<TodoistImportResult> {
+        validate_project_fields(&request.project_name, &request.project_description)?;
+        if request.tasks.len() > 5_000 {
+            return Err(AppError::Validation(
+                "a Todoist import cannot contain more than 5000 tasks".to_owned(),
+            ));
+        }
+
+        let mut prepared_tasks = Vec::with_capacity(request.tasks.len());
+        for (index, mut task) in request.tasks.into_iter().enumerate() {
+            if task
+                .parent_index
+                .is_some_and(|parent_index| parent_index >= index)
+            {
+                return Err(AppError::Validation(
+                    "an imported task parent must appear before its child".to_owned(),
+                ));
+            }
+            validate_task_fields(
+                &task.title,
+                &task.description,
+                task.due_at,
+                task.scheduled_start,
+                task.scheduled_end,
+                task.recurrence,
+                task.parent_index.map(|_| Uuid::nil()),
+            )?;
+            let labels = validate_labels(std::mem::take(&mut task.labels))?;
+            prepared_tasks.push((task, labels));
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        Self::lock_task_graph(&mut transaction, user_id).await?;
+        let project_id = Uuid::now_v7();
+        sqlx::query(
+            r#"
+            INSERT INTO projects (id, user_id, name, outcome, status)
+            VALUES ($1, $2, $3, $4, 'active')
+            "#,
+        )
+        .bind(project_id)
+        .bind(user_id)
+        .bind(request.project_name.trim())
+        .bind(request.project_description.trim())
+        .execute(&mut *transaction)
+        .await?;
+
+        let mut position = Self::next_task_position(&mut transaction, user_id).await?;
+        let mut task_ids = Vec::with_capacity(prepared_tasks.len());
+        for (task, labels) in prepared_tasks {
+            let task_id = Uuid::now_v7();
+            let parent_task_id = task.parent_index.map(|parent_index| task_ids[parent_index]);
+            let imported_task = sqlx::query_as::<_, Task>(
+                r#"
+                INSERT INTO tasks (
+                    id,
+                    user_id,
+                    project_id,
+                    parent_task_id,
+                    title,
+                    description,
+                    due_at,
+                    scheduled_start,
+                    scheduled_end,
+                    status,
+                    priority,
+                    recurrence,
+                    labels,
+                    position
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'todo', $10, $11, $12, $13)
+                RETURNING
+                    id,
+                    project_id,
+                    parent_task_id,
+                    title,
+                    description,
+                    due_at,
+                    scheduled_start,
+                    scheduled_end,
+                    status,
+                    priority,
+                    recurrence,
+                    labels,
+                    remind_at,
+                    position,
+                    completed_at,
+                    created_at,
+                    updated_at,
+                    version
+                "#,
+            )
+            .bind(task_id)
+            .bind(user_id)
+            .bind(project_id)
+            .bind(parent_task_id)
+            .bind(task.title.trim())
+            .bind(task.description.trim())
+            .bind(task.due_at)
+            .bind(task.scheduled_start)
+            .bind(task.scheduled_end)
+            .bind(task.priority)
+            .bind(task.recurrence)
+            .bind(labels)
+            .bind(position)
+            .fetch_one(&mut *transaction)
+            .await?;
+            Self::ensure_labels(&mut transaction, user_id, &imported_task.labels).await?;
+            Self::sync_task_calendar_event(&mut transaction, user_id, &imported_task).await?;
+            task_ids.push(task_id);
+            position += 1_024;
+        }
+
+        let project = sqlx::query_as::<_, Project>(
+            r#"
+            SELECT
+                p.id,
+                p.name,
+                p.outcome,
+                p.target_date,
+                p.status,
+                COUNT(t.id)::BIGINT AS total_tasks,
+                COUNT(t.id) FILTER (WHERE t.status = 'completed')::BIGINT AS completed_tasks,
+                p.created_at,
+                p.updated_at,
+                p.version
+            FROM projects p
+            LEFT JOIN tasks t ON t.project_id = p.id AND t.user_id = p.user_id
+            WHERE p.id = $1 AND p.user_id = $2
+            GROUP BY p.id
+            "#,
+        )
+        .bind(project_id)
+        .bind(user_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+
+        Ok(TodoistImportResult {
+            project,
+            imported_tasks: task_ids.len(),
+        })
+    }
+
     pub async fn create_task(&self, user_id: Uuid, request: CreateTaskRequest) -> AppResult<Task> {
         validate_task_fields(
             &request.title,
@@ -373,6 +963,8 @@ impl Store {
         .bind(completed_at)
         .fetch_one(&mut *transaction)
         .await?;
+        Self::ensure_labels(&mut transaction, user_id, &task.labels).await?;
+        Self::sync_task_calendar_event(&mut transaction, user_id, &task).await?;
         transaction.commit().await?;
 
         Ok(task)
@@ -557,6 +1149,8 @@ impl Store {
         .await?;
 
         if let Some(task) = task {
+            Self::ensure_labels(&mut transaction, user_id, &task.labels).await?;
+            Self::sync_task_calendar_event(&mut transaction, user_id, &task).await?;
             if previous_status != TaskStatus::Completed
                 && task.status == TaskStatus::Completed
                 && task.recurrence != TaskRecurrence::None
@@ -743,7 +1337,7 @@ impl Store {
         let shift = next_due_at - due_at;
         let position = Self::next_task_position(connection, user_id).await?;
 
-        sqlx::query(
+        let next = sqlx::query_as::<_, Task>(
             r#"
             INSERT INTO tasks (
                 id,
@@ -768,6 +1362,10 @@ impl Store {
                 $1, $2, $3, NULL, $4, $5, $6, $7, $8,
                 $9, 'todo', $10, $11, $12, $13, $14, NULL
             )
+            RETURNING
+                id, project_id, parent_task_id, title, description, due_at,
+                scheduled_start, scheduled_end, status, priority, recurrence,
+                labels, remind_at, position, completed_at, created_at, updated_at, version
             "#,
         )
         .bind(Uuid::now_v7())
@@ -784,8 +1382,26 @@ impl Store {
         .bind(&task.labels)
         .bind(task.remind_at.map(|value| value + shift))
         .bind(position)
-        .execute(connection)
+        .fetch_one(&mut *connection)
         .await?;
+        Self::sync_task_calendar_event(connection, user_id, &next).await?;
+        Ok(())
+    }
+
+    async fn ensure_labels(
+        connection: &mut PgConnection,
+        user_id: Uuid,
+        labels: &[String],
+    ) -> AppResult<()> {
+        for label in labels {
+            sqlx::query(
+                "INSERT INTO labels (user_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            )
+            .bind(user_id)
+            .bind(label)
+            .execute(&mut *connection)
+            .await?;
+        }
         Ok(())
     }
 
@@ -923,15 +1539,31 @@ impl Store {
     }
 }
 
-#[derive(sqlx::FromRow)]
-struct DevelopmentSessionRow {
-    id: Uuid,
+pub struct CreatedSession {
+    pub token: String,
+    pub response: SessionResponse,
 }
 
-impl From<DevelopmentSessionRow> for DevelopmentSession {
-    fn from(value: DevelopmentSessionRow) -> Self {
-        Self { user_id: value.id }
-    }
+#[derive(sqlx::FromRow)]
+pub struct OAuthLoginAttempt {
+    pub nonce: String,
+    pub pkce_verifier: String,
+    pub user_id: Option<Uuid>,
+    pub purpose: String,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct SessionAuthentication {
+    pub user_id: Uuid,
+    pub csrf_token: String,
+}
+
+fn random_token() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+fn token_hash(token: &str) -> Vec<u8> {
+    Sha256::digest(token.as_bytes()).to_vec()
 }
 
 fn validate_project_fields(name: &str, outcome: &str) -> AppResult<()> {

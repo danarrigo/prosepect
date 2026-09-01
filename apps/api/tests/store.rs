@@ -1,9 +1,13 @@
-use chrono::{TimeZone, Utc};
+use chrono::{Duration, NaiveDate, TimeZone, Utc};
 use prosepect_api::{
     error::AppError,
     models::{
-        CreateProjectRequest, CreateTaskRequest, ProjectStatus, ReorderTasksRequest, TaskPriority,
-        TaskRecurrence, TaskStatus, UpdateProjectRequest, UpdateTaskRequest,
+        CalendarEventQuery, CompleteDailyReviewRequest, CreateCalendarEventRequest,
+        CreateNoteRequest, CreateProjectRequest, CreateTaskRequest, EventRecurrence, ProjectStatus,
+        ReorderTasksRequest, ReviewDecisionAction, ReviewTaskDecision, SyncConflictPolicy,
+        TaskPriority, TaskRecurrence, TaskStatus, ThemePreference, TodoistImportRequest,
+        TodoistImportTask, UpdateCalendarEventRequest, UpdateDailyFocusRequest,
+        UpdateProjectRequest, UpdateTaskRequest, UpdateUserSettingsRequest,
     },
     store::Store,
 };
@@ -41,6 +45,109 @@ async fn project_and_task_queries_are_tenant_isolated(pool: PgPool) -> anyhow::R
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn todoist_import_preserves_projects_tasks_and_nesting(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "todoist-import@example.com").await?;
+    let due_at = Utc.with_ymd_and_hms(2026, 9, 15, 16, 0, 0).unwrap();
+
+    let result = store
+        .import_todoist_project(
+            user_id,
+            TodoistImportRequest {
+                project_name: "Imported work".to_owned(),
+                project_description: "Imported from Todoist".to_owned(),
+                tasks: vec![
+                    TodoistImportTask {
+                        title: "Parent task".to_owned(),
+                        description: "Context".to_owned(),
+                        due_at: Some(due_at),
+                        scheduled_start: None,
+                        scheduled_end: None,
+                        priority: TaskPriority::Urgent,
+                        recurrence: TaskRecurrence::None,
+                        labels: vec!["Review".to_owned()],
+                        parent_index: None,
+                    },
+                    TodoistImportTask {
+                        title: "Child task".to_owned(),
+                        description: String::new(),
+                        due_at: None,
+                        scheduled_start: None,
+                        scheduled_end: None,
+                        priority: TaskPriority::Medium,
+                        recurrence: TaskRecurrence::None,
+                        labels: vec![],
+                        parent_index: Some(0),
+                    },
+                ],
+            },
+        )
+        .await?;
+
+    assert_eq!(result.imported_tasks, 2);
+    assert_eq!(result.project.name, "Imported work");
+    assert_eq!(result.project.total_tasks, 2);
+    let tasks = store
+        .list_tasks(user_id, Some(result.project.id), None, 50)
+        .await?
+        .items;
+    let parent = tasks
+        .iter()
+        .find(|task| task.title == "Parent task")
+        .unwrap();
+    let child = tasks
+        .iter()
+        .find(|task| task.title == "Child task")
+        .unwrap();
+    assert_eq!(parent.due_at, Some(due_at));
+    assert_eq!(parent.priority, TaskPriority::Urgent);
+    assert_eq!(parent.labels, vec!["review"]);
+    assert_eq!(child.parent_task_id, Some(parent.id));
+
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn invalid_todoist_import_does_not_create_a_partial_project(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "invalid-todoist-import@example.com").await?;
+
+    let error = store
+        .import_todoist_project(
+            user_id,
+            TodoistImportRequest {
+                project_name: "Should roll back".to_owned(),
+                project_description: String::new(),
+                tasks: vec![TodoistImportTask {
+                    title: String::new(),
+                    description: String::new(),
+                    due_at: None,
+                    scheduled_start: None,
+                    scheduled_end: None,
+                    priority: TaskPriority::Medium,
+                    recurrence: TaskRecurrence::None,
+                    labels: vec![],
+                    parent_index: None,
+                }],
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AppError::Validation(_)));
+    assert!(
+        store
+            .list_projects(user_id, None, 50)
+            .await?
+            .items
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn tasks_can_exist_without_a_project(pool: PgPool) -> anyhow::Result<()> {
     let store = Store::from_pool(pool.clone());
     let user_id = create_user(&pool, "standalone-task@example.com").await?;
@@ -65,6 +172,220 @@ async fn tasks_can_exist_without_a_project(pool: PgPool) -> anyhow::Result<()> {
     assert_eq!(
         store.list_tasks(user_id, None, None, 50).await?.items[0].id,
         task.id
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn daily_focus_is_ordered_limited_and_tenant_isolated(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "focus@example.com").await?;
+    let other_user = create_user(&pool, "other-focus@example.com").await?;
+    let project = store
+        .create_project(user_id, project_request("Focus project"))
+        .await?;
+    let other_project = store
+        .create_project(other_user, project_request("Other focus project"))
+        .await?;
+    let mut tasks = Vec::new();
+    for title in ["First", "Second", "Third", "Fourth"] {
+        tasks.push(
+            store
+                .create_task(user_id, task_request(project.id, title))
+                .await?,
+        );
+    }
+    let other_task = store
+        .create_task(other_user, task_request(other_project.id, "Private"))
+        .await?;
+    let date = NaiveDate::from_ymd_opt(2026, 8, 29).expect("valid date");
+
+    let plan = store
+        .update_daily_focus(
+            user_id,
+            date,
+            UpdateDailyFocusRequest {
+                task_ids: vec![tasks[1].id, tasks[0].id, tasks[2].id],
+            },
+        )
+        .await?;
+    assert_eq!(
+        plan.focus_tasks
+            .iter()
+            .map(|task| task.title.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Second", "First", "Third"]
+    );
+    assert_eq!(store.daily_plan(user_id, date).await?.focus_tasks.len(), 3);
+
+    let too_many = store
+        .update_daily_focus(
+            user_id,
+            date,
+            UpdateDailyFocusRequest {
+                task_ids: tasks.iter().map(|task| task.id).collect(),
+            },
+        )
+        .await;
+    assert!(matches!(too_many, Err(AppError::Validation(_))));
+
+    let cross_tenant = store
+        .update_daily_focus(
+            user_id,
+            date,
+            UpdateDailyFocusRequest {
+                task_ids: vec![other_task.id],
+            },
+        )
+        .await;
+    assert!(matches!(cross_tenant, Err(AppError::Validation(_))));
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn daily_review_carries_unfinished_focus_forward(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "review@example.com").await?;
+    let project = store
+        .create_project(user_id, project_request("Review project"))
+        .await?;
+    let task = store
+        .create_task(user_id, task_request(project.id, "Carry me forward"))
+        .await?;
+    let yesterday = NaiveDate::from_ymd_opt(2026, 8, 28).unwrap();
+    let today = NaiveDate::from_ymd_opt(2026, 8, 29).unwrap();
+    store
+        .update_daily_focus(
+            user_id,
+            yesterday,
+            UpdateDailyFocusRequest {
+                task_ids: vec![task.id],
+            },
+        )
+        .await?;
+
+    let started = store.start_daily_review(user_id, today, false).await?;
+    let review = started.review.expect("review should start");
+    assert_eq!(review.unfinished_tasks[0].id, task.id);
+    let completed = store
+        .complete_daily_review(
+            user_id,
+            today,
+            CompleteDailyReviewRequest {
+                decisions: vec![ReviewTaskDecision {
+                    task_id: task.id,
+                    action: ReviewDecisionAction::CarryForward,
+                    due_at: None,
+                }],
+                expected_version: review.version,
+            },
+        )
+        .await?;
+
+    assert!(matches!(
+        completed.status,
+        prosepect_api::models::DailyReviewStatus::Completed
+    ));
+    assert_eq!(
+        store.daily_plan(user_id, today).await?.focus_tasks[0].id,
+        task.id
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_labels_become_reusable_global_labels(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "labels@example.com").await?;
+    let project = store
+        .create_project(user_id, project_request("Labels project"))
+        .await?;
+    let mut request = task_request(project.id, "Labeled task");
+    request.labels = vec![" Work ".to_owned(), "review".to_owned()];
+
+    store.create_task(user_id, request).await?;
+
+    assert_eq!(
+        store.list_labels(user_id).await?.items,
+        vec!["review", "work"]
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn scheduling_a_task_maintains_a_distinct_linked_event(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "scheduled-event@example.com").await?;
+    let project = store
+        .create_project(user_id, project_request("Scheduled project"))
+        .await?;
+    let starts_at = Utc
+        .with_ymd_and_hms(2026, 8, 30, 14, 0, 0)
+        .single()
+        .unwrap();
+    let mut request = task_request(project.id, "Time blocked task");
+    request.scheduled_start = Some(starts_at);
+    request.scheduled_end = Some(starts_at + Duration::hours(1));
+
+    let task = store.create_task(user_id, request).await?;
+    let calendars = store.list_calendars(user_id).await?;
+    assert_eq!(calendars.items.len(), 1);
+    assert!(calendars.items[0].is_default);
+    let range = CalendarEventQuery {
+        starts_before: starts_at + Duration::days(1),
+        ends_after: starts_at - Duration::days(1),
+        calendar_id: None,
+    };
+    let events = store.list_calendar_events(user_id, range).await?;
+    assert_eq!(events.items.len(), 1);
+    assert_eq!(events.items[0].linked_task_id, Some(task.id));
+    assert_eq!(events.items[0].title, task.title);
+
+    let mut update = update_request(&task, TaskStatus::Todo);
+    update.scheduled_start = None;
+    update.scheduled_end = None;
+    store.update_task(user_id, task.id, update).await?;
+    let remaining = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM calendar_events WHERE linked_task_id = $1",
+    )
+    .bind(task.id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(remaining, 0);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn markdown_notes_are_linked_and_globally_searchable(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "notes@example.com").await?;
+    let other_user = create_user(&pool, "other-notes@example.com").await?;
+    let project = store
+        .create_project(user_id, project_request("Launch portfolio"))
+        .await?;
+    let note = store
+        .create_note(
+            user_id,
+            CreateNoteRequest {
+                project_id: Some(project.id),
+                task_id: None,
+                event_id: None,
+                title: "Release checklist".to_owned(),
+                markdown: "Verify the **portfolio launch**.".to_owned(),
+            },
+        )
+        .await?;
+
+    assert_eq!(store.list_notes(user_id).await?.items[0].id, note.id);
+    let results = store.global_search(user_id, "portfolio", 20).await?;
+    assert!(results.items.iter().any(|result| result.id == project.id));
+    assert!(results.items.iter().any(|result| result.id == note.id));
+    assert!(
+        store
+            .global_search(other_user, "portfolio", 20)
+            .await?
+            .items
+            .is_empty()
     );
     Ok(())
 }
@@ -394,6 +715,267 @@ async fn tasks_can_be_reordered_globally(pool: PgPool) -> anyhow::Result<()> {
             .collect::<Vec<_>>(),
         vec!["Third", "First", "Second"]
     );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn settings_use_optimistic_concurrency(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "settings@example.com").await?;
+    let settings = store.user_settings(user_id).await?;
+    assert_eq!(settings.theme, ThemePreference::System);
+
+    let updated = store
+        .update_user_settings(
+            user_id,
+            UpdateUserSettingsRequest {
+                theme: ThemePreference::Dark,
+                automatic_daily_review: false,
+                sync_conflict_policy: SyncConflictPolicy::Latest,
+                expected_version: settings.version,
+            },
+        )
+        .await?;
+    assert_eq!(updated.theme, ThemePreference::Dark);
+    assert!(!updated.automatic_daily_review);
+
+    let stale = store
+        .update_user_settings(
+            user_id,
+            UpdateUserSettingsRequest {
+                theme: ThemePreference::Light,
+                automatic_daily_review: true,
+                sync_conflict_policy: SyncConflictPolicy::Ask,
+                expected_version: settings.version,
+            },
+        )
+        .await;
+    assert!(matches!(stale, Err(AppError::Conflict(_))));
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn synchronization_jobs_are_idempotent_tenant_scoped_and_leased(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let first_user = create_user(&pool, "sync-first@example.com").await?;
+    let second_user = create_user(&pool, "sync-second@example.com").await?;
+
+    let first = store
+        .enqueue_sync(first_user, None, "calendar_discovery", "same-key")
+        .await?;
+    let duplicate = store
+        .enqueue_sync(first_user, None, "calendar_discovery", "same-key")
+        .await?;
+    let other_tenant = store
+        .enqueue_sync(second_user, None, "calendar_discovery", "same-key")
+        .await?;
+    assert_eq!(first.id, duplicate.id);
+    assert_ne!(first.id, other_tenant.id);
+
+    let claimed = store.claim_sync_job().await?.expect("claimable job");
+    assert_eq!(claimed.attempt_count, 0);
+    let claimed_again = store.claim_sync_job().await?.expect("other tenant job");
+    assert_ne!(claimed.id, claimed_again.id);
+    assert!(store.claim_sync_job().await?.is_none());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn activity_history_is_ordered_and_tenant_scoped(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let first_user = create_user(&pool, "activity-first@example.com").await?;
+    let second_user = create_user(&pool, "activity-second@example.com").await?;
+
+    store
+        .record_activity(first_user, "sync_started", "First private activity")
+        .await?;
+    store
+        .record_activity(second_user, "sync_started", "Other tenant activity")
+        .await?;
+    store
+        .record_activity(first_user, "sync_finished", "Most recent activity")
+        .await?;
+
+    let activity = store.activity_for_user(first_user).await?;
+    assert_eq!(activity.items.len(), 2);
+    assert_eq!(activity.items[0].kind, "sync_finished");
+    assert_eq!(activity.items[0].message, "Most recent activity");
+    assert!(
+        activity
+            .items
+            .iter()
+            .all(|entry| entry.message != "Other tenant activity")
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn google_calendar_mutations_enqueue_sync_and_mark_mappings_dirty(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "calendar-sync@example.com").await?;
+    let calendar_id = Uuid::now_v7();
+    sqlx::query(
+        r#"
+        INSERT INTO calendars (id, user_id, name, color, source, external_id, selected)
+        VALUES ($1, $2, 'Google', '#4285f4', 'google', 'remote-calendar', TRUE)
+        "#,
+    )
+    .bind(calendar_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await?;
+    let starts_at = Utc.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let event = store
+        .create_calendar_event(
+            user_id,
+            CreateCalendarEventRequest {
+                calendar_id,
+                title: "Planning".to_owned(),
+                description: String::new(),
+                starts_at,
+                ends_at: starts_at + Duration::hours(1),
+                all_day: false,
+                timezone: "UTC".to_owned(),
+                location: String::new(),
+                attendees: vec![],
+                recurrence: EventRecurrence::None,
+                recurrence_until: None,
+            },
+        )
+        .await?;
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_jobs WHERE user_id = $1 AND calendar_id = $2",
+    )
+    .bind(user_id)
+    .bind(calendar_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(queued, 1);
+
+    sqlx::query(
+        r#"
+        INSERT INTO external_event_mappings (
+            id, user_id, calendar_id, canonical_event_id, external_calendar_id,
+            external_event_id, external_etag
+        ) VALUES ($1, $2, $3, $4, 'remote-calendar', 'remote-event', 'etag-1')
+        "#,
+    )
+    .bind(Uuid::now_v7())
+    .bind(user_id)
+    .bind(calendar_id)
+    .bind(event.id)
+    .execute(&pool)
+    .await?;
+    store
+        .update_calendar_event(
+            user_id,
+            event.id,
+            UpdateCalendarEventRequest {
+                calendar_id,
+                title: "Updated planning".to_owned(),
+                description: event.description,
+                starts_at: event.starts_at,
+                ends_at: event.ends_at,
+                all_day: event.all_day,
+                timezone: event.timezone,
+                location: event.location,
+                attendees: event.attendees,
+                recurrence: event.recurrence,
+                recurrence_until: event.recurrence_until,
+                expected_version: event.version,
+            },
+        )
+        .await?;
+    let dirty: bool = sqlx::query_scalar(
+        "SELECT local_dirty FROM external_event_mappings WHERE canonical_event_id = $1",
+    )
+    .bind(event.id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(dirty);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn conflict_resolution_updates_mapping_and_enqueues_atomically(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "conflict-resolution@example.com").await?;
+    let calendar_id = Uuid::now_v7();
+    let mapping_id = Uuid::now_v7();
+    let conflict_id = Uuid::now_v7();
+    sqlx::query(
+        r#"
+        INSERT INTO calendars (id, user_id, name, color, source, external_id, selected)
+        VALUES ($1, $2, 'Google', '#4285f4', 'google', 'remote-calendar', TRUE)
+        "#,
+    )
+    .bind(calendar_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO external_event_mappings (
+            id, user_id, calendar_id, external_calendar_id, external_event_id,
+            external_etag, local_dirty, conflict_state
+        ) VALUES ($1, $2, $3, 'remote-calendar', 'remote-event', 'etag-1', TRUE, 'unresolved')
+        "#,
+    )
+    .bind(mapping_id)
+    .bind(user_id)
+    .bind(calendar_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO sync_conflicts (id, user_id, mapping_id, title)
+        VALUES ($1, $2, $3, 'Conflicted event')
+        "#,
+    )
+    .bind(conflict_id)
+    .bind(user_id)
+    .bind(mapping_id)
+    .execute(&pool)
+    .await?;
+
+    let resolved = store
+        .resolve_sync_conflict(user_id, conflict_id, "google")
+        .await?;
+    assert_eq!(resolved.status, "resolved");
+    assert_eq!(resolved.resolution.as_deref(), Some("google"));
+    let mapping: (String, bool, bool, Option<String>, Option<String>) = sqlx::query_as(
+        r#"
+        SELECT conflict_state, local_dirty, local_deleted, external_etag, pending_resolution
+        FROM external_event_mappings WHERE id = $1
+        "#,
+    )
+    .bind(mapping_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        mapping,
+        (
+            "none".to_owned(),
+            false,
+            false,
+            None,
+            Some("google".to_owned())
+        )
+    );
+    let jobs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_jobs WHERE user_id = $1 AND calendar_id = $2 AND kind = 'calendar_sync'",
+    )
+    .bind(user_id)
+    .bind(calendar_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(jobs, 1);
     Ok(())
 }
 
