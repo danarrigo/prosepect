@@ -26,8 +26,8 @@ See [PRD.md](PRD.md) for the product contract.
 - **Frontend:** Vue 3, TypeScript, Vite, Tailwind CSS, Pinia, and Reka UI
 - **Data:** PostgreSQL for canonical product state, jobs, conflicts, and activity
 - **Files:** local filesystem in development or S3-compatible object storage
-- **Background work:** portable long-running or one-shot worker
-- **Hosted deployment:** Vercel SPA, Render Free API, GitHub Actions synchronization worker, Neon PostgreSQL, and Cloudflare R2
+- **Background work:** portable long-running or one-shot worker, plus an authenticated API trigger for hosted cron
+- **Hosted deployment:** Vercel SPA, Render Free API, GitHub Actions synchronization trigger, Neon PostgreSQL, and Cloudflare R2
 - **Self-hosting:** Docker Compose with PostgreSQL, MinIO, API, worker, and web services
 
 ## Repository layout
@@ -93,7 +93,7 @@ The frontend runs at <http://localhost:5173>. Swagger UI runs at <http://localho
 4. Configure the consent screen for OpenID scopes. Calendar scopes are requested later, only when a signed-in user connects Google Calendar.
 5. Restart the API and worker.
 
-Production requires Google configuration, S3-compatible storage, secure cookies, and development authentication disabled. Set `INVITE_ONLY=true` for hosted beta access and insert lowercase emails into `account_invites` before first sign-in.
+Production requires Google configuration, S3-compatible storage, secure cookies, and development authentication disabled. Set `INVITE_ONLY=true` for hosted beta access and insert lowercase emails into `account_invites` before first sign-in. Hosted deployments should set a random `WORKER_TRIGGER_TOKEN`; the scheduled GitHub workflow uses it to invoke one synchronization claim without compiling Rust on every run.
 
 ## Keyboard shortcuts
 

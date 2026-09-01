@@ -47,6 +47,10 @@ services:
         value: "false"
       - key: MAX_FILE_SIZE_BYTES
         value: "26214400"
+      - key: MAX_TOTAL_FILE_STORAGE_BYTES
+        value: "5368709120"
+      - key: WORKER_TRIGGER_TOKEN
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: GOOGLE_CLIENT_ID

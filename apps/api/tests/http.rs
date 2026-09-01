@@ -5,7 +5,7 @@ use axum::{
 use prosepect_api::{
     app::{self, ApiDoc},
     auth::DEVELOPMENT_USER_HEADER,
-    config::{Config, Environment, ObjectStorageConfig},
+    config::{Config, Environment, GoogleOAuthConfig, ObjectStorageConfig},
     store::{DEVELOPMENT_USER_ID, Store},
 };
 use sqlx::PgPool;
@@ -93,6 +93,48 @@ async fn development_session_uses_an_http_only_cookie_and_csrf_token(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn synchronization_trigger_requires_its_service_token(pool: PgPool) -> anyhow::Result<()> {
+    let token = "worker-trigger-token-for-tests-123";
+    let mut config = test_config();
+    config.worker_trigger_token = Some(token.to_owned());
+    config.google_oauth = Some(GoogleOAuthConfig {
+        client_id: "test-client".to_owned(),
+        client_secret: "test-secret".to_owned(),
+        redirect_uri: "http://localhost/callback".to_owned(),
+        token_encryption_key: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".to_owned(),
+    });
+    let router = app::build(&config, Store::from_pool(pool))?;
+
+    let rejected = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/internal/synchronization/run")
+                .header(header::AUTHORIZATION, "Bearer wrong-token")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+
+    let accepted = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/internal/synchronization/run")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(accepted.status(), StatusCode::OK);
+    let body = to_bytes(accepted.into_body(), 64 * 1024).await?;
+    let body: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(body["enqueued"], 0);
+    assert_eq!(body["processed"], false);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn file_upload_download_and_deletion_are_tenant_scoped(pool: PgPool) -> anyhow::Result<()> {
     let config = test_config();
     let router = app::build(&config, Store::from_pool(pool))?;
@@ -173,6 +215,55 @@ async fn file_upload_download_and_deletion_are_tenant_scoped(pool: PgPool) -> an
         )
         .await?;
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn file_uploads_respect_the_global_storage_quota(pool: PgPool) -> anyhow::Result<()> {
+    let mut config = test_config();
+    config.max_total_file_storage_bytes = 8;
+    let router = app::build(&config, Store::from_pool(pool.clone()))?;
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+
+    for (contents, expected) in [
+        ("12345678", StatusCode::CREATED),
+        ("x", StatusCode::PAYLOAD_TOO_LARGE),
+    ] {
+        let boundary = format!("prosepect-quota-{}", contents.len());
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"quota.txt\"\r\nContent-Type: text/plain\r\n\r\n{contents}\r\n--{boundary}--\r\n"
+        );
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/files")
+                    .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))?,
+            )
+            .await?;
+        assert_eq!(response.status(), expected);
+    }
+
+    let stored_bytes: i64 =
+        sqlx::query_scalar("SELECT COALESCE(SUM(byte_size), 0)::BIGINT FROM files")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(stored_bytes, 8);
     Ok(())
 }
 
@@ -379,5 +470,7 @@ fn test_config() -> Config {
                 .into_owned(),
         },
         max_file_size_bytes: 25 * 1024 * 1024,
+        max_total_file_storage_bytes: 5_i64 * 1024 * 1024 * 1024,
+        worker_trigger_token: None,
     }
 }

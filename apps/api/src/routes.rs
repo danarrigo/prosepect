@@ -5,6 +5,8 @@ use axum::{
     response::Redirect,
 };
 use chrono::{NaiveDate, Utc};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
@@ -58,6 +60,46 @@ pub async fn metrics(State(state): State<AppState>) -> ([(&'static str, &'static
 pub async fn ready(State(state): State<AppState>) -> AppResult<Json<HealthResponse>> {
     state.store.ready().await?;
     Ok(Json(HealthResponse { status: "ready" }))
+}
+
+#[derive(Serialize)]
+pub struct WorkerRunResponse {
+    enqueued: u64,
+    processed: bool,
+}
+
+pub async fn run_synchronization_worker(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<Json<WorkerRunResponse>> {
+    let expected = state
+        .worker_trigger_token
+        .as_deref()
+        .ok_or(AppError::NotConfigured("synchronization worker trigger"))?;
+    if !worker_token_matches(&headers, expected) {
+        return Err(AppError::Unauthorized);
+    }
+    let service = state
+        .sync_service
+        .as_ref()
+        .ok_or(AppError::NotConfigured("Google synchronization"))?;
+    let enqueued = state.store.enqueue_periodic_synchronizations().await?;
+    let processed = service.run_once().await.map_err(AppError::Integration)?;
+    Ok(Json(WorkerRunResponse {
+        enqueued,
+        processed,
+    }))
+}
+
+fn worker_token_matches(headers: &HeaderMap, expected: &str) -> bool {
+    let Some(token) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+    else {
+        return false;
+    };
+    Sha256::digest(token.as_bytes()) == Sha256::digest(expected.as_bytes())
 }
 
 #[utoipa::path(

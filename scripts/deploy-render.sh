@@ -256,12 +256,17 @@ TOKEN_ENCRYPTION_KEY=$(_existing TOKEN_ENCRYPTION_KEY || true)
 if [[ -z "$TOKEN_ENCRYPTION_KEY" ]]; then
   TOKEN_ENCRYPTION_KEY=$(openssl rand -base64 32)
 fi
+WORKER_TRIGGER_TOKEN=$(_existing WORKER_TRIGGER_TOKEN || true)
+if [[ -z "$WORKER_TRIGGER_TOKEN" ]]; then
+  WORKER_TRIGGER_TOKEN=$(openssl rand -hex 32)
+fi
 ask INVITE_EMAIL "Google account email to invite:"
 require_value INVITE_EMAIL "$INVITE_EMAIL"
 write_env GCP_PROJECT_ID "$GCP_PROJECT_ID"
 write_env GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"
 write_env GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
 write_env TOKEN_ENCRYPTION_KEY "$TOKEN_ENCRYPTION_KEY"
+write_env WORKER_TRIGGER_TOKEN "$WORKER_TRIGGER_TOKEN"
 write_env INVITE_EMAIL "$INVITE_EMAIL"
 chmod 600 "$ENV_FILE"
 
@@ -273,7 +278,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 open_url "https://render.com/deploy?repo=https://github.com/danarrigo/prosepect"
 step "Connect GitHub, select the main branch, and create the prosepect-api Blueprint on the Free plan."
-step "For each requested secret, paste the matching value from ${ENV_FILE}: DATABASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, S3_BUCKET, S3_ENDPOINT, S3_PUBLIC_ENDPOINT, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY."
+step "For each requested secret, paste the matching value from ${ENV_FILE}: DATABASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, WORKER_TRIGGER_TOKEN, S3_BUCKET, S3_ENDPOINT, S3_PUBLIC_ENDPOINT, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY."
 step "Wait for the initial Docker build and deployment to finish."
 pause "Press Enter after Render reports that prosepect-api is live."
 ask RENDER_API_URL "Render service URL, such as https://prosepect-api.onrender.com:"
@@ -287,19 +292,12 @@ fi
 say "Render readiness passed."
 
 stage "Scheduled synchronization worker"
-say "GitHub Actions runs prosepect-worker --once every 15 minutes. Scheduled public-repository runners are free but can be delayed."
-set_secret PROSEPECT_DATABASE_URL "$DATABASE_URL"
-set_secret PROSEPECT_GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"
-set_secret PROSEPECT_GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
-set_secret PROSEPECT_TOKEN_ENCRYPTION_KEY "$TOKEN_ENCRYPTION_KEY"
-set_secret PROSEPECT_S3_BUCKET "$S3_BUCKET"
-set_secret PROSEPECT_S3_ENDPOINT "$S3_ENDPOINT"
-set_secret PROSEPECT_S3_ACCESS_KEY_ID "$S3_ACCESS_KEY_ID"
-set_secret PROSEPECT_S3_SECRET_ACCESS_KEY "$S3_SECRET_ACCESS_KEY"
+say "GitHub Actions calls the API's authenticated one-shot synchronization endpoint every 15 minutes. Scheduled runs do not compile Rust or start a worker container."
+set_secret PROSEPECT_WORKER_TRIGGER_TOKEN "$WORKER_TRIGGER_TOKEN"
 set_var PROSEPECT_WORKER_ENABLED "true"
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh workflow run worker.yml
-  say "Started the first synchronization worker run."
+  say "Started the first synchronization trigger."
 else
   warn "Run 'gh workflow run worker.yml' after GitHub CLI authentication is restored."
 fi

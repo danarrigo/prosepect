@@ -325,9 +325,9 @@ Raw provider payloads are processed transiently and are not retained as duplicat
 - Domain: `prosepect.com`
 - Frontend: Vercel
 - Backend: Axum container on Render Free
-- Scheduled work: one-shot worker invoked by GitHub Actions every 15 minutes
+- Scheduled work: GitHub Actions invokes an authenticated one-shot synchronization endpoint every 15 minutes without compiling Rust per run
 - PostgreSQL: Neon free tier during beta
-- Files: private Cloudflare R2 bucket
+- Files: private Cloudflare R2 bucket with a 5 GiB application-level storage quota
 - Access: invite-only
 - Price: free during beta
 - Target infrastructure cost: approximately $0 within provider free allowances
@@ -416,7 +416,7 @@ The product must include:
 
 - Complete Docker Compose self-hosting
 - Vercel frontend deployment
-- Render Free API and GitHub Actions worker deployment
+- Render Free API and GitHub Actions synchronization-trigger deployment
 - Invite-only official beta
 - Operational documentation
 

@@ -11,6 +11,8 @@ Production startup intentionally fails unless these invariants hold:
 - all Google OAuth variables are present
 - `TOKEN_ENCRYPTION_KEY` decodes to exactly 32 bytes
 - all required S3 variables are present
+- `MAX_TOTAL_FILE_STORAGE_BYTES` is set below the provider's free storage allowance
+- `WORKER_TRIGGER_TOKEN` contains at least 32 random characters when hosted cron is enabled
 - `DATABASE_URL`, `APP_URL`, and `CORS_ALLOWED_ORIGIN` point at production services
 
 Generate the credential-encryption key with:
@@ -34,11 +36,11 @@ The supported hosted-beta topology is:
 
 - Vercel serves the Vue application at `https://prosepect.com`.
 - Render Free runs the Axum API at `https://api.prosepect.com`.
-- GitHub Actions executes `prosepect-worker --once` every 15 minutes.
+- GitHub Actions calls an authenticated API synchronization endpoint every 15 minutes.
 - Neon PostgreSQL stores all canonical and operational state.
 - A private Cloudflare R2 bucket stores attachments through presigned URLs.
 
-This topology does not require a Google Cloud billing account. Render Free is suitable for a personal beta, not a production SLA: the API sleeps after 15 idle minutes and can take about one minute to wake. Free services can be suspended when monthly allowances are exhausted. GitHub schedules can be delayed and public-repository schedules are disabled after 60 days without repository activity.
+This topology does not require a Google Cloud billing account. Render Free is suitable for a personal beta, not a production SLA. The synchronization trigger normally keeps the API awake and consumes most of the service's monthly free-instance allowance. If the trigger is disabled, the API sleeps after 15 idle minutes and can take about one minute to wake. Free services can be suspended when monthly allowances are exhausted. GitHub schedules can be delayed and public-repository schedules are disabled after 60 days without repository activity.
 
 ### Guided setup
 
@@ -57,19 +59,22 @@ The wizard opens each required dashboard, captures secrets with hidden input, st
 Render must receive these canonical public values:
 
 ```text
-APP_URL                    https://prosepect.com
-CORS_ALLOWED_ORIGIN        https://prosepect.com
-GOOGLE_REDIRECT_URI        https://api.prosepect.com/api/v1/auth/google/callback
-BIND_ADDRESS               0.0.0.0:10000
+APP_URL                         https://prosepect.com
+CORS_ALLOWED_ORIGIN             https://prosepect.com
+GOOGLE_REDIRECT_URI             https://api.prosepect.com/api/v1/auth/google/callback
+BIND_ADDRESS                    0.0.0.0:10000
+MAX_TOTAL_FILE_STORAGE_BYTES    5368709120
 ```
+
+Generate `WORKER_TRIGGER_TOKEN` with `openssl rand -hex 32`, store the same value in Render and the GitHub secret `PROSEPECT_WORKER_TRIGGER_TOKEN`, and never put it in source control.
 
 Attach `api.prosepect.com` as a Render custom domain and add the DNS record Render displays. Managed TLS provisioning can take time.
 
 ### Scheduled worker
 
-`.github/workflows/worker.yml` runs the one-shot worker at minutes 7, 22, 37, and 52 of each hour to avoid the busiest start-of-hour scheduling window. Overlapping runs are serialized. The job remains skipped until the wizard sets `PROSEPECT_WORKER_ENABLED=true` and writes all `PROSEPECT_*` repository secrets.
+`.github/workflows/worker.yml` calls `POST /internal/synchronization/run` at minutes 7, 22, 37, and 52 of each hour to avoid the busiest start-of-hour scheduling window. The API verifies a bearer token, enqueues due calendar work, and processes at most one claim. Overlapping runs are serialized. Scheduled runs use `curl` only: they do not compile Rust and do not start a worker container. The job remains skipped until `PROSEPECT_WORKER_ENABLED=true` and `PROSEPECT_WORKER_TRIGGER_TOKEN` is configured.
 
-The repository is public, so standard GitHub-hosted runners are free. Treat GitHub scheduling as best-effort, monitor failures, and manually run the workflow after changing synchronization configuration.
+The same request also acts as an API availability check because network, authentication, or worker failures fail the workflow. The repository is public, so standard GitHub-hosted runners are free. Treat GitHub scheduling as best-effort, enable Actions failure notifications, and manually run the workflow after changing synchronization configuration.
 
 ### Domains and OAuth
 
@@ -155,7 +160,16 @@ docker compose run --rm --entrypoint /bin/sh -v "$PWD/backups:/backup" minio-ini
   'mc alias set local http://minio:9000 "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" && mc mirror local/prosepect /backup/objects'
 ```
 
-For the hosted beta, use `pg_dump` against Neon and copy R2 objects to an independent backup. To migrate to a server, disable the GitHub synchronization workflow, restore the PostgreSQL dump, copy R2 objects into MinIO, configure the same environment contract, deploy Compose, and then switch DNS.
+For the hosted beta, use `pg_dump` against Neon and copy R2 objects to an independent encrypted disk or storage account. The database provider's short point-in-time recovery window and R2 itself are not independent backups. Example direct commands are:
+
+```bash
+pg_dump "$DATABASE_URL" --format=custom --file=prosepect-postgres.dump
+aws s3 sync "s3://$S3_BUCKET" prosepect-r2-backup \
+  --endpoint-url "$S3_ENDPOINT" \
+  --region auto
+```
+
+Keep the dump, object copy, and the credentials needed to decrypt them outside the production providers. To migrate to a server, disable the GitHub synchronization workflow, restore the PostgreSQL dump, copy R2 objects into MinIO, configure the same environment contract, deploy Compose, and then switch DNS.
 
 Test restores in an isolated environment. Restore PostgreSQL first and objects second, then start the synchronization worker.
 

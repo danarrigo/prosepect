@@ -19,11 +19,29 @@ impl Store {
         filename: &str,
         content_type: &str,
         byte_size: i64,
+        max_total_storage_bytes: i64,
     ) -> AppResult<FileRecord> {
         validate_one_parent(project_id, task_id, note_id, event_id)?;
         self.verify_file_parent(user_id, project_id, task_id, note_id, event_id)
             .await?;
-        sqlx::query_as::<_, FileRecord>(
+
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(741_733_074_i64)
+            .execute(&mut *transaction)
+            .await?;
+        let used_bytes =
+            sqlx::query_scalar::<_, i64>("SELECT COALESCE(SUM(byte_size), 0)::BIGINT FROM files")
+                .fetch_one(&mut *transaction)
+                .await?;
+        if byte_size > max_total_storage_bytes.saturating_sub(used_bytes) {
+            return Err(AppError::InvalidRequest {
+                status: axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                message: "attachment storage quota exceeded".to_owned(),
+            });
+        }
+
+        let file = sqlx::query_as::<_, FileRecord>(
             r#"
             INSERT INTO files (
                 id, user_id, project_id, task_id, note_id, event_id,
@@ -43,9 +61,10 @@ impl Store {
         .bind(filename)
         .bind(content_type)
         .bind(byte_size)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(AppError::from)
+        .fetch_one(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(file)
     }
 
     pub async fn list_files(&self, user_id: Uuid, query: FileListQuery) -> AppResult<FileList> {

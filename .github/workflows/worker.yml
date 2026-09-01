@@ -5,8 +5,7 @@ on:
     - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: production-synchronization-worker
@@ -16,32 +15,20 @@ jobs:
   synchronize:
     if: vars.PROSEPECT_WORKER_ENABLED == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      APP_ENV: production
-      BIND_ADDRESS: 127.0.0.1:3000
-      RUST_LOG: prosepect_api=info
-      DATABASE_URL: ${{ secrets.PROSEPECT_DATABASE_URL }}
-      DATABASE_MAX_CONNECTIONS: "2"
-      APP_URL: https://prosepect.com
-      CORS_ALLOWED_ORIGIN: https://prosepect.com
-      ALLOW_INSECURE_DEV_AUTH: "false"
-      INVITE_ONLY: "true"
-      TRUST_PROXY_HEADERS: "false"
-      GOOGLE_CLIENT_ID: ${{ secrets.PROSEPECT_GOOGLE_CLIENT_ID }}
-      GOOGLE_CLIENT_SECRET: ${{ secrets.PROSEPECT_GOOGLE_CLIENT_SECRET }}
-      GOOGLE_REDIRECT_URI: https://api.prosepect.com/api/v1/auth/google/callback
-      TOKEN_ENCRYPTION_KEY: ${{ secrets.PROSEPECT_TOKEN_ENCRYPTION_KEY }}
-      S3_BUCKET: ${{ secrets.PROSEPECT_S3_BUCKET }}
-      S3_REGION: auto
-      S3_ENDPOINT: ${{ secrets.PROSEPECT_S3_ENDPOINT }}
-      S3_PUBLIC_ENDPOINT: ${{ secrets.PROSEPECT_S3_ENDPOINT }}
-      S3_ACCESS_KEY_ID: ${{ secrets.PROSEPECT_S3_ACCESS_KEY_ID }}
-      S3_SECRET_ACCESS_KEY: ${{ secrets.PROSEPECT_S3_SECRET_ACCESS_KEY }}
-      S3_ALLOW_HTTP: "false"
-      S3_VIRTUAL_HOSTED_STYLE: "false"
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo run --locked --release -p prosepect-api --bin worker -- --once
+      - name: Wake API and process one synchronization job
+        env:
+          WORKER_TRIGGER_TOKEN: ${{ secrets.PROSEPECT_WORKER_TRIGGER_TOKEN }}
+        run: |
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --retry 2 \
+            --retry-all-errors \
+            --connect-timeout 20 \
+            --max-time 180 \
+            --header "Authorization: Bearer ${WORKER_TRIGGER_TOKEN}" \
+            --request POST \
+            https://api.prosepect.com/internal/synchronization/run

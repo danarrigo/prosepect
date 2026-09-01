@@ -61,6 +61,8 @@ pub struct Config {
     pub google_oauth: Option<GoogleOAuthConfig>,
     pub object_storage: ObjectStorageConfig,
     pub max_file_size_bytes: usize,
+    pub max_total_file_storage_bytes: i64,
+    pub worker_trigger_token: Option<String>,
 }
 
 impl Config {
@@ -175,6 +177,20 @@ impl Config {
         if !(1..=100 * 1024 * 1024).contains(&max_file_size_bytes) {
             bail!("MAX_FILE_SIZE_BYTES must be between 1 byte and 100 MiB");
         }
+        let max_total_file_storage_bytes = env::var("MAX_TOTAL_FILE_STORAGE_BYTES")
+            .unwrap_or_else(|_| (5_i64 * 1024 * 1024 * 1024).to_string())
+            .parse::<i64>()
+            .context("MAX_TOTAL_FILE_STORAGE_BYTES must be a positive integer")?;
+        if max_total_file_storage_bytes <= 0 {
+            bail!("MAX_TOTAL_FILE_STORAGE_BYTES must be greater than zero");
+        }
+        let worker_trigger_token = env_nonempty("WORKER_TRIGGER_TOKEN");
+        if worker_trigger_token
+            .as_ref()
+            .is_some_and(|token| token.len() < 32)
+        {
+            bail!("WORKER_TRIGGER_TOKEN must contain at least 32 characters");
+        }
 
         Ok(Self {
             environment,
@@ -189,6 +205,8 @@ impl Config {
             google_oauth,
             object_storage,
             max_file_size_bytes,
+            max_total_file_storage_bytes,
+            worker_trigger_token,
         })
     }
 }

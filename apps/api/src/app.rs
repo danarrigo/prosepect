@@ -46,6 +46,7 @@ use crate::{
     routes,
     store::Store,
     sync_routes,
+    sync_service::SyncService,
 };
 
 #[derive(Clone)]
@@ -61,6 +62,9 @@ pub struct AppState {
     pub google_oauth: Option<GoogleOAuth>,
     pub file_storage: FileStorage,
     pub max_file_size_bytes: usize,
+    pub max_total_file_storage_bytes: i64,
+    pub worker_trigger_token: Option<String>,
+    pub sync_service: Option<SyncService>,
     pub metrics: metrics_exporter_prometheus::PrometheusHandle,
 }
 
@@ -256,6 +260,10 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         .map(GoogleOAuth::new)
         .transpose()?;
     let file_storage = FileStorage::new(&config.object_storage)?;
+    let sync_service = google_oauth
+        .clone()
+        .map(|google| SyncService::new(store.clone(), google))
+        .transpose()?;
     let state = AppState {
         store,
         allow_insecure_dev_auth: config.allow_insecure_dev_auth,
@@ -268,6 +276,9 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         google_oauth,
         file_storage,
         max_file_size_bytes: config.max_file_size_bytes,
+        max_total_file_storage_bytes: config.max_total_file_storage_bytes,
+        worker_trigger_token: config.worker_trigger_token.clone(),
+        sync_service,
         metrics: observability::initialize_metrics(),
     };
 
@@ -390,6 +401,10 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         .route("/health", get(routes::health))
         .route("/ready", get(routes::ready))
         .route("/metrics", get(routes::metrics))
+        .route(
+            "/internal/synchronization/run",
+            post(routes::run_synchronization_worker),
+        )
         .nest("/api/v1", api)
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", ApiDoc::openapi()))
         .fallback(routes::route_not_found)

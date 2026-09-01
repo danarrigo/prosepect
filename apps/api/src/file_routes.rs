@@ -101,11 +101,6 @@ pub async fn upload_file(
     let upload = upload.ok_or_else(|| AppError::Validation("file is required".to_owned()))?;
     let file_id = Uuid::now_v7();
     let object_key = format!("{user_id}-{file_id}");
-    state
-        .file_storage
-        .put(&object_key, upload.bytes.clone())
-        .await
-        .map_err(storage_error)?;
     let metadata = state
         .store
         .create_file_metadata(
@@ -118,17 +113,20 @@ pub async fn upload_file(
             &upload.filename,
             &upload.content_type,
             upload.bytes.len() as i64,
+            state.max_total_file_storage_bytes,
         )
-        .await;
-    match metadata {
-        Ok(metadata) => Ok((StatusCode::CREATED, Json(metadata))),
-        Err(error) => {
-            if let Err(cleanup_error) = state.file_storage.delete(&object_key).await {
-                tracing::error!(error = ?cleanup_error, object_key, "failed to clean up rejected upload");
-            }
-            Err(error)
+        .await?;
+    if let Err(error) = state
+        .file_storage
+        .put(&object_key, upload.bytes.clone())
+        .await
+    {
+        if let Err(cleanup_error) = state.store.delete_file_metadata(user_id, metadata.id).await {
+            tracing::error!(error = ?cleanup_error, object_key, "failed to release rejected upload quota");
         }
+        return Err(storage_error(error));
     }
+    Ok((StatusCode::CREATED, Json(metadata)))
 }
 
 #[utoipa::path(
