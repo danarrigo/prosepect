@@ -41,7 +41,9 @@ test('creates an event and browses day, week, month, and agenda views', async ({
   const eventBlock = page.getByRole('button', { name: new RegExp(`Edit ${eventName}`) })
   await eventBlock.scrollIntoViewIfNeeded()
   const eventBox = await eventBlock.boundingBox()
+  const initialEventLabel = await eventBlock.getAttribute('aria-label')
   expect(eventBox).not.toBeNull()
+  expect(initialEventLabel).not.toBeNull()
   const moved = page.waitForResponse(
     (response) =>
       /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
@@ -53,8 +55,12 @@ test('creates an event and browses day, week, month, and agenda views', async ({
   await page.mouse.move(eventBox!.x + eventBox!.width / 2, eventBox!.y + 58, { steps: 5 })
   await page.mouse.up()
   await moved
+  await expect(eventBlock).not.toHaveAttribute('aria-label', initialEventLabel!)
+  const movedEventLabel = await eventBlock.getAttribute('aria-label')
+  expect(movedEventLabel).not.toBeNull()
 
   const bottomHandle = eventBlock.locator('[title="Drag bottom edge to resize"]')
+  await bottomHandle.hover()
   const bottomBox = await bottomHandle.boundingBox()
   expect(bottomBox).not.toBeNull()
   const resized = page.waitForResponse(
@@ -63,8 +69,8 @@ test('creates an event and browses day, week, month, and agenda views', async ({
       response.request().method() === 'PUT' &&
       response.status() === 200,
   )
-  await page.mouse.move(bottomBox!.x + bottomBox!.width / 2, bottomBox!.y + bottomBox!.height / 2)
   await page.mouse.down()
+  await expect(page.locator('body')).toHaveCSS('cursor', 'ns-resize')
   await page.mouse.move(
     bottomBox!.x + bottomBox!.width / 2,
     bottomBox!.y + bottomBox!.height / 2 + 48,
@@ -72,8 +78,12 @@ test('creates an event and browses day, week, month, and agenda views', async ({
   )
   await page.mouse.up()
   await resized
+  await expect(eventBlock).not.toHaveAttribute('aria-label', movedEventLabel!)
+  const resizedEventLabel = await eventBlock.getAttribute('aria-label')
+  expect(resizedEventLabel).not.toBeNull()
 
   const topHandle = eventBlock.locator('[title="Drag top edge to trim"]')
+  await topHandle.hover()
   const topBox = await topHandle.boundingBox()
   expect(topBox).not.toBeNull()
   const trimmed = page.waitForResponse(
@@ -82,13 +92,13 @@ test('creates an event and browses day, week, month, and agenda views', async ({
       response.request().method() === 'PUT' &&
       response.status() === 200,
   )
-  await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2)
   await page.mouse.down()
   await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2 + 24, {
     steps: 4,
   })
   await page.mouse.up()
   await trimmed
+  await expect(eventBlock).not.toHaveAttribute('aria-label', resizedEventLabel!)
 
   const deleteBox = await eventBlock.boundingBox()
   expect(deleteBox).not.toBeNull()
@@ -175,7 +185,9 @@ test('creates and edits a standalone task with an automatic deadline', async ({ 
     await expect(dialog.getByLabel('Task title')).toBeFocused()
     await dialog.getByLabel('Project').selectOption('')
     await dialog.getByLabel('Task title').fill(`${taskName} tomorrow`)
-    await expect(dialog.getByText('Deadline detected: Tomorrow', { exact: true })).toBeVisible()
+    await expect(
+      dialog.locator('p').filter({ hasText: 'Deadline detected: Tomorrow' }),
+    ).toBeVisible()
     await expect(dialog.getByLabel('Due date')).not.toHaveValue('')
     await page.keyboard.press('Control+Enter')
     await expect(dialog).toBeHidden()
