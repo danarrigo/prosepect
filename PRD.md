@@ -250,12 +250,11 @@ Prosepect uses one monorepo containing:
 - API style: REST
 - API contract: OpenAPI
 - PostgreSQL access: SQLx with explicit SQL
-- MongoDB access: official MongoDB Rust driver
-- Hosted runtime: AWS Lambda
+- Hosted runtime: Google Cloud Run container
 - Self-hosted runtime: long-running HTTP server
-- Background work: portable worker entrypoint, adapted to AWS EventBridge/Lambda for the hosted service
+- Background work: portable one-shot or long-running worker entrypoint
 
-Business logic must not depend directly on Lambda, Vercel, Neon, Atlas, or Cloudflare.
+Business logic must not depend directly on Cloud Run, Vercel, Neon, or a specific S3-compatible provider.
 
 ### 7.3 Frontend
 
@@ -285,21 +284,14 @@ PostgreSQL is the canonical source for:
 - Reminders
 - File metadata
 - Daily reviews and focus selections
+- Synchronization jobs and conflicts
+- Tenant-scoped activity history
 
-#### MongoDB
-
-MongoDB stores flexible operational documents:
-
-- Raw provider synchronization payloads
-- Synchronization attempts and outcomes
-- Activity history
-- Conflict snapshots
-
-MongoDB is not the source of truth for canonical tasks or events.
+Raw provider payloads are processed transiently and are not retained as duplicate personal data.
 
 #### Object storage
 
-- Official hosted service: Cloudflare R2
+- Official hosted service: Cloudflare R2 private bucket
 - Self-hosted service: any S3-compatible storage
 - Docker Compose default: MinIO or another compatible local implementation
 
@@ -324,7 +316,7 @@ MongoDB is not the source of truth for canonical tasks or events.
 - Rate limits for authentication, capture, upload, and synchronization endpoints
 - File validation and signed object access
 - No provider tokens in browser storage
-- Audit-sensitive activity retained in MongoDB
+- Audit-sensitive activity retained with tenant isolation in PostgreSQL
 
 ## 8. Deployment and self-hosting
 
@@ -332,16 +324,15 @@ MongoDB is not the source of truth for canonical tasks or events.
 
 - Domain: `prosepect.com`
 - Frontend: Vercel
-- Backend: Axum on AWS Lambda
-- Scheduled work: AWS EventBridge and Lambda
+- Backend: Axum container on Google Cloud Run
+- Scheduled work: Cloud Run Job invoked by Cloud Scheduler every 15 minutes
 - PostgreSQL: Neon free tier during beta
-- MongoDB: MongoDB Atlas free tier during beta
-- Files: Cloudflare R2 free tier during beta
+- Files: private Cloudflare R2 bucket
 - Access: invite-only
 - Price: free during beta
-- Target infrastructure cost: approximately $0 using free allowances
+- Target infrastructure cost: approximately $0 within provider free allowances
 
-Free tiers may change and exact zero cost is not guaranteed.
+A Google Cloud billing account is required. Provider pricing may change, free usage is not a hard spending cap, and usage must be monitored.
 
 ### 8.2 Self-hosting
 
@@ -351,7 +342,6 @@ v1 officially supports Docker Compose on one machine. The deployment must includ
 - Prosepect API
 - Background worker
 - PostgreSQL
-- MongoDB
 - S3-compatible object storage
 
 Kubernetes and manual binary installation are not officially supported in v1.
@@ -380,7 +370,7 @@ The product must include:
 - Error reporting without leaking tokens or personal content
 - PostgreSQL migration checks
 - Unit tests for domain behavior and parsing
-- Integration tests against PostgreSQL and MongoDB
+- Integration tests against PostgreSQL and S3-compatible storage
 - API contract tests
 - Frontend component and interaction tests
 - End-to-end tests for critical user journeys
@@ -413,8 +403,8 @@ The product must include:
 - Google Calendar connection
 - Two-way synchronization
 - Conflict handling
-- MongoDB activity history
-- Reminder engine and Web Push
+- PostgreSQL activity history
+- In-app reminder engine and delivery validation
 
 ### Phase 4: files and portability
 
@@ -426,7 +416,7 @@ The product must include:
 
 - Complete Docker Compose self-hosting
 - Vercel frontend deployment
-- AWS Lambda and EventBridge adapters
+- Cloud Run API and scheduled worker deployment
 - Invite-only official beta
 - Operational documentation
 

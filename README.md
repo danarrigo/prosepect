@@ -1,27 +1,45 @@
 # Prosepect
 
-Prosepect is a self-hostable personal productivity web application that brings tasks, projects, notes, and calendars into one daily command center.
+Prosepect is an open-source, self-hostable personal productivity workspace that combines daily planning, tasks, outcome-oriented projects, notes, calendars, files, and priorities in one calm command center.
 
-> **Project status:** active development. The current executable vertical slice includes complete task and project workflows, tenant isolation, optimistic concurrency, an OpenAPI contract, in-app reminders, and responsive Today, Projects, and task-calendar views. Calendar event storage, notes, Google OAuth, synchronization, files, and background notifications are specified in [PRD.md](PRD.md) but are not implemented yet.
+The application is designed both as a useful personal system and as a production-oriented reference project. PostgreSQL owns product and operational state, Google Calendar synchronization is conflict-aware and retryable, and files use local or S3-compatible object storage.
 
-## Current architecture
+## Features
 
-- Rust, Axum, Tokio, and SQLx API
-- PostgreSQL canonical datastore
-- Vue 3, TypeScript, Vite, and Tailwind CSS frontend
-- REST API with generated OpenAPI TypeScript types
-- Docker Compose self-hosting foundation
+- Google OpenID Connect login with encrypted credentials, secure cookie sessions, CSRF protection, invite-only hosted access, and authentication rate limits
+- Today view with events, due and scheduled tasks, up to three focus tasks, automatic or manual daily review, and carry-forward decisions
+- Standalone and project tasks with subtasks, labels, reminders, recurrence, sparse manual ordering, quick capture, and optimistic concurrency
+- Outcome-oriented projects with progress, target dates, lifecycle states, archival, notes, tasks, and files
+- Native and selected Google calendars with day, week, month, and agenda views
+- Event recurrence, attendees, locations, timezones, editing, deletion, drag rescheduling, and conflict policies
+- Safe Markdown notes with project, task, or event links and private attachments
+- Tenant-scoped global search across tasks, projects, notes, and events
+- Authorized file upload and download using local storage, MinIO, Cloudflare R2, or another S3-compatible service
+- Portable JSON, CSV, Markdown, and ICS exports plus complete account and integration deletion
+- Responsive keyboard-accessible UI with system-aware and manual light or dark themes
 
-MongoDB, S3-compatible object storage, Google Calendar, Web Push, AWS Lambda, and EventBridge are introduced only in the milestones that need them.
+See [PRD.md](PRD.md) for the product contract.
+
+## Architecture
+
+- **API:** Rust, Axum, Tokio, SQLx, REST, and OpenAPI
+- **Frontend:** Vue 3, TypeScript, Vite, Tailwind CSS, Pinia, and Reka UI
+- **Data:** PostgreSQL for canonical product state, jobs, conflicts, and activity
+- **Files:** local filesystem in development or S3-compatible object storage
+- **Background work:** portable long-running or one-shot worker
+- **Hosted deployment:** Vercel SPA, Google Cloud Run API and scheduled worker, Neon PostgreSQL, and Cloudflare R2
+- **Self-hosting:** Docker Compose with PostgreSQL, MinIO, API, worker, and web services
 
 ## Repository layout
 
 ```text
-apps/api/       Axum API and PostgreSQL adapter
-apps/web/       Vue single-page application
-migrations/     PostgreSQL migrations
-openapi/        Generated API contract
-PRD.md          Authoritative product requirements
+apps/api/          Axum API, synchronization service, and worker entrypoints
+apps/web/          Vue single-page application and Playwright tests
+deploy/gcp/        Cloud Build configuration for hosted releases
+migrations/        PostgreSQL migrations
+scripts/           Guided deployment setup
+openapi/           Generated OpenAPI contract
+PRD.md             Authoritative product requirements
 ```
 
 ## Run with Docker Compose
@@ -37,81 +55,85 @@ Open:
 - Application: <http://localhost:8080>
 - OpenAPI documentation: <http://localhost:8080/docs/>
 
-The current development build uses an intentionally insecure local user header. Compose binds the web port to `127.0.0.1` so it is not reachable from the LAN, and the API refuses to enable this mode when `APP_ENV=production`.
+Compose binds the web service and development MinIO endpoint to `127.0.0.1`, bootstraps PostgreSQL and a private object bucket, and starts the portable worker. Signed attachment URLs use `S3_PUBLIC_ENDPOINT`, which defaults to `http://localhost:9000` for Compose. The default development login is intentionally insecure and cannot be enabled with `APP_ENV=production`.
+
+To exercise real Google login and Calendar synchronization, copy `.env.example`, configure the four Google credential variables, and use the callback URL shown there. Each self-hosted installation supplies its own Google OAuth client.
 
 ## Run locally
 
 Prerequisites:
 
 - Rust 1.94 or newer
-- Node.js 22.13 or newer
+- Node.js 22.22.2 or newer
 - PostgreSQL 16 or newer
-
-Create a database and configure the environment:
 
 ```bash
 cp .env.example .env
-export DATABASE_URL=postgres://prosepect:prosepect@localhost:5432/prosepect
-```
-
-Install frontend dependencies and start both processes:
-
-```bash
 npm install
+
 cargo run -p prosepect-api --bin prosepect-api
 npm run dev:web
 ```
 
+Run the background worker in another terminal when Google synchronization is configured:
+
+```bash
+cargo run -p prosepect-api --bin worker
+```
+
+Use `--once` to claim at most one synchronization job for diagnostics.
+
 The frontend runs at <http://localhost:5173>. Swagger UI runs at <http://localhost:3000/docs/>.
 
-## Implemented workflows
+## Google setup
 
-- Standalone and project tasks with descriptions, priorities, statuses, deadlines, labels, and reminders
-- Nested subtasks with atomic cycle protection
-- Daily, weekly, monthly, and yearly recurrence anchored to the prior scheduled deadline
-- Search, status/priority/label filters, multiple sort modes, drag ordering, and keyboard-accessible ordering controls
-- Project editing, status changes, progress, archiving and restoration, and completed-task views
-- Responsive seven-day and monthly task calendars with system-aware dark mode
+1. Create a Google OAuth web client.
+2. Add `GOOGLE_REDIRECT_URI` as an authorized redirect URI.
+3. Generate `TOKEN_ENCRYPTION_KEY` with `openssl rand -base64 32`.
+4. Configure the consent screen for OpenID scopes. Calendar scopes are requested later, only when a signed-in user connects Google Calendar.
+5. Restart the API and worker.
+
+Production requires Google configuration, S3-compatible storage, secure cookies, and development authentication disabled. Set `INVITE_ONLY=true` for hosted beta access and insert lowercase emails into `account_invites` before first sign-in.
 
 ## Keyboard shortcuts
 
-- `N` opens the new-task dialog when focus is not in an editable field.
-- `Ctrl+Enter` or `Cmd+Enter` creates the task from the dialog.
-- `Escape` closes the dialog.
+- `N` opens global task capture outside editable controls.
+- `Ctrl+Enter` or `Cmd+Enter` creates the task.
+- `Escape` closes dialogs.
+- Task ordering includes pointer and keyboard-accessible controls.
 
 ## Quality checks
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-DATABASE_URL=postgres://prosepect:prosepect@localhost:5432/postgres cargo test --workspace
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres cargo test --workspace --all-targets
 
+npm run format:check:web
 npm run typecheck:web
 npm run lint:web
 npm run test:web
 npm run build:web
-```
-
-Browser tests require the API and PostgreSQL to be running:
-
-```bash
 npm run test:e2e
+npm run generate:api
 ```
+
+PostgreSQL integration tests create isolated databases and require a superuser-compatible test database URL.
 
 ## API contract
 
-Regenerate the OpenAPI document and frontend types after changing API schemas or routes:
+Regenerate the OpenAPI document and frontend types after changing schemas or routes:
 
 ```bash
 npm run generate:api
 ```
 
-Commit both `openapi/openapi.json` and `apps/web/src/api/schema.d.ts` with the API change.
+Commit both `openapi/openapi.json` and `apps/web/src/api/schema.d.ts`.
 
-## Security status
+## Operations and deployment
 
-Google OAuth and production sessions are not implemented yet. Do not expose the current API publicly with development authentication enabled. See [PRD.md](PRD.md) for the intended production security model.
+Production configuration, backups, worker behavior, observability, recovery, and Vercel/Cloud Run deployment are documented in [docs/OPERATIONS.md](docs/OPERATIONS.md). Run `scripts/deploy-cloud-run.sh` for the guided hosted setup.
 
 ## License
 
-Prosepect is licensed under the [GNU Affero General Public License v3.0](LICENSE). AGPL requires network users to be offered the source of modified deployed versions. It does not prohibit third parties from providing paid hosting.
+Prosepect is licensed under the [GNU Affero General Public License v3.0](LICENSE). Network users must be offered the corresponding source for modified deployed versions. The license does not prohibit third-party paid hosting.
