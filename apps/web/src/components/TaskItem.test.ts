@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 import TaskItem from './TaskItem.vue'
 import type { Task } from '../api/types'
@@ -24,9 +25,13 @@ const task: Task = {
   version: 1,
 }
 
+function mountTask(props: InstanceType<typeof TaskItem>['$props']) {
+  return mount(TaskItem, { props, global: { plugins: [createPinia()] } })
+}
+
 describe('TaskItem', () => {
   it('requests completion without mutating the task', async () => {
-    const wrapper = mount(TaskItem, { props: { task } })
+    const wrapper = mountTask({ task })
 
     await wrapper.get('button[aria-label="Complete Write PRD"]').trigger('click')
 
@@ -35,14 +40,22 @@ describe('TaskItem', () => {
   })
 
   it('renders priority and title', () => {
-    const wrapper = mount(TaskItem, { props: { task } })
+    const wrapper = mountTask({ task })
 
     expect(wrapper.text()).toContain('Write PRD')
     expect(wrapper.text()).toContain('high')
   })
 
+  it('can mark a task as today’s focus without adding a separate focus section', async () => {
+    const wrapper = mountTask({ task, focusable: true })
+
+    await wrapper.get('button[aria-label="Focus Write PRD today"]').trigger('click')
+
+    expect(wrapper.emitted('focus')).toEqual([[task]])
+  })
+
   it('offers keyboard-accessible manual ordering controls', async () => {
-    const wrapper = mount(TaskItem, { props: { task, canMoveUp: true } })
+    const wrapper = mountTask({ task, canMoveUp: true })
 
     await wrapper.get('button[aria-label="Edit Write PRD"]').trigger('click')
     await wrapper.get('button[aria-label="Move Write PRD up"]').trigger('click')
@@ -54,7 +67,7 @@ describe('TaskItem', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 7, 29, 12))
     try {
-      const wrapper = mount(TaskItem, { props: { task } })
+      const wrapper = mountTask({ task })
 
       await wrapper.get('button[aria-label="Edit Write PRD"]').trigger('click')
       const editor = wrapper.get('form[aria-label="Edit Write PRD"]')

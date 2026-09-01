@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Archive, ArrowLeft, Pencil, RotateCcw, Search, X } from '@lucide/vue'
+import { useRoute } from 'vue-router'
 import type { Project, ProjectStatus, TaskPriority, TaskStatus } from '../api/types'
+import AttachmentPanel from '../components/AttachmentPanel.vue'
 import CreateProjectDialog from '../components/CreateProjectDialog.vue'
 import QuickTaskForm from '../components/QuickTaskForm.vue'
 import TaskList from '../components/TaskList.vue'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const store = useWorkspaceStore()
+const route = useRoute()
 const selected = computed(() => store.selectedProject)
 const showArchived = ref(false)
 const editingProject = ref(false)
@@ -75,6 +78,19 @@ watch(selected, () => {
   editingProject.value = false
   resetTaskFilters()
 })
+
+watch(
+  () => route.query,
+  (query) => {
+    if (typeof query.project === 'string') store.selectProject(query.project)
+    if (typeof query.search === 'string') {
+      store.selectProject(null)
+      search.value = query.search
+      statusFilter.value = 'all'
+    }
+  },
+  { immediate: true },
+)
 
 function progress(project: Project) {
   if (!project.total_tasks) return 0
@@ -326,6 +342,9 @@ function priorityRank(priority: TaskPriority) {
             :style="{ width: `${progress(selected)}%` }"
           />
         </div>
+        <div class="mt-6">
+          <AttachmentPanel kind="project" :parent-id="selected.id" />
+        </div>
       </div>
 
       <div v-if="selected.status !== 'archived'" class="mt-9"><QuickTaskForm /></div>
@@ -399,6 +418,7 @@ function priorityRank(priority: TaskPriority) {
         :tasks="visibleTasks"
         :projects="store.projects"
         :reorderable="sortBy === 'manual'"
+        focusable
         empty-message="No tasks match these filters."
       />
     </section>

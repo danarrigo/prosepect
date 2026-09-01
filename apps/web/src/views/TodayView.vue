@@ -27,6 +27,16 @@ const dueToday = computed(() =>
       new Date(task.due_at).toDateString() === today.value.toDateString(),
   ),
 )
+const scheduledToday = computed(() =>
+  store.tasks.filter(
+    (task) =>
+      task.status !== 'completed' &&
+      task.scheduled_start &&
+      new Date(task.scheduled_start).toDateString() === today.value.toDateString() &&
+      !dueToday.value.includes(task),
+  ),
+)
+const todayEvents = computed(() => eventsForDate(today.value))
 const overdue = computed(() =>
   store.tasks.filter(
     (task) =>
@@ -38,6 +48,7 @@ const upcoming = computed(() =>
     .filter(
       (task) =>
         !dueToday.value.includes(task) &&
+        !scheduledToday.value.includes(task) &&
         !overdue.value.includes(task) &&
         task.status !== 'completed',
     )
@@ -88,6 +99,15 @@ function calendarTasks(date: Date) {
   return findTasksForDate(store.tasks, date).filter((task) => task.status !== 'completed')
 }
 
+function eventsForDate(date: Date) {
+  const start = startOfDay(date)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 1)
+  return store.events.filter(
+    (event) => new Date(event.starts_at) < end && new Date(event.ends_at) > start,
+  )
+}
+
 function openCalendar(date: Date) {
   void router.push({ path: '/calendar', query: { date: localDateKey(date) } })
 }
@@ -117,7 +137,12 @@ function calendarAriaLabel(date: Date) {
           Make today count.
         </h1>
       </div>
-      <CreateProjectDialog />
+      <div class="flex gap-2">
+        <button class="secondary-button" type="button" @click="store.startDailyReview">
+          Review day
+        </button>
+        <CreateProjectDialog />
+      </div>
     </div>
 
     <dl
@@ -171,9 +196,38 @@ function calendarAriaLabel(date: Date) {
             {{ compactDateLabel(date) }}
           </span>
           <span class="mt-1 block min-h-4 text-[10px] tabular-nums text-slate-400">
-            {{ calendarTasks(date).length || '' }}
+            {{ calendarTasks(date).length + eventsForDate(date).length || '' }}
           </span>
         </button>
+      </div>
+    </section>
+
+    <section v-if="todayEvents.length" class="mt-11">
+      <div
+        class="flex items-baseline justify-between border-b border-slate-200 pb-3 dark:border-slate-800"
+      >
+        <h2 class="text-sm font-semibold">Events</h2>
+        <span class="text-xs tabular-nums text-slate-400">{{ todayEvents.length }} today</span>
+      </div>
+      <div class="divide-y divide-slate-100 dark:divide-slate-900">
+        <article v-for="event in todayEvents" :key="event.id" class="flex items-center gap-4 py-3">
+          <time class="w-20 shrink-0 text-xs text-slate-400">
+            {{
+              event.all_day
+                ? 'All day'
+                : new Intl.DateTimeFormat(undefined, {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  }).format(new Date(event.starts_at))
+            }}
+          </time>
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-medium">{{ event.title }}</p>
+            <p v-if="event.location" class="mt-0.5 truncate text-xs text-slate-400">
+              {{ event.location }}
+            </p>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -184,6 +238,7 @@ function calendarAriaLabel(date: Date) {
         >
           <h2 class="text-sm font-semibold">Tasks</h2>
           <span class="text-xs tabular-nums text-slate-400">
+            {{ store.dailyPlan?.focus_tasks.length ?? 0 }} focused ·
             {{ dueToday.length + overdue.length }} due
           </span>
         </div>
@@ -191,15 +246,19 @@ function calendarAriaLabel(date: Date) {
         <div class="py-2">
           <div v-if="overdue.length" class="mb-6">
             <p class="list-heading text-rose-600 dark:text-rose-400">Overdue</p>
-            <TaskList :tasks="overdue" :projects="store.projects" />
+            <TaskList :tasks="overdue" :projects="store.projects" focusable />
           </div>
           <div v-if="dueToday.length" class="mb-6">
-            <p class="list-heading">Today</p>
-            <TaskList :tasks="dueToday" :projects="store.projects" />
+            <p class="list-heading">Due today</p>
+            <TaskList :tasks="dueToday" :projects="store.projects" focusable />
+          </div>
+          <div v-if="scheduledToday.length" class="mb-6">
+            <p class="list-heading">Scheduled today</p>
+            <TaskList :tasks="scheduledToday" :projects="store.projects" focusable />
           </div>
           <div v-if="upcoming.length">
             <p class="list-heading">Next</p>
-            <TaskList :tasks="upcoming" :projects="store.projects" />
+            <TaskList :tasks="upcoming" :projects="store.projects" focusable />
           </div>
           <div v-if="!store.openTasks.length" class="py-16 text-center">
             <p class="text-sm text-slate-400">Nothing needs your attention.</p>

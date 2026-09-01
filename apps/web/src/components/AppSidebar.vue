@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { CalendarDays, FolderKanban, LayoutDashboard, X } from '@lucide/vue'
+import { CalendarDays, FileText, FolderKanban, LayoutDashboard, Settings, X } from '@lucide/vue'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const props = defineProps<{ open: boolean }>()
@@ -66,6 +66,16 @@ function showAllProjects() {
       </RouterLink>
       <RouterLink
         class="nav-item"
+        :class="{ active: route.name === 'notes' }"
+        to="/notes"
+        @click="emit('close')"
+      >
+        <FileText :size="17" />
+        <span>Notes</span>
+        <span v-if="store.notes.length" class="nav-count">{{ store.notes.length }}</span>
+      </RouterLink>
+      <RouterLink
+        class="nav-item"
         :class="{ active: route.name === 'projects' && !store.selectedProjectId }"
         to="/projects"
         @click="showAllProjects"
@@ -95,5 +105,15 @@ function showAllProjects() {
         <span class="truncate">{{ project.name }}</span>
       </button>
     </div>
+
+    <RouterLink
+      class="nav-item mt-3"
+      :class="{ active: route.name === 'settings' }"
+      to="/settings"
+      @click="emit('close')"
+    >
+      <Settings :size="17" />
+      <span>Settings</span>
+    </RouterLink>
   </aside>
 </template>

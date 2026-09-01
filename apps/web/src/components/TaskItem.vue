@@ -11,6 +11,7 @@ import {
   ListTree,
   Pencil,
   Repeat2,
+  Star,
   Trash2,
   X,
 } from '@lucide/vue'
@@ -24,6 +25,7 @@ import type {
 } from '../api/types'
 import { localDateKey } from '../calendar'
 import { applyDeadlineSuggestion, detectDeadlineSuggestion } from '../deadline-suggestions'
+import AttachmentPanel from './AttachmentPanel.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -33,8 +35,20 @@ const props = withDefaults(
     busy?: boolean
     canMoveUp?: boolean
     canMoveDown?: boolean
+    focusable?: boolean
+    focused?: boolean
+    focusDisabled?: boolean
   }>(),
-  { projects: () => [], tasks: () => [], busy: false, canMoveUp: false, canMoveDown: false },
+  {
+    projects: () => [],
+    tasks: () => [],
+    busy: false,
+    canMoveUp: false,
+    canMoveDown: false,
+    focusable: false,
+    focused: false,
+    focusDisabled: false,
+  },
 )
 const emit = defineEmits<{
   status: [task: Task, status: TaskStatus]
@@ -42,6 +56,7 @@ const emit = defineEmits<{
   remove: [task: Task]
   addSubtask: [task: Task, title: string]
   move: [task: Task, direction: 'up' | 'down']
+  focus: [task: Task]
 }>()
 
 const labelListId = `task-labels-${useId()}`
@@ -371,6 +386,20 @@ function submitSubtask() {
       </button>
     </div>
     <button
+      v-if="focusable"
+      class="icon-button"
+      :class="focused ? 'text-amber-500' : 'text-slate-300 hover:!text-amber-500'"
+      type="button"
+      :disabled="busy || focusDisabled"
+      :aria-label="
+        focused ? `Remove ${task.title} from today's focus` : `Focus ${task.title} today`
+      "
+      :title="focusDisabled ? 'Today already has three focus tasks' : undefined"
+      @click="emit('focus', task)"
+    >
+      <Star :size="15" :fill="focused ? 'currentColor' : 'none'" />
+    </button>
+    <button
       class="icon-button text-slate-400"
       type="button"
       :disabled="busy || task.recurrence !== 'none'"
@@ -507,6 +536,9 @@ function submitSubtask() {
           <option v-for="label in existingLabels" :key="label" :value="label" />
         </datalist>
       </label>
+    </div>
+    <div class="mt-5">
+      <AttachmentPanel kind="task" :parent-id="task.id" />
     </div>
     <p v-if="recurrence !== 'none' && !dueDate" class="mt-3 text-xs text-rose-600">
       Repeating tasks need a deadline.

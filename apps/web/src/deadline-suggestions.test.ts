@@ -21,15 +21,29 @@ describe('deadline suggestions', () => {
     expect(applyDeadlineSuggestion(input, suggestion!)).toBe('Review release plan')
   })
 
-  it('recognizes bounded relative and explicit dates', () => {
+  it('recognizes relative, word-based, and explicit dates', () => {
     expect(detectDeadlineSuggestion('Prepare launch in 3 days', reference)?.dueDate).toBe(
       '2026-09-01',
+    )
+    expect(detectDeadlineSuggestion('Prepare launch in two weeks', reference)?.dueDate).toBe(
+      '2026-09-12',
     )
     expect(detectDeadlineSuggestion('Prepare launch by 2026-09-12', reference)?.dueDate).toBe(
       '2026-09-12',
     )
-    expect(detectDeadlineSuggestion('Prepare launch in 999 days', reference)).toBeNull()
+    expect(detectDeadlineSuggestion('Prepare launch by September 15', reference)?.dueDate).toBe(
+      '2026-09-15',
+    )
     expect(detectDeadlineSuggestion('Prepare launch by 2026-02-30', reference)).toBeNull()
+  })
+
+  it('uses Todoist semantics for next weekdays', () => {
+    const suggestion = detectDeadlineSuggestion('Prepare launch next Friday', reference)
+
+    expect(suggestion?.dueDate).toBe('2026-09-11')
+    expect(applyDeadlineSuggestion('Prepare launch next Friday', suggestion!)).toBe(
+      'Prepare launch',
+    )
   })
 
   it('does not match keywords inside other words', () => {

@@ -21,6 +21,142 @@ test('opens the full calendar from Today and browses months', async ({ page }) =
   await expect(month).not.toHaveText(initialMonth ?? '')
 })
 
+test('creates an event and browses day, week, month, and agenda views', async ({ page }) => {
+  const eventName = `Calendar event ${test.info().project.name}-${Date.now().toString().slice(-6)}`
+
+  await page.goto('/calendar')
+  await page.getByRole('button', { name: 'New event' }).click()
+  const form = page.getByRole('form', { name: 'New event' })
+  await form.getByLabel('Title').fill(eventName)
+  await form.getByRole('button', { name: 'Create event' }).click()
+  await expect(page.getByText(eventName, { exact: true }).last()).toBeVisible()
+
+  for (const mode of ['day', 'week', 'month', 'agenda']) {
+    await page.getByRole('button', { name: mode, exact: true }).click()
+    await expect(page).toHaveURL(new RegExp(`view=${mode}`))
+    await expect(page.getByText(eventName, { exact: true }).last()).toBeVisible()
+  }
+
+  await page.getByRole('button', { name: 'day', exact: true }).click()
+  const eventBlock = page.getByRole('button', { name: new RegExp(`Edit ${eventName}`) })
+  await eventBlock.scrollIntoViewIfNeeded()
+  const eventBox = await eventBlock.boundingBox()
+  expect(eventBox).not.toBeNull()
+  const moved = page.waitForResponse(
+    (response) =>
+      /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
+      response.request().method() === 'PUT' &&
+      response.status() === 200,
+  )
+  await page.mouse.move(eventBox!.x + eventBox!.width / 2, eventBox!.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(eventBox!.x + eventBox!.width / 2, eventBox!.y + 58, { steps: 5 })
+  await page.mouse.up()
+  await moved
+
+  const bottomHandle = eventBlock.locator('[title="Drag bottom edge to resize"]')
+  const bottomBox = await bottomHandle.boundingBox()
+  expect(bottomBox).not.toBeNull()
+  const resized = page.waitForResponse(
+    (response) =>
+      /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
+      response.request().method() === 'PUT' &&
+      response.status() === 200,
+  )
+  await page.mouse.move(bottomBox!.x + bottomBox!.width / 2, bottomBox!.y + bottomBox!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(
+    bottomBox!.x + bottomBox!.width / 2,
+    bottomBox!.y + bottomBox!.height / 2 + 48,
+    { steps: 5 },
+  )
+  await page.mouse.up()
+  await resized
+
+  const topHandle = eventBlock.locator('[title="Drag top edge to trim"]')
+  const topBox = await topHandle.boundingBox()
+  expect(topBox).not.toBeNull()
+  const trimmed = page.waitForResponse(
+    (response) =>
+      /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
+      response.request().method() === 'PUT' &&
+      response.status() === 200,
+  )
+  await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2 + 24, {
+    steps: 4,
+  })
+  await page.mouse.up()
+  await trimmed
+
+  const deleteBox = await eventBlock.boundingBox()
+  expect(deleteBox).not.toBeNull()
+  await page.mouse.move(deleteBox!.x + deleteBox!.width / 2, deleteBox!.y + 12)
+  await page.mouse.down()
+  await page.mouse.move(deleteBox!.x + deleteBox!.width / 2, deleteBox!.y + 24, { steps: 3 })
+  const deleteZone = page.getByText('Drop here to delete', { exact: true })
+  const deleteZoneBox = await deleteZone.boundingBox()
+  expect(deleteZoneBox).not.toBeNull()
+  const deleted = page.waitForResponse(
+    (response) =>
+      /\/api\/v1\/events\/[0-9a-f-]+/.test(response.url()) &&
+      response.request().method() === 'DELETE' &&
+      response.status() === 204,
+  )
+  await page.mouse.move(
+    deleteZoneBox!.x + deleteZoneBox!.width / 2,
+    deleteZoneBox!.y + deleteZoneBox!.height / 2,
+    { steps: 8 },
+  )
+  await expect(page.getByText('Release to delete', { exact: true })).toBeVisible()
+  await page.mouse.up()
+  await deleted
+  await expect(eventBlock).toHaveCount(0)
+})
+
+test('uploads, downloads, and deletes a private file', async ({ page }) => {
+  const filename = `brief-${test.info().project.name}-${Date.now().toString().slice(-6)}.txt`
+  await page.goto('/files')
+  await page.locator('input[type="file"]').setInputFiles({
+    name: filename,
+    mimeType: 'text/plain',
+    buffer: Buffer.from('private file contents'),
+  })
+  await expect(page.getByText(filename, { exact: true })).toBeVisible()
+  const download = page.waitForEvent('download')
+  await page.getByRole('link', { name: `Download ${filename}` }).click()
+  expect((await download).suggestedFilename()).toBe(filename)
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: `Delete ${filename}` }).click()
+  await expect(page.getByText(filename, { exact: true })).toHaveCount(0)
+})
+
+test('creates, safely renders, searches, and deletes a Markdown note', async ({ page }) => {
+  const noteTitle = `Release note ${test.info().project.name}-${Date.now().toString().slice(-6)}`
+
+  await page.goto('/notes')
+  await page.getByRole('button', { name: 'New note' }).click()
+  const editor = page.getByRole('form', { name: 'Note editor' })
+  await editor.getByLabel('Title').fill(noteTitle)
+  await editor
+    .getByLabel('Markdown')
+    .fill('A **searchable launch note**.\n\n<img src=x onerror="window.noteXss=true">')
+  await editor.getByRole('button', { name: 'Save note' }).click()
+  await expect(page.getByRole('heading', { name: noteTitle })).toBeVisible()
+  await expect(page.getByText('searchable launch note', { exact: false })).toBeVisible()
+  await expect(page.locator('[onerror]')).toHaveCount(0)
+
+  if (!test.info().project.name.includes('mobile')) {
+    await page.getByPlaceholder('Search workspace').fill('searchable launch')
+    await expect(page.getByRole('button').filter({ hasText: noteTitle })).toBeVisible()
+  }
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Delete note' }).click()
+  await expect(page.getByText(noteTitle, { exact: true })).toHaveCount(0)
+})
+
 test('creates and edits a standalone task with an automatic deadline', async ({ page }) => {
   const taskName = `Standalone task ${test.info().project.name}-${Date.now().toString().slice(-6)}`
   const editedTaskName = `Edited ${taskName}`
@@ -46,6 +182,10 @@ test('creates and edits a standalone task with an automatic deadline', async ({ 
     const createdTask = page.getByText(taskName, { exact: true }).locator('xpath=ancestor::article')
     await expect(createdTask).toBeVisible()
     await expect(createdTask.getByText('Tomorrow', { exact: true })).toBeVisible()
+    await createdTask.getByRole('button', { name: `Focus ${taskName} today` }).click()
+    await expect(
+      createdTask.getByRole('button', { name: `Remove ${taskName} from today's focus` }),
+    ).toBeVisible()
 
     await page.getByRole('button', { name: `Edit ${taskName}` }).click()
     const editor = page.getByRole('form', { name: `Edit ${taskName}` })
@@ -127,10 +267,7 @@ test('creates the next recurring task when an occurrence is completed', async ({
     await dialog.getByRole('button', { name: 'Add', exact: true }).click()
     await expect(dialog).toBeHidden()
 
-    const occurrence = page
-      .getByText(taskName, { exact: true })
-      .first()
-      .locator('xpath=ancestor::article')
+    const occurrence = page.getByRole('article').filter({ hasText: taskName }).first()
     await expect(occurrence.getByText('daily', { exact: true })).toBeVisible()
     await occurrence.getByRole('button', { name: `Complete ${taskName}` }).click()
 

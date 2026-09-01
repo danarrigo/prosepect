@@ -3,7 +3,7 @@ import { computed, ref, useId, watch } from 'vue'
 import { SlidersHorizontal } from '@lucide/vue'
 import { useWorkspaceStore } from '../stores/workspace'
 import type { TaskPriority, TaskRecurrence } from '../api/types'
-import { applyDeadlineSuggestion, detectDeadlineSuggestion } from '../deadline-suggestions'
+import { analyzeQuickCapture } from '../quick-capture'
 
 const props = withDefaults(defineProps<{ autofocus?: boolean }>(), { autofocus: false })
 const emit = defineEmits<{ created: [] }>()
@@ -22,19 +22,36 @@ const description = ref('')
 const recurrence = ref<TaskRecurrence>('none')
 const labels = ref('')
 const remindAt = ref('')
+const ignoredSmartDateForTitle = ref<string | null>(null)
 
-const deadlineSuggestion = computed(() =>
-  !dueDate.value || autoDueDate.value ? detectDeadlineSuggestion(title.value) : null,
+const recognizesSmartDate = computed(() => ignoredSmartDateForTitle.value !== title.value)
+const quickCaptureAnalysis = computed(() =>
+  analyzeQuickCapture(title.value, new Date(), store.projects, recognizesSmartDate.value),
 )
-const submittedTitle = computed(() => {
-  const suggestion = deadlineSuggestion.value
-  return (suggestion ? applyDeadlineSuggestion(title.value, suggestion) : title.value).trim()
+const quickCapture = computed(() => quickCaptureAnalysis.value.result)
+const deadlineSuggestion = computed(() => {
+  const suggestion = quickCaptureAnalysis.value.temporalSuggestion
+  if (!dueDate.value || autoDueDate.value) {
+    return suggestion?.dueDate ? { ...suggestion, dueDate: suggestion.dueDate } : null
+  }
+  return null
 })
-const existingLabels = computed(() =>
-  [...new Set(store.tasks.flatMap((task) => task.labels))].sort((first, second) =>
-    first.localeCompare(second),
-  ),
-)
+const submittedTitle = computed(() => quickCapture.value.title)
+const existingLabels = computed(() => store.labels)
+const todoistHints = computed(() => {
+  const hints: string[] = []
+  const detectedProject = store.projects.find(
+    (project) => project.id === quickCapture.value.projectId,
+  )
+  if (detectedProject) hints.push(`Project: ${detectedProject.name}`)
+  if (quickCapture.value.labels.length) {
+    hints.push(`Labels: ${quickCapture.value.labels.join(', ')}`)
+  }
+  if (quickCapture.value.priority) {
+    hints.push(`Priority: ${quickCapture.value.priority}`)
+  }
+  return hints
+})
 const canSubmit = computed(
   () =>
     submittedTitle.value.length > 0 &&
@@ -79,25 +96,38 @@ function markDeadlineManual() {
   autoDueDate.value = null
 }
 
+function keepDetectedDateInTitle() {
+  ignoredSmartDateForTitle.value = title.value
+}
+
 async function submit() {
   if (!canSubmit.value) return
 
   try {
     await store.addTask({
-      project_id: projectId.value || null,
+      project_id: quickCapture.value.projectId ?? (projectId.value || null),
       parent_task_id: null,
       title: submittedTitle.value,
       description: description.value.trim(),
       due_at: deadlineIsoDate(dueDate.value || deadlineSuggestion.value?.dueDate || ''),
-      scheduled_start: null,
-      scheduled_end: null,
+      scheduled_start: quickCapture.value.scheduledStart
+        ? new Date(quickCapture.value.scheduledStart).toISOString()
+        : null,
+      scheduled_end: quickCapture.value.scheduledEnd
+        ? new Date(quickCapture.value.scheduledEnd).toISOString()
+        : null,
       status: 'todo',
-      priority: priority.value,
+      priority: quickCapture.value.priority ?? priority.value,
       recurrence: recurrence.value,
-      labels: labels.value
-        .split(',')
-        .map((label) => label.trim())
-        .filter(Boolean),
+      labels: [
+        ...new Set([
+          ...labels.value
+            .split(',')
+            .map((label) => label.trim())
+            .filter(Boolean),
+          ...quickCapture.value.labels,
+        ]),
+      ],
       remind_at: remindAt.value ? new Date(remindAt.value).toISOString() : null,
     })
     title.value = ''
@@ -148,6 +178,17 @@ function deadlineIsoDate(value: string) {
 
     <p v-if="deadlineSuggestion" class="mt-1 text-xs text-slate-500 dark:text-slate-400">
       Deadline detected: {{ deadlineSuggestion.label }}
+      <button
+        class="ml-1 underline decoration-dotted underline-offset-2 hover:text-slate-700 dark:hover:text-slate-200"
+        type="button"
+        :aria-label="`Keep ${deadlineSuggestion.matchedText} in task title`"
+        @click="keepDetectedDateInTitle"
+      >
+        keep as text
+      </button>
+    </p>
+    <p v-if="todoistHints.length" class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+      Quick Add detected: {{ todoistHints.join(' · ') }}
     </p>
 
     <div class="mt-1 flex flex-wrap items-center gap-2 pb-1">

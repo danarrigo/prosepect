@@ -10,14 +10,18 @@ const props = withDefaults(
     projects?: Project[]
     emptyMessage?: string
     reorderable?: boolean
+    focusable?: boolean
   }>(),
-  { projects: () => [], emptyMessage: '', reorderable: true },
+  { projects: () => [], emptyMessage: '', reorderable: true, focusable: false },
 )
 
 const store = useWorkspaceStore()
 const draggedTaskId = ref<string | null>(null)
 const announcement = ref('')
 const rows = computed(() => flattenTasks(props.tasks))
+const focusTaskIds = computed(() =>
+  store.dailyPlan ? store.dailyPlan.focus_tasks.map((task) => task.id) : [],
+)
 
 async function changeStatus(task: Task, status: TaskStatus) {
   try {
@@ -60,6 +64,20 @@ async function addSubtask(parent: Task, title: string) {
       labels: parent.labels,
       remind_at: null,
     })
+  } catch {
+    // The store presents the API error globally.
+  }
+}
+
+async function toggleFocus(task: Task) {
+  const focused = focusTaskIds.value.includes(task.id)
+  if (!focused && focusTaskIds.value.length >= 3) return
+  try {
+    await store.setDailyFocus(
+      focused
+        ? focusTaskIds.value.filter((taskId) => taskId !== task.id)
+        : [...focusTaskIds.value, task.id],
+    )
   } catch {
     // The store presents the API error globally.
   }
@@ -148,11 +166,15 @@ function flattenTasks(tasks: Task[]): Array<{ task: Task; depth: number }> {
         :busy="store.saving"
         :can-move-up="reorderable && index > 0"
         :can-move-down="reorderable && index < rows.length - 1"
+        :focusable="focusable && row.task.status !== 'completed'"
+        :focused="focusTaskIds.includes(row.task.id)"
+        :focus-disabled="focusTaskIds.length >= 3 && !focusTaskIds.includes(row.task.id)"
         @status="changeStatus"
         @edit="edit"
         @remove="remove"
         @add-subtask="addSubtask"
         @move="move"
+        @focus="toggleFocus"
       />
     </div>
     <p v-if="!rows.length && emptyMessage" class="py-14 text-center text-sm text-slate-400">
