@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Download, Paperclip, Trash2 } from '@lucide/vue'
+import { apiUrl } from '../api/client'
 import type { FileRecord } from '../api/types'
 import { useWorkspaceStore } from '../stores/workspace'
 
@@ -56,7 +57,7 @@ async function remove(file: FileRecord) {
         <span class="min-w-0 flex-1 truncate">{{ file.filename }}</span>
         <a
           class="icon-button !size-7"
-          :href="`/api/v1/files/${file.id}/download`"
+          :href="apiUrl(`/api/v1/files/${file.id}/download`)"
           :download="file.filename"
           :aria-label="`Download ${file.filename}`"
           ><Download :size="13"

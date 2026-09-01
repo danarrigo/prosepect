@@ -335,16 +335,18 @@ async function deleteAccount() {
         Download portable copies without losing access to your workspace.
       </p>
       <div class="mt-5 grid gap-2 sm:grid-cols-2">
-        <a class="secondary-button justify-start" href="/api/v1/exports/json"
+        <a class="secondary-button justify-start" :href="api.apiUrl('/api/v1/exports/json')"
           ><Download :size="15" /> Complete JSON</a
         >
-        <a class="secondary-button justify-start" href="/api/v1/exports/tasks.csv"
+        <a class="secondary-button justify-start" :href="api.apiUrl('/api/v1/exports/tasks.csv')"
           ><Download :size="15" /> Tasks CSV</a
         >
-        <a class="secondary-button justify-start" href="/api/v1/exports/notes.md"
+        <a class="secondary-button justify-start" :href="api.apiUrl('/api/v1/exports/notes.md')"
           ><Download :size="15" /> Notes Markdown</a
         >
-        <a class="secondary-button justify-start" href="/api/v1/exports/calendars.ics"
+        <a
+          class="secondary-button justify-start"
+          :href="api.apiUrl('/api/v1/exports/calendars.ics')"
           ><Download :size="15" /> Calendars ICS</a
         >
       </div>

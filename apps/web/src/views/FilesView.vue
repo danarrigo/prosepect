@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Download, FileUp, Trash2 } from '@lucide/vue'
+import { apiUrl } from '../api/client'
 import type { FileRecord } from '../api/types'
 import { useWorkspaceStore } from '../stores/workspace'
 
@@ -74,7 +75,7 @@ function bytes(value: number) {
         </div>
         <a
           class="icon-button"
-          :href="`/api/v1/files/${file.id}/download`"
+          :href="apiUrl(`/api/v1/files/${file.id}/download`)"
           :download="file.filename"
           :aria-label="`Download ${file.filename}`"
         >
