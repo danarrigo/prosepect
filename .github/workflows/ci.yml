@@ -28,7 +28,7 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy,rustfmt
@@ -42,8 +42,8 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -59,7 +59,7 @@ jobs:
   containers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: docker compose config --quiet
       - run: docker compose build
 
@@ -84,10 +84,10 @@ jobs:
       APP_ENV: development
       ALLOW_INSECURE_DEV_AUTH: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -97,9 +97,14 @@ jobs:
       - name: Start API
         run: |
           cargo run -p prosepect-api --bin prosepect-api > /tmp/prosepect-api.log 2>&1 &
-          for attempt in {1..60}; do
+          api_pid=$!
+          for attempt in {1..300}; do
             if curl --fail --silent http://127.0.0.1:3000/ready; then
               exit 0
+            fi
+            if ! kill -0 "$api_pid" 2>/dev/null; then
+              cat /tmp/prosepect-api.log
+              exit 1
             fi
             sleep 1
           done
