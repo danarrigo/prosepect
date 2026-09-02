@@ -137,9 +137,11 @@ test('creates an event and browses day, week, month, and agenda views', async ({
       response.request().method() === 'PUT' &&
       response.status() === 200,
   )
-  await page.mouse.move(eventBox!.x + eventBox!.width / 2, eventBox!.y + 10)
+  const moveStartX = eventBox!.x + eventBox!.width / 2
+  const moveStartY = eventBox!.y + eventBox!.height / 2
+  await page.mouse.move(moveStartX, moveStartY)
   await page.mouse.down()
-  await page.mouse.move(eventBox!.x + eventBox!.width / 2, eventBox!.y + 58, { steps: 5 })
+  await page.mouse.move(moveStartX, moveStartY - 48, { steps: 5 })
   await page.mouse.up()
   await moved
   await expect(eventBlock).not.toHaveAttribute('aria-label', initialEventLabel!)
