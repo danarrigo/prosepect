@@ -944,8 +944,9 @@ async fn google_calendar_mutations_enqueue_sync_and_mark_mappings_dirty(
     let calendar_id = Uuid::now_v7();
     sqlx::query(
         r#"
-        INSERT INTO calendars (id, user_id, name, color, source, external_id, selected)
-        VALUES ($1, $2, 'Google', '#4285f4', 'google', 'remote-calendar', TRUE)
+        INSERT INTO calendars (
+            id, user_id, name, color, source, external_id, selected, access_role
+        ) VALUES ($1, $2, 'Google', '#4285f4', 'google', 'remote-calendar', TRUE, 'writer')
         "#,
     )
     .bind(calendar_id)

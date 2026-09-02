@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Search, X } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import * as api from '../api/client'
@@ -10,6 +10,7 @@ const query = ref('')
 const results = ref<SearchResult[]>([])
 const open = ref(false)
 const loading = ref(false)
+const container = ref<HTMLElement>()
 let timer: ReturnType<typeof setTimeout> | undefined
 
 watch(query, (value) => {
@@ -29,8 +30,11 @@ watch(query, (value) => {
   }, 180)
 })
 
+onMounted(() => document.addEventListener('pointerdown', handleDocumentPointerDown))
+
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
 })
 
 function choose(result: SearchResult) {
@@ -48,10 +52,14 @@ function clear() {
   results.value = []
   open.value = false
 }
+
+function handleDocumentPointerDown(event: PointerEvent) {
+  if (event.target instanceof Node && !container.value?.contains(event.target)) clear()
+}
 </script>
 
 <template>
-  <div class="relative hidden sm:block" @keydown.esc="open = false">
+  <div ref="container" class="relative hidden sm:block" @keydown.esc="clear">
     <label class="relative block">
       <span class="sr-only">Search workspace</span>
       <Search
