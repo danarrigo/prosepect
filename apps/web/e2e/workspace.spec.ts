@@ -58,6 +58,30 @@ test('keeps times visible on compact events and scheduled tasks', async ({ page 
   expect(eventTimeBox!.y).toBeGreaterThanOrEqual(eventBox!.y)
   expect(eventTimeBox!.y + eventTimeBox!.height).toBeLessThanOrEqual(eventBox!.y + eventBox!.height)
 
+  const bottomHandle = eventBlock.locator('[title="Drag bottom edge to resize"]')
+  const bottomBox = await bottomHandle.boundingBox()
+  expect(bottomBox).not.toBeNull()
+  const resized = page.waitForResponse(
+    (response) =>
+      /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
+      response.request().method() === 'PUT' &&
+      response.status() === 200,
+  )
+  await page.mouse.move(bottomBox!.x + bottomBox!.width / 2, bottomBox!.y + bottomBox!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(
+    bottomBox!.x + bottomBox!.width / 2,
+    bottomBox!.y + bottomBox!.height / 2 + 16,
+    { steps: 4 },
+  )
+  await page.mouse.up()
+  await resized
+
+  const thirtyMinuteBox = await eventBlock.boundingBox()
+  expect(thirtyMinuteBox).not.toBeNull()
+  expect(thirtyMinuteBox!.height).toBeGreaterThan(eventBox!.height)
+  expect(Math.abs(thirtyMinuteBox!.height - eventBox!.height * 2)).toBeLessThanOrEqual(1)
+
   await eventBlock.click()
   const editForm = page.getByRole('form', { name: 'Edit event' })
   await editForm.getByRole('button', { name: 'Delete event' }).click()

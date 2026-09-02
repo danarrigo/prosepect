@@ -69,7 +69,8 @@ let dateRefreshTimer: ReturnType<typeof setInterval> | undefined
 const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const timelineHours = Array.from({ length: 25 }, (_, hour) => hour)
 const timelineHalfHours = Array.from({ length: 47 }, (_, index) => index + 1)
-const timelineHourHeight = 48
+const timelineHourHeight = 60
+const timelineQuarterHourHeight = timelineHourHeight / 4
 const timelineHeight = timelineHourHeight * 24
 
 interface TimelineItem {
@@ -585,7 +586,10 @@ function timelineItemStyle(item: TimelineItemLayout) {
   const start = Math.max(dayStart, new Date(range.startsAt).getTime())
   const end = Math.min(dayEnd, new Date(range.endsAt).getTime())
   const top = ((start - dayStart) / 3_600_000) * timelineHourHeight
-  const height = Math.max(28, ((end - start) / 3_600_000) * timelineHourHeight)
+  const height = Math.max(
+    timelineQuarterHourHeight,
+    ((end - start) / 3_600_000) * timelineHourHeight,
+  )
   const columnWidth = 100 / item.columns
   return {
     top: `${top}px`,
@@ -609,7 +613,7 @@ function timelineItemIsCompact(item: TimelineItem) {
   const dayEnd = dayStart + 24 * 60 * 60 * 1_000
   const visibleStart = Math.max(dayStart, new Date(range.startsAt).getTime())
   const visibleEnd = Math.min(dayEnd, new Date(range.endsAt).getTime())
-  return visibleEnd - visibleStart < 60 * 60 * 1_000
+  return visibleEnd - visibleStart < 45 * 60 * 1_000
 }
 
 function timelineTimeRange(item: TimelineItem) {
@@ -1537,8 +1541,10 @@ function monthDays(cursor: Date) {
             v-for="hour in timelineHours"
             :key="hour"
             class="group absolute left-16 right-0 z-0 text-left transition hover:bg-slate-50/60 disabled:pointer-events-none dark:hover:bg-slate-900/40"
-            :class="hour === 24 ? 'h-px' : 'h-12'"
-            :style="{ top: `${hour * timelineHourHeight}px` }"
+            :style="{
+              top: `${hour * timelineHourHeight}px`,
+              height: hour === 24 ? '1px' : `${timelineHourHeight}px`,
+            }"
             type="button"
             :disabled="hour === 24"
             :aria-label="
@@ -1582,7 +1588,7 @@ function monthDays(cursor: Date) {
                 class="group pointer-events-auto absolute z-10 touch-none cursor-grab overflow-hidden rounded-sm border-l-[3px] text-left shadow-sm transition hover:brightness-95 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 dark:hover:brightness-110"
                 :class="[
                   { 'opacity-40': draggedTimelineItemKey === item.key },
-                  timelineItemIsCompact(item) ? 'px-2 py-1' : 'px-2.5 py-1.5',
+                  timelineItemIsCompact(item) ? 'px-2 py-px' : 'px-2.5 py-1.5',
                 ]"
                 :style="timelineItemStyle(item)"
                 type="button"
@@ -1591,7 +1597,8 @@ function monthDays(cursor: Date) {
                 @click="openTimelineEvent(item)"
               >
                 <span
-                  class="absolute inset-x-0 top-0 h-2 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                  class="absolute inset-x-0 top-0 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                  :class="timelineItemIsCompact(item) ? 'h-1' : 'h-2'"
                   title="Drag top edge to trim"
                   @pointerdown="startTimelineResize(item, $event, 'start')"
                 >
@@ -1601,7 +1608,7 @@ function monthDays(cursor: Date) {
                 </span>
                 <span
                   v-if="timelineItemIsCompact(item)"
-                  class="flex min-w-0 items-center gap-1 overflow-hidden leading-4"
+                  class="flex min-w-0 items-center gap-1 overflow-hidden leading-3"
                 >
                   <time class="shrink-0 text-[10px] tabular-nums opacity-65">
                     {{ timelineTimeRange(item) }}
@@ -1616,7 +1623,8 @@ function monthDays(cursor: Date) {
                   </span>
                 </template>
                 <span
-                  class="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                  class="absolute inset-x-0 bottom-0 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                  :class="timelineItemIsCompact(item) ? 'h-1' : 'h-2'"
                   title="Drag bottom edge to resize"
                   @pointerdown="startTimelineResize(item, $event, 'end')"
                 >
@@ -1630,7 +1638,7 @@ function monthDays(cursor: Date) {
                 class="group pointer-events-auto absolute z-10 touch-none cursor-grab overflow-hidden rounded-sm border-l-[3px] text-left shadow-sm transition hover:brightness-95 active:cursor-grabbing dark:hover:brightness-110"
                 :class="[
                   { 'opacity-40': draggedTimelineItemKey === item.key },
-                  timelineItemIsCompact(item) ? 'px-2 py-1' : 'px-2.5 py-1.5',
+                  timelineItemIsCompact(item) ? 'px-2 py-px' : 'px-2.5 py-1.5',
                 ]"
                 :style="timelineItemStyle(item)"
                 type="button"
@@ -1638,7 +1646,8 @@ function monthDays(cursor: Date) {
                 @pointerdown="startTimelineMove(item, $event)"
               >
                 <span
-                  class="absolute inset-x-0 top-0 h-2 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                  class="absolute inset-x-0 top-0 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                  :class="timelineItemIsCompact(item) ? 'h-1' : 'h-2'"
                   title="Drag top edge to trim"
                   @pointerdown="startTimelineResize(item, $event, 'start')"
                 >
@@ -1648,7 +1657,7 @@ function monthDays(cursor: Date) {
                 </span>
                 <span
                   v-if="timelineItemIsCompact(item)"
-                  class="flex min-w-0 items-center gap-1 overflow-hidden leading-4"
+                  class="flex min-w-0 items-center gap-1 overflow-hidden leading-3"
                 >
                   <time class="shrink-0 text-[10px] tabular-nums opacity-65">
                     {{ timelineTimeRange(item) }}
@@ -1662,7 +1671,8 @@ function monthDays(cursor: Date) {
                   </span>
                 </template>
                 <span
-                  class="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                  class="absolute inset-x-0 bottom-0 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
+                  :class="timelineItemIsCompact(item) ? 'h-1' : 'h-2'"
                   title="Drag bottom edge to resize"
                   @pointerdown="startTimelineResize(item, $event, 'end')"
                 >
