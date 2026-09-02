@@ -9,6 +9,7 @@ import {
   clampTimelineDuration,
   clampTimelineStart,
   clampTimelineStartResize,
+  defaultEventCalendarId,
   eventOccursOnDate,
   localDateKey as dateKey,
   parseLocalDateKey as parseDateKey,
@@ -119,6 +120,9 @@ const selectedLabel = computed(() =>
 const selectedWeekday = computed(() =>
   new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(selectedDate.value),
 )
+const preferredEventCalendarId = computed(() =>
+  defaultEventCalendarId(store.calendars, store.user?.email),
+)
 const eventDraftDurationMinutes = computed(() => {
   if (!eventStart.value || !eventEnd.value) return null
   const duration = Math.round(
@@ -216,9 +220,12 @@ const agendaDays = computed(() =>
 watch(
   () => store.calendars,
   (calendars) => {
-    if (!eventCalendarId.value && calendars.length) {
-      eventCalendarId.value =
-        calendars.find((calendar) => calendar.is_default)?.id ?? calendars[0]!.id
+    if (
+      calendars.length &&
+      (!eventCalendarId.value ||
+        !calendars.some((calendar) => calendar.id === eventCalendarId.value))
+    ) {
+      eventCalendarId.value = preferredEventCalendarId.value
     }
   },
   { immediate: true, deep: true },
@@ -305,6 +312,7 @@ function openEventForm(date = selectedDate.value, startHour = 9) {
   eventAllDay.value = false
   eventRecurrence.value = 'none'
   eventRecurrenceUntil.value = ''
+  eventCalendarId.value = preferredEventCalendarId.value
   const start = new Date(date)
   start.setHours(startHour, 0, 0, 0)
   const end = new Date(start.getTime() + 60 * 60 * 1_000)
@@ -1167,10 +1175,11 @@ function monthDays(cursor: Date) {
           <input v-model="eventTitle" class="field-input" required maxlength="240" autofocus />
         </label>
         <label>
-          <span class="field-label">Calendar</span>
+          <span class="field-label">Save to</span>
           <select v-model="eventCalendarId" class="field-input" required>
             <option v-for="calendar in store.calendars" :key="calendar.id" :value="calendar.id">
-              {{ calendar.name }}
+              {{ calendar.name }} ·
+              {{ calendar.source === 'google' ? 'Google Calendar' : 'Prosepect only' }}
             </option>
           </select>
         </label>

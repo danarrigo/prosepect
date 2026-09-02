@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { CalendarEvent, Task } from './api/types'
+import type { Calendar, CalendarEvent, Task } from './api/types'
 import {
   clampTimelineDuration,
+  defaultEventCalendarId,
   clampTimelineStart,
   clampTimelineStartResize,
   eventOccursOnDate,
@@ -11,6 +12,22 @@ import {
   tasksForDate,
   timelineMinuteFromOffset,
 } from './calendar'
+
+function calendar(overrides: Partial<Calendar> = {}): Calendar {
+  return {
+    id: '019cf000-0000-7000-8000-000000000020',
+    name: 'My calendar',
+    color: '#64748b',
+    source: 'native',
+    external_id: null,
+    selected: true,
+    is_default: true,
+    created_at: '2026-01-01T09:00:00Z',
+    updated_at: '2026-01-01T09:00:00Z',
+    version: 1,
+    ...overrides,
+  }
+}
 
 function calendarEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
   return {
@@ -59,6 +76,20 @@ function task(overrides: Partial<Task> = {}): Task {
 }
 
 describe('calendar dates', () => {
+  it('defaults new events to the signed-in user’s primary Google calendar', () => {
+    const local = calendar()
+    const google = calendar({
+      id: '019cf000-0000-7000-8000-000000000021',
+      name: 'Personal',
+      source: 'google',
+      external_id: 'owner@example.com',
+      is_default: false,
+    })
+
+    expect(defaultEventCalendarId([local, google], 'OWNER@example.com')).toBe(google.id)
+    expect(defaultEventCalendarId([local, google], 'other@example.com')).toBe(local.id)
+  })
+
   it('matches due dates and every local day in a schedule', () => {
     const scheduled = task({
       scheduled_start: new Date(2026, 7, 10, 9).toISOString(),

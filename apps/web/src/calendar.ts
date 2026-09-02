@@ -1,4 +1,23 @@
-import type { CalendarEvent, Task } from './api/types'
+import type { Calendar, CalendarEvent, Task } from './api/types'
+
+export function defaultEventCalendarId(calendars: Calendar[], userEmail?: string) {
+  const normalizedEmail = userEmail?.trim().toLowerCase()
+  const primaryGoogleCalendar = normalizedEmail
+    ? calendars.find(
+        (calendar) =>
+          calendar.source === 'google' &&
+          calendar.selected &&
+          calendar.external_id?.toLowerCase() === normalizedEmail,
+      )
+    : undefined
+  return (
+    primaryGoogleCalendar?.id ??
+    calendars.find((calendar) => calendar.is_default)?.id ??
+    calendars.find((calendar) => calendar.selected)?.id ??
+    calendars[0]?.id ??
+    ''
+  )
+}
 
 export function startOfLocalDay(value: Date) {
   const date = new Date(value)
