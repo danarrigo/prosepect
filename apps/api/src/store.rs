@@ -694,6 +694,16 @@ impl Store {
 
         let mut transaction = self.pool.begin().await?;
         Self::lock_task_graph(&mut transaction, user_id).await?;
+        let task_ids = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM tasks WHERE user_id = $1 AND project_id = $2",
+        )
+        .bind(user_id)
+        .bind(project_id)
+        .fetch_all(&mut *transaction)
+        .await?;
+        for task_id in task_ids {
+            Self::remove_task_calendar_event(&mut transaction, user_id, task_id).await?;
+        }
         let result =
             sqlx::query("DELETE FROM projects WHERE id = $1 AND user_id = $2 AND version = $3")
                 .bind(project_id)
@@ -1254,6 +1264,7 @@ impl Store {
                 "task cannot be deleted while it has subtasks".to_owned(),
             ));
         }
+        Self::remove_task_calendar_event(&mut transaction, user_id, task_id).await?;
 
         let result =
             sqlx::query("DELETE FROM tasks WHERE id = $1 AND user_id = $2 AND version = $3")

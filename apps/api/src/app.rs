@@ -45,6 +45,7 @@ use crate::{
     rate_limit::LoginRateLimiter,
     routes,
     store::Store,
+    sync_dispatcher::SyncDispatcher,
     sync_routes,
     sync_service::SyncService,
 };
@@ -65,6 +66,7 @@ pub struct AppState {
     pub max_total_file_storage_bytes: i64,
     pub worker_trigger_token: Option<String>,
     pub sync_service: Option<SyncService>,
+    pub sync_dispatcher: SyncDispatcher,
     pub metrics: metrics_exporter_prometheus::PrometheusHandle,
 }
 
@@ -262,8 +264,18 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
     let file_storage = FileStorage::new(&config.object_storage)?;
     let sync_service = google_oauth
         .clone()
-        .map(|google| SyncService::new(store.clone(), google))
+        .map(|google| {
+            SyncService::new(
+                store.clone(),
+                google,
+                config.google_calendar_webhook_url.clone(),
+            )
+        })
         .transpose()?;
+    let sync_dispatcher = sync_service
+        .clone()
+        .map(SyncDispatcher::start)
+        .unwrap_or_default();
     let state = AppState {
         store,
         allow_insecure_dev_auth: config.allow_insecure_dev_auth,
@@ -279,6 +291,7 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         max_total_file_storage_bytes: config.max_total_file_storage_bytes,
         worker_trigger_token: config.worker_trigger_token.clone(),
         sync_service,
+        sync_dispatcher,
         metrics: observability::initialize_metrics(),
     };
 
@@ -404,6 +417,10 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         .route(
             "/internal/synchronization/run",
             post(routes::run_synchronization_worker),
+        )
+        .route(
+            "/webhooks/google/calendar",
+            post(sync_routes::google_calendar_webhook),
         )
         .nest("/api/v1", api)
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", ApiDoc::openapi()))

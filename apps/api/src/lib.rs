@@ -20,6 +20,7 @@ pub mod observability;
 pub mod rate_limit;
 pub mod routes;
 pub mod store;
+pub mod sync_dispatcher;
 pub mod sync_routes;
 pub mod sync_service;
 pub mod sync_store;

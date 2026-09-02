@@ -11,6 +11,7 @@ The application is designed both as a useful personal system and as a production
 - Standalone and project tasks with subtasks, labels, reminders, recurrence, sparse manual ordering, quick capture, and optimistic concurrency
 - Outcome-oriented projects with progress, target dates, lifecycle states, archival, notes, tasks, and files
 - Native and selected Google calendars with day, week, month, and agenda views
+- Near-real-time Google Calendar synchronization, renewable webhook channels, durable recovery jobs, and scheduled-task time blocks
 - Event recurrence, attendees, locations, timezones, editing, deletion, drag rescheduling, and conflict policies
 - Safe Markdown notes with project, task, or event links and private attachments
 - Tenant-scoped global search across tasks, projects, notes, and events
@@ -91,9 +92,10 @@ The frontend runs at <http://localhost:5173>. Swagger UI runs at <http://localho
 2. Add `GOOGLE_REDIRECT_URI` as an authorized redirect URI.
 3. Generate `TOKEN_ENCRYPTION_KEY` with `openssl rand -base64 32`.
 4. Configure the consent screen for OpenID scopes. Calendar scopes are requested later, only when a signed-in user connects Google Calendar.
-5. Restart the API and worker.
+5. In production, set `GOOGLE_CALENDAR_WEBHOOK_URL` to a public HTTPS endpoint ending in `/webhooks/google/calendar`. Omit it locally when no public HTTPS callback is available.
+6. Restart the API and worker.
 
-Production requires Google configuration, S3-compatible storage, secure cookies, and development authentication disabled. Set `INVITE_ONLY=true` for hosted beta access and insert lowercase emails into `account_invites` before first sign-in. Hosted deployments should set a random `WORKER_TRIGGER_TOKEN`; the scheduled GitHub workflow uses it to invoke one synchronization claim without compiling Rust on every run.
+Production requires Google configuration, S3-compatible storage, secure cookies, and development authentication disabled. Set `INVITE_ONLY=true` for hosted beta access and insert lowercase emails into `account_invites` before first sign-in. Hosted deployments should set a random `WORKER_TRIGGER_TOKEN`; the scheduled GitHub workflow renews watches and recovers missed synchronization without compiling Rust on every run.
 
 ## Keyboard shortcuts
 

@@ -36,7 +36,8 @@ The supported hosted-beta topology is:
 
 - Vercel serves the Vue application at `https://prosepect.com`.
 - Render Free runs the Axum API at `https://api.prosepect.com`.
-- GitHub Actions calls an authenticated API synchronization endpoint every 15 minutes.
+- Local mutations wake an in-process synchronization dispatcher and Google webhooks enqueue inbound changes.
+- GitHub Actions calls an authenticated recovery and watch-renewal endpoint every 15 minutes.
 - Neon PostgreSQL stores all canonical and operational state.
 - A private Cloudflare R2 bucket stores attachments through presigned URLs.
 
@@ -62,6 +63,7 @@ Render must receive these canonical public values:
 APP_URL                         https://prosepect.com
 CORS_ALLOWED_ORIGIN             https://prosepect.com
 GOOGLE_REDIRECT_URI             https://api.prosepect.com/api/v1/auth/google/callback
+GOOGLE_CALENDAR_WEBHOOK_URL     https://api.prosepect.com/webhooks/google/calendar
 BIND_ADDRESS                    0.0.0.0:10000
 MAX_TOTAL_FILE_STORAGE_BYTES    5368709120
 ```
@@ -72,7 +74,7 @@ Attach `api.prosepect.com` as a Render custom domain and add the DNS record Rend
 
 ### Scheduled worker
 
-`.github/workflows/worker.yml` calls `POST /internal/synchronization/run` at minutes 7, 22, 37, and 52 of each hour to avoid the busiest start-of-hour scheduling window. The API verifies a bearer token, enqueues due calendar work, and processes at most one claim. Overlapping runs are serialized. Scheduled runs use `curl` only: they do not compile Rust and do not start a worker container. The job remains skipped until `PROSEPECT_WORKER_ENABLED=true` and `PROSEPECT_WORKER_TRIGGER_TOKEN` is configured.
+`.github/workflows/worker.yml` calls `POST /internal/synchronization/run` at minutes 7, 22, 37, and 52 of each hour to avoid the busiest start-of-hour scheduling window. The API verifies a bearer token, enqueues stale calendar synchronization and expiring webhook watches, and processes at most one claim. This remains the durable recovery path when an immediate dispatch or Google notification is missed. Overlapping runs are serialized. Scheduled runs use `curl` only: they do not compile Rust and do not start a worker container. The job remains skipped until `PROSEPECT_WORKER_ENABLED=true` and `PROSEPECT_WORKER_TRIGGER_TOKEN` is configured.
 
 The same request also acts as an API availability check because network, authentication, or worker failures fail the workflow. The repository is public, so standard GitHub-hosted runners are free. Treat GitHub scheduling as best-effort, enable Actions failure notifications, and manually run the workflow after changing synchronization configuration.
 
@@ -84,6 +86,7 @@ Use these canonical values:
 Frontend                  https://prosepect.com
 API                       https://api.prosepect.com
 Google redirect           https://api.prosepect.com/api/v1/auth/google/callback
+Google Calendar webhook   https://api.prosepect.com/webhooks/google/calendar
 CORS allowed origin       https://prosepect.com
 ```
 
@@ -129,13 +132,16 @@ Alert on sustained readiness failure, API 5xx responses, failed synchronization 
 
 The worker:
 
-1. enqueues selected Google calendars that have not synchronized recently;
+1. enqueues selected Google calendars that have not synchronized recently and watches expiring within 24 hours;
 2. claims one job with `FOR UPDATE SKIP LOCKED`;
 3. leases it for two minutes;
 4. refreshes credentials when required;
 5. applies the configured conflict policy;
-6. records user-visible activity in PostgreSQL;
-7. retries transient failures with bounded exponential backoff.
+6. mirrors scheduled tasks through linked Google events while keeping tasks and events distinct;
+7. records user-visible activity in PostgreSQL;
+8. retries transient failures with bounded exponential backoff.
+
+The API uses the same durable queue immediately after local calendar or scheduled-task mutations. Completing a task retains its historical time block; unscheduling or deleting it removes the Google event. Authenticated Google webhook notifications enqueue the affected calendar without trusting provider payload data.
 
 Run one claim for diagnostics:
 
@@ -178,7 +184,8 @@ Test restores in an isolated environment. Restore PostgreSQL first and objects s
 - A `410 Gone` sync-token response triggers one bounded full pull and stores the replacement token only after successful processing.
 - `429` and provider `5xx` responses retry and honor `Retry-After`.
 - Unresolved `ask` conflicts remain visible in Settings and block silent overwrite for that mapping.
-- Disconnecting Google queues provider revocation, then deletes encrypted credentials and Google-backed canonical calendars.
+- Webhook channels use random verification tokens stored only as hashes and are renewed before expiration.
+- Disconnecting Google queues provider revocation, which stops known webhook channels before deleting encrypted credentials and Google-backed canonical calendars.
 
 If credentials become invalid, reconnect Google Calendar from Settings. Never inspect or copy encrypted token columns into logs.
 

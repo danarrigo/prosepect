@@ -30,5 +30,6 @@ pub async fn import_todoist(
         .action_rate_limiter
         .check_key(&format!("todoist-import:{user_id}"))?;
     let result = state.store.import_todoist_project(user_id, request).await?;
+    state.sync_dispatcher.wake();
     Ok((StatusCode::CREATED, Json(result)))
 }

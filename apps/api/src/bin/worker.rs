@@ -21,7 +21,11 @@ async fn main() -> anyhow::Result<()> {
     let store = Store::connect(&config)
         .await
         .context("failed to initialize PostgreSQL")?;
-    let google = config.google_oauth.map(GoogleOAuth::new).transpose()?;
+    let google = config
+        .google_oauth
+        .clone()
+        .map(GoogleOAuth::new)
+        .transpose()?;
     let Some(google) = google else {
         if once {
             bail!("Google OAuth is not configured");
@@ -31,10 +35,10 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::sleep(Duration::from_secs(300)).await;
         }
     };
-    let service = SyncService::new(store.clone(), google)?;
+    let service = SyncService::new(store, google, config.google_calendar_webhook_url.clone())?;
 
     loop {
-        store.enqueue_periodic_synchronizations().await?;
+        service.enqueue_periodic_work().await?;
         let processed = service.run_once().await?;
         if once {
             return Ok(());

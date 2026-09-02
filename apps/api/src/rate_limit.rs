@@ -32,6 +32,7 @@ pub struct LoginRateLimiter {
     attempts: Arc<Mutex<HashMap<String, VecDeque<Instant>>>>,
     limit: usize,
     window: Duration,
+    message: &'static str,
 }
 
 impl Default for LoginRateLimiter {
@@ -40,6 +41,7 @@ impl Default for LoginRateLimiter {
             attempts: Arc::new(Mutex::new(HashMap::new())),
             limit: 10,
             window: Duration::from_secs(60),
+            message: "too many authentication attempts; try again shortly",
         }
     }
 }
@@ -50,6 +52,7 @@ impl LoginRateLimiter {
             attempts: Arc::new(Mutex::new(HashMap::new())),
             limit,
             window: Duration::from_secs(60),
+            message: "too many requests; try again shortly",
         }
     }
 
@@ -77,7 +80,7 @@ impl LoginRateLimiter {
         if entries.len() >= self.limit {
             return Err(AppError::InvalidRequest {
                 status: axum::http::StatusCode::TOO_MANY_REQUESTS,
-                message: "too many authentication attempts; try again shortly".to_owned(),
+                message: self.message.to_owned(),
             });
         }
         entries.push_back(now);

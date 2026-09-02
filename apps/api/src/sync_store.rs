@@ -165,6 +165,129 @@ impl Store {
         Ok(result.rows_affected())
     }
 
+    pub async fn enqueue_expiring_calendar_watches(
+        &self,
+        only_user: Option<Uuid>,
+    ) -> AppResult<u64> {
+        sqlx::query("DELETE FROM google_watch_channels WHERE expires_at <= NOW()")
+            .execute(&self.pool)
+            .await?;
+        let bucket = Utc::now().timestamp() / (6 * 60 * 60);
+        let result = sqlx::query(
+            r#"
+            INSERT INTO sync_jobs (id, user_id, calendar_id, kind, idempotency_key)
+            SELECT gen_random_uuid(), calendars.user_id, calendars.id, 'calendar_watch',
+                   'calendar-watch:' || calendars.id::TEXT || ':' || $1::TEXT
+            FROM calendars
+            WHERE calendars.source = 'google' AND calendars.selected
+              AND ($2::UUID IS NULL OR calendars.user_id = $2)
+              AND NOT EXISTS (
+                  SELECT 1 FROM google_watch_channels channels
+                  WHERE channels.calendar_id = calendars.id
+                    AND channels.expires_at > NOW() + INTERVAL '24 hours'
+              )
+            ON CONFLICT (user_id, idempotency_key) DO NOTHING
+            "#,
+        )
+        .bind(bucket)
+        .bind(only_user)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn replace_google_watch_channel(
+        &self,
+        user_id: Uuid,
+        calendar_id: Uuid,
+        channel_id: Uuid,
+        resource_id: &str,
+        token_hash: &[u8],
+        expires_at: DateTime<Utc>,
+    ) -> AppResult<Vec<GoogleWatchChannel>> {
+        let mut transaction = self.pool.begin().await?;
+        let old_channels = sqlx::query_as::<_, GoogleWatchChannel>(
+            r#"
+            SELECT channel_id, resource_id
+            FROM google_watch_channels
+            WHERE user_id = $1 AND calendar_id = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(user_id)
+        .bind(calendar_id)
+        .fetch_all(&mut *transaction)
+        .await?;
+        sqlx::query("DELETE FROM google_watch_channels WHERE user_id = $1 AND calendar_id = $2")
+            .bind(user_id)
+            .bind(calendar_id)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query(
+            r#"
+            INSERT INTO google_watch_channels (
+                channel_id, user_id, calendar_id, resource_id, token_hash, expires_at
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(channel_id)
+        .bind(user_id)
+        .bind(calendar_id)
+        .bind(resource_id)
+        .bind(token_hash)
+        .bind(expires_at)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(old_channels)
+    }
+
+    pub async fn google_watch_channels_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> AppResult<Vec<GoogleWatchChannel>> {
+        sqlx::query_as::<_, GoogleWatchChannel>(
+            "SELECT channel_id, resource_id FROM google_watch_channels WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)
+    }
+
+    pub async fn enqueue_google_watch_notification(
+        &self,
+        channel_id: Uuid,
+        resource_id: &str,
+        token_hash: &[u8],
+        message_number: &str,
+    ) -> AppResult<bool> {
+        let accepted = sqlx::query_scalar::<_, bool>(
+            r#"
+            WITH channel AS (
+                SELECT user_id, calendar_id
+                FROM google_watch_channels
+                WHERE channel_id = $1 AND resource_id = $2 AND token_hash = $3
+                  AND expires_at > NOW()
+            ), inserted AS (
+                INSERT INTO sync_jobs (id, user_id, calendar_id, kind, idempotency_key)
+                SELECT $4, user_id, calendar_id, 'calendar_sync', $5 FROM channel
+                ON CONFLICT (user_id, idempotency_key) DO NOTHING
+                RETURNING id
+            )
+            SELECT EXISTS(SELECT 1 FROM channel)
+            "#,
+        )
+        .bind(channel_id)
+        .bind(resource_id)
+        .bind(token_hash)
+        .bind(Uuid::now_v7())
+        .bind(format!("google-watch:{channel_id}:{message_number}"))
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(accepted)
+    }
+
     pub async fn claim_sync_job(&self) -> AppResult<Option<ClaimedSyncJob>> {
         let mut transaction = self.pool.begin().await?;
         let job = sqlx::query_as::<_, ClaimedSyncJob>(
@@ -360,6 +483,12 @@ impl GoogleCredentialRow {
 struct GoogleCredentialStatus {
     scopes: Vec<String>,
     access_token_expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GoogleWatchChannel {
+    pub channel_id: Uuid,
+    pub resource_id: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

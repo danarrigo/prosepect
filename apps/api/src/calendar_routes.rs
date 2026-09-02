@@ -8,7 +8,7 @@ use crate::{
     extract::{ApiJson, ApiPath, ApiQuery},
     models::{
         Calendar, CalendarEvent, CalendarEventList, CalendarEventQuery, CalendarList,
-        CreateCalendarEventRequest, CreateCalendarRequest, ExpectedVersionQuery,
+        CalendarSource, CreateCalendarEventRequest, CreateCalendarRequest, ExpectedVersionQuery,
         UpdateCalendarEventRequest, UpdateCalendarRequest,
     },
 };
@@ -71,12 +71,18 @@ pub async fn update_calendar(
     ApiPath(calendar_id): ApiPath<Uuid>,
     ApiJson(request): ApiJson<UpdateCalendarRequest>,
 ) -> AppResult<Json<Calendar>> {
-    Ok(Json(
+    let calendar = state
+        .store
+        .update_calendar(user_id, calendar_id, request)
+        .await?;
+    if calendar.source == CalendarSource::Google && calendar.selected {
         state
             .store
-            .update_calendar(user_id, calendar_id, request)
-            .await?,
-    ))
+            .enqueue_expiring_calendar_watches(Some(user_id))
+            .await?;
+        state.sync_dispatcher.wake();
+    }
+    Ok(Json(calendar))
 }
 
 #[utoipa::path(
@@ -146,10 +152,9 @@ pub async fn create_event(
     CurrentUser(user_id): CurrentUser,
     ApiJson(request): ApiJson<CreateCalendarEventRequest>,
 ) -> AppResult<(StatusCode, Json<CalendarEvent>)> {
-    Ok((
-        StatusCode::CREATED,
-        Json(state.store.create_calendar_event(user_id, request).await?),
-    ))
+    let event = state.store.create_calendar_event(user_id, request).await?;
+    state.sync_dispatcher.wake();
+    Ok((StatusCode::CREATED, Json(event)))
 }
 
 #[utoipa::path(
@@ -173,12 +178,12 @@ pub async fn update_event(
     ApiPath(event_id): ApiPath<Uuid>,
     ApiJson(request): ApiJson<UpdateCalendarEventRequest>,
 ) -> AppResult<Json<CalendarEvent>> {
-    Ok(Json(
-        state
-            .store
-            .update_calendar_event(user_id, event_id, request)
-            .await?,
-    ))
+    let event = state
+        .store
+        .update_calendar_event(user_id, event_id, request)
+        .await?;
+    state.sync_dispatcher.wake();
+    Ok(Json(event))
 }
 
 #[utoipa::path(
@@ -204,5 +209,6 @@ pub async fn delete_event(
         .store
         .delete_calendar_event(user_id, event_id, query.expected_version)
         .await?;
+    state.sync_dispatcher.wake();
     Ok(StatusCode::NO_CONTENT)
 }

@@ -341,7 +341,21 @@ async fn scheduling_a_task_maintains_a_distinct_linked_event(pool: PgPool) -> an
     assert_eq!(events.items[0].linked_task_id, Some(task.id));
     assert_eq!(events.items[0].title, task.title);
 
-    let mut update = update_request(&task, TaskStatus::Todo);
+    let completed = store
+        .update_task(
+            user_id,
+            task.id,
+            update_request(&task, TaskStatus::Completed),
+        )
+        .await?;
+    let completed_event_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM calendar_events WHERE linked_task_id = $1")
+            .bind(task.id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(completed_event_count, 1);
+
+    let mut update = update_request(&completed, TaskStatus::Completed);
     update.scheduled_start = None;
     update.scheduled_end = None;
     store.update_task(user_id, task.id, update).await?;
@@ -352,6 +366,116 @@ async fn scheduling_a_task_maintains_a_distinct_linked_event(pool: PgPool) -> an
     .fetch_one(&pool)
     .await?;
     assert_eq!(remaining, 0);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn read_only_google_events_cannot_be_moved_or_deleted(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "readonly-calendar@example.com").await?;
+    let native_calendar_id = store.list_calendars(user_id).await?.items[0].id;
+    let google_calendar_id = Uuid::now_v7();
+    sqlx::query(
+        r#"
+        INSERT INTO calendars (
+            id, user_id, name, color, source, external_id, selected, access_role
+        ) VALUES ($1, $2, 'Read only', '#4285f4', 'google', 'readonly', TRUE, 'reader')
+        "#,
+    )
+    .bind(google_calendar_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await?;
+    let starts_at = Utc.with_ymd_and_hms(2026, 9, 2, 9, 0, 0).single().unwrap();
+    let event_id = Uuid::now_v7();
+    sqlx::query(
+        r#"
+        INSERT INTO calendar_events (
+            id, user_id, calendar_id, title, starts_at, ends_at, timezone
+        ) VALUES ($1, $2, $3, 'Provider event', $4, $5, 'UTC')
+        "#,
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .bind(google_calendar_id)
+    .bind(starts_at)
+    .bind(starts_at + Duration::hours(1))
+    .execute(&pool)
+    .await?;
+
+    let update_error = store
+        .update_calendar_event(
+            user_id,
+            event_id,
+            UpdateCalendarEventRequest {
+                calendar_id: native_calendar_id,
+                title: "Moved event".to_owned(),
+                description: String::new(),
+                starts_at,
+                ends_at: starts_at + Duration::hours(1),
+                all_day: false,
+                timezone: "UTC".to_owned(),
+                location: String::new(),
+                attendees: Vec::new(),
+                recurrence: EventRecurrence::None,
+                recurrence_until: None,
+                expected_version: 1,
+            },
+        )
+        .await
+        .expect_err("read-only event move must fail");
+    assert!(matches!(update_error, AppError::Forbidden(_)));
+    let delete_error = store
+        .delete_calendar_event(user_id, event_id, 1)
+        .await
+        .expect_err("read-only event deletion must fail");
+    assert!(matches!(delete_error, AppError::Forbidden(_)));
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn scheduled_tasks_use_the_primary_writable_google_calendar(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "google-time-block@example.com").await?;
+    let calendar_id = Uuid::now_v7();
+    sqlx::query(
+        r#"
+        INSERT INTO calendars (
+            id, user_id, name, color, source, external_id, selected,
+            provider_primary, access_role
+        ) VALUES ($1, $2, 'Primary', '#4285f4', 'google', $3, TRUE, TRUE, 'owner')
+        "#,
+    )
+    .bind(calendar_id)
+    .bind(user_id)
+    .bind("google-time-block@example.com")
+    .execute(&pool)
+    .await?;
+    let project = store
+        .create_project(user_id, project_request("Google time blocks"))
+        .await?;
+    let starts_at = Utc.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).single().unwrap();
+    let mut request = task_request(project.id, "Mirrored task");
+    request.scheduled_start = Some(starts_at);
+    request.scheduled_end = Some(starts_at + Duration::hours(1));
+
+    let task = store.create_task(user_id, request).await?;
+    let linked_calendar: Uuid =
+        sqlx::query_scalar("SELECT calendar_id FROM calendar_events WHERE linked_task_id = $1")
+            .bind(task.id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(linked_calendar, calendar_id);
+    let jobs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_jobs WHERE user_id = $1 AND calendar_id = $2 AND kind = 'calendar_sync'",
+    )
+    .bind(user_id)
+    .bind(calendar_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(jobs, 1);
     Ok(())
 }
 

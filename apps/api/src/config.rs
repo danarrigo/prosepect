@@ -63,6 +63,7 @@ pub struct Config {
     pub max_file_size_bytes: usize,
     pub max_total_file_storage_bytes: i64,
     pub worker_trigger_token: Option<String>,
+    pub google_calendar_webhook_url: Option<String>,
 }
 
 impl Config {
@@ -191,6 +192,14 @@ impl Config {
         {
             bail!("WORKER_TRIGGER_TOKEN must contain at least 32 characters");
         }
+        let google_calendar_webhook_url = env_nonempty("GOOGLE_CALENDAR_WEBHOOK_URL");
+        if let Some(webhook_url) = &google_calendar_webhook_url {
+            let parsed = reqwest::Url::parse(webhook_url)
+                .context("GOOGLE_CALENDAR_WEBHOOK_URL must be a valid URL")?;
+            if environment == Environment::Production && parsed.scheme() != "https" {
+                bail!("GOOGLE_CALENDAR_WEBHOOK_URL must use HTTPS in production");
+            }
+        }
 
         Ok(Self {
             environment,
@@ -207,6 +216,7 @@ impl Config {
             max_file_size_bytes,
             max_total_file_storage_bytes,
             worker_trigger_token,
+            google_calendar_webhook_url,
         })
     }
 }

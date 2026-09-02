@@ -22,10 +22,11 @@ pub struct SyncService {
     google: GoogleOAuth,
     http: reqwest::Client,
     google_api_base: String,
+    webhook_url: Option<String>,
 }
 
 impl SyncService {
-    pub fn new(store: Store, google: GoogleOAuth) -> Result<Self> {
+    pub fn new(store: Store, google: GoogleOAuth, webhook_url: Option<String>) -> Result<Self> {
         Ok(Self {
             store,
             google,
@@ -35,6 +36,7 @@ impl SyncService {
                 .build()
                 .context("failed to build Google Calendar HTTP client")?,
             google_api_base: GOOGLE_CALENDAR_API.to_owned(),
+            webhook_url,
         })
     }
 
@@ -43,10 +45,30 @@ impl SyncService {
         self
     }
 
+    pub async fn enqueue_periodic_work(&self) -> Result<u64> {
+        let mut enqueued = self.store.enqueue_periodic_synchronizations().await?;
+        if self.webhook_url.is_some() {
+            enqueued += self.store.enqueue_expiring_calendar_watches(None).await?;
+        }
+        Ok(enqueued)
+    }
+
     pub async fn run_once(&self) -> Result<bool> {
         let Some(job) = self.store.claim_sync_job().await? else {
             return Ok(false);
         };
+        let mut user_lock = self.store.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("prosepect-sync:{}", job.user_id))
+            .execute(&mut *user_lock)
+            .await?;
+        let status = sqlx::query_scalar::<_, String>("SELECT status FROM sync_jobs WHERE id = $1")
+            .bind(job.id)
+            .fetch_optional(&self.store.pool)
+            .await?;
+        if status.as_deref() != Some("running") {
+            return Ok(true);
+        }
         let started = std::time::Instant::now();
         let result = self.execute(&job).await;
         metrics::histogram!(
@@ -100,6 +122,12 @@ impl SyncService {
         match job.kind.as_str() {
             "calendar_discovery" => self.discover_calendars(job.user_id).await,
             "calendar_sync" => self.sync_calendars(job.user_id, job.calendar_id).await,
+            "calendar_watch" => {
+                let calendar_id = job
+                    .calendar_id
+                    .ok_or_else(|| anyhow!("calendar watch job requires a calendar"))?;
+                self.watch_calendar(job.user_id, calendar_id).await
+            }
             "credential_revoke" => self.revoke(job.user_id).await,
             kind => bail!("unsupported synchronization job kind {kind}"),
         }
@@ -135,10 +163,13 @@ impl SyncService {
                 sqlx::query(
                     r#"
                     INSERT INTO calendars (
-                        id, user_id, name, color, source, external_id, selected, is_default
-                    ) VALUES ($1, $2, $3, $4, 'google', $5, $6, FALSE)
+                        id, user_id, name, color, source, external_id, selected, is_default,
+                        provider_primary, access_role
+                    ) VALUES ($1, $2, $3, $4, 'google', $5, $6, FALSE, $7, $8)
                     ON CONFLICT (user_id, source, external_id)
                     DO UPDATE SET name = EXCLUDED.name, color = EXCLUDED.color,
+                        provider_primary = EXCLUDED.provider_primary,
+                        access_role = EXCLUDED.access_role,
                         selected = calendars.selected, updated_at = NOW()
                     "#,
                 )
@@ -152,6 +183,8 @@ impl SyncService {
                 )
                 .bind(calendar.id)
                 .bind(calendar.selected.unwrap_or(false) || calendar.primary.unwrap_or(false))
+                .bind(calendar.primary.unwrap_or(false))
+                .bind(calendar.access_role.unwrap_or_else(|| "reader".to_owned()))
                 .execute(&self.store.pool)
                 .await?;
             }
@@ -160,8 +193,125 @@ impl SyncService {
                 break;
             }
         }
+        self.store
+            .migrate_scheduled_tasks_to_preferred_calendar(user_id)
+            .await?;
+        if self.webhook_url.is_some() {
+            self.store
+                .enqueue_expiring_calendar_watches(Some(user_id))
+                .await?;
+        }
         self.record_activity(user_id, "calendar_discovery", "Google calendars refreshed")
             .await
+    }
+
+    async fn watch_calendar(&self, user_id: Uuid, calendar_id: Uuid) -> Result<()> {
+        let webhook_url = self
+            .webhook_url
+            .as_deref()
+            .ok_or_else(|| anyhow!("Google Calendar webhook URL is not configured"))?;
+        let calendar = sqlx::query_as::<_, WatchCalendar>(
+            r#"
+            SELECT id, external_id
+            FROM calendars
+            WHERE id = $1 AND user_id = $2 AND source = 'google' AND selected
+            "#,
+        )
+        .bind(calendar_id)
+        .bind(user_id)
+        .fetch_optional(&self.store.pool)
+        .await?;
+        let Some(calendar) = calendar else {
+            return Ok(());
+        };
+        let access_token = self.access_token(user_id).await?;
+        let channel_id = Uuid::new_v4();
+        let channel_token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        let request = GoogleWatchRequest {
+            id: channel_id.to_string(),
+            kind: "web_hook",
+            address: webhook_url,
+            token: &channel_token,
+            params: GoogleWatchParams { ttl: "604800" },
+        };
+        let url = self.url(&["calendars", &calendar.external_id, "events", "watch"])?;
+        let response: GoogleWatchResponse = self
+            .send_json(Method::POST, url, &access_token, Some(&request), None)
+            .await?;
+        let expires_at = response
+            .expiration
+            .as_deref()
+            .and_then(|value| value.parse::<i64>().ok())
+            .and_then(|value| Utc.timestamp_millis_opt(value).single())
+            .unwrap_or_else(|| Utc::now() + chrono::Duration::days(6));
+        let token_hash = Sha256::digest(channel_token.as_bytes()).to_vec();
+        let old_channels = match self
+            .store
+            .replace_google_watch_channel(
+                user_id,
+                calendar.id,
+                channel_id,
+                &response.resource_id,
+                &token_hash,
+                expires_at,
+            )
+            .await
+        {
+            Ok(channels) => channels,
+            Err(error) => {
+                let stop_url = self.url(&["channels", "stop"])?;
+                let stop = GoogleStopChannelRequest {
+                    id: channel_id.to_string(),
+                    resource_id: &response.resource_id,
+                };
+                if let Err(stop_error) = self
+                    .send(Method::POST, stop_url, &access_token, Some(&stop), None)
+                    .await
+                    .and_then(|response| {
+                        response
+                            .error_for_status()
+                            .map(|_| ())
+                            .context("Google Calendar channel cleanup failed")
+                    })
+                {
+                    tracing::warn!(error = ?stop_error, channel_id = %channel_id, "unpersisted Google watch channel could not be stopped");
+                }
+                return Err(error.into());
+            }
+        };
+        for old in old_channels {
+            let stop_url = self.url(&["channels", "stop"])?;
+            let stop = GoogleStopChannelRequest {
+                id: old.channel_id.to_string(),
+                resource_id: &old.resource_id,
+            };
+            if let Err(error) = self
+                .send(Method::POST, stop_url, &access_token, Some(&stop), None)
+                .await
+                .and_then(|response| {
+                    response
+                        .error_for_status()
+                        .map(|_| ())
+                        .context("Google Calendar channel stop failed")
+                })
+            {
+                tracing::warn!(error = ?error, channel_id = %old.channel_id, "old Google watch channel could not be stopped");
+            }
+        }
+        self.store
+            .enqueue_sync(
+                user_id,
+                Some(calendar.id),
+                "calendar_sync",
+                &format!("calendar-watch-start:{channel_id}"),
+            )
+            .await?;
+        self.record_activity(
+            user_id,
+            "calendar_watch_enabled",
+            "Real-time Google Calendar notifications enabled",
+        )
+        .await
     }
 
     async fn sync_calendars(&self, user_id: Uuid, only_calendar: Option<Uuid>) -> Result<()> {
@@ -329,11 +479,7 @@ impl SyncService {
                     }
                 }
                 if let Some(event_id) = mapping.canonical_event_id {
-                    sqlx::query("DELETE FROM calendar_events WHERE id = $1 AND user_id = $2")
-                        .bind(event_id)
-                        .bind(user_id)
-                        .execute(&self.store.pool)
-                        .await?;
+                    delete_canonical_event(&self.store, user_id, event_id).await?;
                 }
                 sqlx::query("DELETE FROM external_event_mappings WHERE id = $1")
                     .bind(mapping.id)
@@ -582,6 +728,28 @@ impl SyncService {
 
     async fn revoke(&self, user_id: Uuid) -> Result<()> {
         let credentials: GoogleCredentials = self.store.google_credentials(user_id).await?;
+        let access_token = self.access_token(user_id).await.ok();
+        if let Some(access_token) = access_token {
+            for channel in self.store.google_watch_channels_for_user(user_id).await? {
+                let stop_url = self.url(&["channels", "stop"])?;
+                let request = GoogleStopChannelRequest {
+                    id: channel.channel_id.to_string(),
+                    resource_id: &channel.resource_id,
+                };
+                if let Err(error) = self
+                    .send(Method::POST, stop_url, &access_token, Some(&request), None)
+                    .await
+                    .and_then(|response| {
+                        response
+                            .error_for_status()
+                            .map(|_| ())
+                            .context("Google Calendar channel stop failed")
+                    })
+                {
+                    tracing::warn!(error = ?error, channel_id = %channel.channel_id, "Google watch channel cleanup failed");
+                }
+            }
+        }
         self.google.revoke(&credentials).await?;
         self.store.revoke_google_integration(user_id).await?;
         self.record_activity(
@@ -701,6 +869,41 @@ impl SyncService {
     }
 }
 
+#[derive(sqlx::FromRow)]
+struct WatchCalendar {
+    id: Uuid,
+    external_id: String,
+}
+
+#[derive(Serialize)]
+struct GoogleWatchRequest<'a> {
+    id: String,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    address: &'a str,
+    token: &'a str,
+    params: GoogleWatchParams,
+}
+
+#[derive(Serialize)]
+struct GoogleWatchParams {
+    ttl: &'static str,
+}
+
+#[derive(Deserialize)]
+struct GoogleWatchResponse {
+    #[serde(rename = "resourceId")]
+    resource_id: String,
+    expiration: Option<String>,
+}
+
+#[derive(Serialize)]
+struct GoogleStopChannelRequest<'a> {
+    id: String,
+    #[serde(rename = "resourceId")]
+    resource_id: &'a str,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct GoogleCalendarList {
     #[serde(default)]
@@ -716,6 +919,8 @@ struct GoogleCalendar {
     background_color: Option<String>,
     selected: Option<bool>,
     primary: Option<bool>,
+    #[serde(rename = "accessRole")]
+    access_role: Option<String>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 struct GoogleEventList {
@@ -1011,7 +1216,53 @@ async fn update_canonical_event(
     calendar_id: Uuid,
     event: &NormalizedEvent,
 ) -> Result<()> {
-    sqlx::query(r#"UPDATE calendar_events SET calendar_id=$3,title=$4,description=$5,starts_at=$6,ends_at=$7,all_day=$8,timezone=$9,location=$10,attendees=$11,recurrence=$12,recurrence_until=$13,updated_at=NOW(),version=version+1 WHERE id=$1 AND user_id=$2"#).bind(id).bind(user_id).bind(calendar_id).bind(&event.title).bind(&event.description).bind(event.starts_at).bind(event.ends_at).bind(event.all_day).bind(&event.timezone).bind(&event.location).bind(&event.attendees).bind(event.recurrence).bind(event.recurrence_until).execute(&store.pool).await?;
+    let mut transaction = store.pool.begin().await?;
+    let linked_task_id = sqlx::query_scalar::<_, Option<Uuid>>(r#"UPDATE calendar_events SET calendar_id=$3,title=$4,description=$5,starts_at=$6,ends_at=$7,all_day=$8,timezone=$9,location=$10,attendees=$11,recurrence=$12,recurrence_until=$13,updated_at=NOW(),version=version+1 WHERE id=$1 AND user_id=$2 RETURNING linked_task_id"#).bind(id).bind(user_id).bind(calendar_id).bind(&event.title).bind(&event.description).bind(event.starts_at).bind(event.ends_at).bind(event.all_day).bind(&event.timezone).bind(&event.location).bind(&event.attendees).bind(event.recurrence).bind(event.recurrence_until).fetch_optional(&mut *transaction).await?.flatten();
+    if let Some(task_id) = linked_task_id {
+        sqlx::query(
+            r#"
+            UPDATE tasks SET title = $3, description = $4, scheduled_start = $5,
+                scheduled_end = $6, updated_at = NOW(), version = version + 1
+            WHERE id = $1 AND user_id = $2
+            "#,
+        )
+        .bind(task_id)
+        .bind(user_id)
+        .bind(&event.title)
+        .bind(&event.description)
+        .bind(event.starts_at)
+        .bind(event.ends_at)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn delete_canonical_event(store: &Store, user_id: Uuid, event_id: Uuid) -> Result<()> {
+    let mut transaction = store.pool.begin().await?;
+    let linked_task_id = sqlx::query_scalar::<_, Option<Uuid>>(
+        "DELETE FROM calendar_events WHERE id = $1 AND user_id = $2 RETURNING linked_task_id",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .flatten();
+    if let Some(task_id) = linked_task_id {
+        sqlx::query(
+            r#"
+            UPDATE tasks SET scheduled_start = NULL, scheduled_end = NULL,
+                updated_at = NOW(), version = version + 1
+            WHERE id = $1 AND user_id = $2
+            "#,
+        )
+        .bind(task_id)
+        .bind(user_id)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await?;
     Ok(())
 }
 async fn update_mapping_baseline(
@@ -1134,7 +1385,7 @@ mod tests {
             token_encryption_key: key,
         })
         .unwrap();
-        let service = SyncService::new(Store::from_pool(pool), google)
+        let service = SyncService::new(Store::from_pool(pool), google, None)
             .unwrap()
             .with_api_base(format!("http://{address}"));
         let url = service.url(&["calendar-list"]).unwrap();

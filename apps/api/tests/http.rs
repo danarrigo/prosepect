@@ -2,12 +2,14 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
 };
+use chrono::{Duration, Utc};
 use prosepect_api::{
     app::{self, ApiDoc},
     auth::DEVELOPMENT_USER_HEADER,
     config::{Config, Environment, GoogleOAuthConfig, ObjectStorageConfig},
     store::{DEVELOPMENT_USER_ID, Store},
 };
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use tower::ServiceExt;
 use utoipa::OpenApi;
@@ -131,6 +133,90 @@ async fn synchronization_trigger_requires_its_service_token(pool: PgPool) -> any
     let body: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(body["enqueued"], 0);
     assert_eq!(body["processed"], false);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn google_calendar_webhooks_are_authenticated_and_idempotent(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let config = test_config();
+    let router = app::build(&config, Store::from_pool(pool.clone()))?;
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendars")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    let calendar_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM calendars WHERE user_id = $1 AND is_default")
+            .bind(DEVELOPMENT_USER_ID)
+            .fetch_one(&pool)
+            .await?;
+    let channel_id = uuid::Uuid::new_v4();
+    let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    sqlx::query(
+        r#"
+        INSERT INTO google_watch_channels (
+            channel_id, user_id, calendar_id, resource_id, token_hash, expires_at
+        ) VALUES ($1, $2, $3, 'resource-1', $4, $5)
+        "#,
+    )
+    .bind(channel_id)
+    .bind(DEVELOPMENT_USER_ID)
+    .bind(calendar_id)
+    .bind(Sha256::digest(token.as_bytes()).to_vec())
+    .bind(Utc::now() + Duration::hours(1))
+    .execute(&pool)
+    .await?;
+
+    for _ in 0..2 {
+        let accepted = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/webhooks/google/calendar")
+                    .header("x-goog-channel-id", channel_id.to_string())
+                    .header("x-goog-resource-id", "resource-1")
+                    .header("x-goog-channel-token", token)
+                    .header("x-goog-message-number", "42")
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(accepted.status(), StatusCode::NO_CONTENT);
+    }
+    let rejected = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/webhooks/google/calendar")
+                .header("x-goog-channel-id", channel_id.to_string())
+                .header("x-goog-resource-id", "resource-1")
+                .header("x-goog-channel-token", "wrong-token")
+                .header("x-goog-message-number", "43")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+    let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_jobs WHERE idempotency_key = $1")
+        .bind(format!("google-watch:{channel_id}:42"))
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(jobs, 1);
     Ok(())
 }
 
@@ -472,5 +558,6 @@ fn test_config() -> Config {
         max_file_size_bytes: 25 * 1024 * 1024,
         max_total_file_storage_bytes: 5_i64 * 1024 * 1024 * 1024,
         worker_trigger_token: None,
+        google_calendar_webhook_url: None,
     }
 }

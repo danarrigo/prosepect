@@ -207,7 +207,7 @@ const eventsByDate = computed(
     new Map(
       visibleDates.value.map((date) => [
         dateKey(date),
-        store.events.filter((event) => eventOccursOnDate(event, date)),
+        store.events.filter((event) => !event.linked_task_id && eventOccursOnDate(event, date)),
       ]),
     ),
 )
@@ -1182,6 +1182,9 @@ function monthDays(cursor: Date) {
               {{ calendar.source === 'google' ? 'Google Calendar' : 'Prosepect only' }}
             </option>
           </select>
+          <span class="mt-1 block text-[11px] text-slate-400">
+            Google Calendar changes normally synchronize within seconds.
+          </span>
         </label>
         <label>
           <span class="field-label">Starts</span>

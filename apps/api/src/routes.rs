@@ -83,8 +83,12 @@ pub async fn run_synchronization_worker(
         .sync_service
         .as_ref()
         .ok_or(AppError::NotConfigured("Google synchronization"))?;
-    let enqueued = state.store.enqueue_periodic_synchronizations().await?;
+    let enqueued = service
+        .enqueue_periodic_work()
+        .await
+        .map_err(AppError::Integration)?;
     let processed = service.run_once().await.map_err(AppError::Integration)?;
+    state.sync_dispatcher.wake();
     Ok(Json(WorkerRunResponse {
         enqueued,
         processed,
@@ -360,6 +364,7 @@ pub async fn google_auth_callback(
                 &format!("calendar-connect:{user_id}:{}", Utc::now().timestamp()),
             )
             .await?;
+        state.sync_dispatcher.wake();
         return Ok((
             HeaderMap::new(),
             Redirect::to(&format!("{}/settings", state.app_url.trim_end_matches('/'))),
@@ -611,6 +616,7 @@ pub async fn delete_project(
         .store
         .delete_project(user_id, project_id, query.expected_version)
         .await?;
+    state.sync_dispatcher.wake();
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -635,6 +641,7 @@ pub async fn create_task(
         .action_rate_limiter
         .check_key(&format!("capture:{user_id}"))?;
     let task = state.store.create_task(user_id, request).await?;
+    state.sync_dispatcher.wake();
     Ok((StatusCode::CREATED, Json(task)))
 }
 
@@ -709,6 +716,7 @@ pub async fn update_task(
     ApiJson(request): ApiJson<UpdateTaskRequest>,
 ) -> AppResult<Json<Task>> {
     let task = state.store.update_task(user_id, task_id, request).await?;
+    state.sync_dispatcher.wake();
     Ok(Json(task))
 }
 
@@ -739,6 +747,7 @@ pub async fn delete_task(
         .store
         .delete_task(user_id, task_id, query.expected_version)
         .await?;
+    state.sync_dispatcher.wake();
     Ok(StatusCode::NO_CONTENT)
 }
 

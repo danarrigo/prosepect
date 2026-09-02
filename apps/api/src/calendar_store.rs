@@ -200,6 +200,7 @@ impl Store {
             request.recurrence_until,
         )?;
         let mut transaction = self.pool.begin().await?;
+        Self::ensure_calendar_writable(&mut transaction, user_id, request.calendar_id).await?;
         let event = sqlx::query_as::<_, CalendarEvent>(
             r#"
             INSERT INTO calendar_events (
@@ -210,6 +211,7 @@ impl Store {
                 $1, $2, calendars.id, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
             FROM calendars
             WHERE calendars.id = $3 AND calendars.user_id = $2
+              AND (calendars.source = 'native' OR calendars.access_role IN ('writer', 'owner'))
             RETURNING
                 id, calendar_id, linked_task_id, title, description, starts_at, ends_at,
                 all_day, timezone, location, attendees, recurrence, recurrence_until,
@@ -255,6 +257,24 @@ impl Store {
             request.recurrence_until,
         )?;
         let mut transaction = self.pool.begin().await?;
+        Self::ensure_calendar_writable(&mut transaction, user_id, request.calendar_id).await?;
+        let previous = sqlx::query_as::<_, CalendarEvent>(
+            r#"
+            SELECT id, calendar_id, linked_task_id, title, description, starts_at, ends_at,
+                   all_day, timezone, location, attendees, recurrence, recurrence_until,
+                   created_at, updated_at, version
+            FROM calendar_events
+            WHERE id = $1 AND user_id = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(event_id)
+        .bind(user_id)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        if let Some(previous) = &previous {
+            Self::ensure_calendar_writable(&mut transaction, user_id, previous.calendar_id).await?;
+        }
         let event = sqlx::query_as::<_, CalendarEvent>(
             r#"
             UPDATE calendar_events events
@@ -279,6 +299,7 @@ impl Store {
                 AND events.version = $14
                 AND calendars.id = $3
                 AND calendars.user_id = $2
+                AND (calendars.source = 'native' OR calendars.access_role IN ('writer', 'owner'))
             RETURNING
                 events.id, events.calendar_id, events.linked_task_id, events.title,
                 events.description, events.starts_at, events.ends_at, events.all_day,
@@ -327,6 +348,12 @@ impl Store {
             .execute(&mut *transaction)
             .await?;
         }
+        if let Some(previous) = previous
+            && previous.calendar_id != event.calendar_id
+        {
+            Self::mark_event_for_sync(&mut transaction, user_id, &previous, true).await?;
+            Self::detach_event_mapping(&mut transaction, user_id, &previous).await?;
+        }
         Self::mark_event_for_sync(&mut transaction, user_id, &event, false).await?;
         transaction.commit().await?;
         Ok(event)
@@ -359,6 +386,7 @@ impl Store {
                 .await
                 .map(|_| ());
         };
+        Self::ensure_calendar_writable(&mut transaction, user_id, existing.calendar_id).await?;
         Self::mark_event_for_sync(&mut transaction, user_id, &existing, true).await?;
         let linked_task_id = sqlx::query_scalar::<_, Option<Uuid>>(
             r#"
@@ -457,15 +485,22 @@ impl Store {
         user_id: Uuid,
         task: &Task,
     ) -> AppResult<()> {
+        let existing = Self::task_calendar_event(connection, user_id, task.id).await?;
         match (task.scheduled_start, task.scheduled_end) {
             (Some(starts_at), Some(ends_at)) => {
-                let calendar_id = Self::ensure_default_calendar(connection, user_id).await?;
+                let calendar_id = Self::preferred_time_block_calendar(connection, user_id).await?;
+                if let Some(existing) = &existing
+                    && existing.calendar_id != calendar_id
+                {
+                    Self::mark_event_for_sync(connection, user_id, existing, true).await?;
+                    Self::detach_event_mapping(connection, user_id, existing).await?;
+                }
                 let timezone =
                     sqlx::query_scalar::<_, String>("SELECT timezone FROM users WHERE id = $1")
                         .bind(user_id)
                         .fetch_one(&mut *connection)
                         .await?;
-                sqlx::query(
+                let event = sqlx::query_as::<_, CalendarEvent>(
                     r#"
                     INSERT INTO calendar_events (
                         id, user_id, calendar_id, linked_task_id, title, description,
@@ -474,6 +509,7 @@ impl Store {
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     ON CONFLICT (linked_task_id) DO UPDATE
                     SET
+                        calendar_id = EXCLUDED.calendar_id,
                         title = EXCLUDED.title,
                         description = EXCLUDED.description,
                         starts_at = EXCLUDED.starts_at,
@@ -481,6 +517,10 @@ impl Store {
                         timezone = EXCLUDED.timezone,
                         updated_at = NOW(),
                         version = calendar_events.version + 1
+                    RETURNING
+                        id, calendar_id, linked_task_id, title, description, starts_at, ends_at,
+                        all_day, timezone, location, attendees, recurrence, recurrence_until,
+                        created_at, updated_at, version
                     "#,
                 )
                 .bind(Uuid::now_v7())
@@ -492,19 +532,146 @@ impl Store {
                 .bind(starts_at)
                 .bind(ends_at)
                 .bind(timezone)
-                .execute(&mut *connection)
+                .fetch_one(&mut *connection)
                 .await?;
+                Self::mark_event_for_sync(connection, user_id, &event, false).await?;
             }
-            _ => {
-                sqlx::query(
-                    "DELETE FROM calendar_events WHERE user_id = $1 AND linked_task_id = $2",
-                )
-                .bind(user_id)
-                .bind(task.id)
-                .execute(&mut *connection)
-                .await?;
-            }
+            _ => Self::remove_task_calendar_event(connection, user_id, task.id).await?,
         }
+        Ok(())
+    }
+
+    pub(crate) async fn migrate_scheduled_tasks_to_preferred_calendar(
+        &self,
+        user_id: Uuid,
+    ) -> AppResult<u64> {
+        let mut transaction = self.pool.begin().await?;
+        let calendar_id = Self::preferred_time_block_calendar(&mut transaction, user_id).await?;
+        let tasks = sqlx::query_as::<_, Task>(
+            r#"
+            SELECT id, project_id, parent_task_id, title, description, due_at,
+                   scheduled_start, scheduled_end, status, priority, recurrence, labels,
+                   remind_at, position, completed_at, created_at, updated_at, version
+            FROM tasks
+            WHERE user_id = $1 AND scheduled_start IS NOT NULL AND scheduled_end IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM calendar_events
+                  WHERE linked_task_id = tasks.id AND calendar_id = $2
+              )
+            FOR UPDATE
+            "#,
+        )
+        .bind(user_id)
+        .bind(calendar_id)
+        .fetch_all(&mut *transaction)
+        .await?;
+        let migrated = tasks.len() as u64;
+        for task in tasks {
+            Self::sync_task_calendar_event(&mut transaction, user_id, &task).await?;
+        }
+        transaction.commit().await?;
+        Ok(migrated)
+    }
+
+    pub(crate) async fn remove_task_calendar_event(
+        connection: &mut PgConnection,
+        user_id: Uuid,
+        task_id: Uuid,
+    ) -> AppResult<()> {
+        if let Some(event) = Self::task_calendar_event(connection, user_id, task_id).await? {
+            Self::mark_event_for_sync(connection, user_id, &event, true).await?;
+            sqlx::query("DELETE FROM calendar_events WHERE user_id = $1 AND id = $2")
+                .bind(user_id)
+                .bind(event.id)
+                .execute(&mut *connection)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn task_calendar_event(
+        connection: &mut PgConnection,
+        user_id: Uuid,
+        task_id: Uuid,
+    ) -> AppResult<Option<CalendarEvent>> {
+        sqlx::query_as::<_, CalendarEvent>(
+            r#"
+            SELECT id, calendar_id, linked_task_id, title, description, starts_at, ends_at,
+                   all_day, timezone, location, attendees, recurrence, recurrence_until,
+                   created_at, updated_at, version
+            FROM calendar_events
+            WHERE user_id = $1 AND linked_task_id = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(user_id)
+        .bind(task_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(AppError::from)
+    }
+
+    async fn preferred_time_block_calendar(
+        connection: &mut PgConnection,
+        user_id: Uuid,
+    ) -> AppResult<Uuid> {
+        if let Some(calendar_id) = sqlx::query_scalar::<_, Uuid>(
+            r#"
+            SELECT id FROM calendars
+            WHERE user_id = $1 AND source = 'google' AND selected AND provider_primary
+              AND access_role IN ('writer', 'owner')
+            ORDER BY id
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&mut *connection)
+        .await?
+        {
+            return Ok(calendar_id);
+        }
+        Self::ensure_default_calendar(connection, user_id).await
+    }
+
+    async fn ensure_calendar_writable(
+        connection: &mut PgConnection,
+        user_id: Uuid,
+        calendar_id: Uuid,
+    ) -> AppResult<()> {
+        let calendar = sqlx::query_as::<_, (String, String)>(
+            "SELECT source, access_role FROM calendars WHERE id = $1 AND user_id = $2",
+        )
+        .bind(calendar_id)
+        .bind(user_id)
+        .fetch_optional(&mut *connection)
+        .await?;
+        match calendar {
+            None => Err(AppError::NotFound("calendar")),
+            Some((source, access_role))
+                if source == "google" && !matches!(access_role.as_str(), "writer" | "owner") =>
+            {
+                Err(AppError::Forbidden("calendar is read-only"))
+            }
+            Some(_) => Ok(()),
+        }
+    }
+
+    async fn detach_event_mapping(
+        connection: &mut PgConnection,
+        user_id: Uuid,
+        event: &CalendarEvent,
+    ) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            UPDATE external_event_mappings SET canonical_event_id = NULL
+            WHERE user_id = $1 AND calendar_id = $2 AND canonical_event_id = $3
+            "#,
+        )
+        .bind(user_id)
+        .bind(event.calendar_id)
+        .bind(event.id)
+        .execute(&mut *connection)
+        .await?;
         Ok(())
     }
 
