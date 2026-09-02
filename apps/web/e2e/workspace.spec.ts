@@ -35,6 +35,55 @@ test('opens a scheduled task directly from an empty calendar slot', async ({ pag
   await expect(form).toBeHidden()
 })
 
+test('keeps times visible on compact events and scheduled tasks', async ({ page }) => {
+  const suffix = `${test.info().project.name}-${Date.now().toString().slice(-6)}`
+  const eventName = `Compact event ${suffix}`
+  const taskName = `Compact task ${suffix}`
+
+  await page.goto('/calendar?view=day')
+  await page.getByRole('button', { name: 'New event' }).click()
+  const eventForm = page.getByRole('form', { name: 'New event' })
+  const eventStart = await eventForm.getByLabel('Starts').inputValue()
+  await eventForm.getByLabel('Title').fill(eventName)
+  await eventForm.getByLabel('Ends').fill(eventStart.replace(/\d{2}:\d{2}$/, '09:15'))
+  await eventForm.getByRole('button', { name: 'Create event' }).click()
+
+  const eventBlock = page.getByRole('button', { name: new RegExp(`Edit ${eventName}`) })
+  await eventBlock.scrollIntoViewIfNeeded()
+  const eventBox = await eventBlock.boundingBox()
+  const eventTimeBox = await eventBlock.locator('time').boundingBox()
+  expect(eventBox).not.toBeNull()
+  expect(eventTimeBox).not.toBeNull()
+  expect(eventBox!.height).toBeLessThanOrEqual(30)
+  expect(eventTimeBox!.y).toBeGreaterThanOrEqual(eventBox!.y)
+  expect(eventTimeBox!.y + eventTimeBox!.height).toBeLessThanOrEqual(eventBox!.y + eventBox!.height)
+
+  await eventBlock.click()
+  const editForm = page.getByRole('form', { name: 'Edit event' })
+  await editForm.getByRole('button', { name: 'Delete event' }).click()
+  await editForm.getByRole('button', { name: 'Confirm delete' }).click()
+  await expect(eventBlock).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Create scheduled task at 10:00' }).click()
+  const taskForm = page.getByRole('form', { name: 'New scheduled task' })
+  const taskStart = await taskForm.getByLabel('Starts').inputValue()
+  await taskForm.getByLabel('Title').fill(taskName)
+  await taskForm.getByLabel('Ends').fill(taskStart.replace(/\d{2}:\d{2}$/, '10:15'))
+  await taskForm.getByRole('button', { name: 'Create task' }).click()
+
+  const taskBlock = page.getByRole('button', {
+    name: new RegExp(`${taskName}, scheduled task`),
+  })
+  await taskBlock.scrollIntoViewIfNeeded()
+  const taskBox = await taskBlock.boundingBox()
+  const taskTimeBox = await taskBlock.locator('time').boundingBox()
+  expect(taskBox).not.toBeNull()
+  expect(taskTimeBox).not.toBeNull()
+  expect(taskBox!.height).toBeLessThanOrEqual(30)
+  expect(taskTimeBox!.y).toBeGreaterThanOrEqual(taskBox!.y)
+  expect(taskTimeBox!.y + taskTimeBox!.height).toBeLessThanOrEqual(taskBox!.y + taskBox!.height)
+})
+
 test('creates an event and browses day, week, month, and agenda views', async ({ page }) => {
   const eventName = `Calendar event ${test.info().project.name}-${Date.now().toString().slice(-6)}`
 
@@ -107,31 +156,19 @@ test('creates an event and browses day, week, month, and agenda views', async ({
       response.status() === 200,
   )
   await page.mouse.down()
-  await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2 + 84, {
-    steps: 6,
+  await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2 + 24, {
+    steps: 4,
   })
   await page.mouse.up()
   await trimmed
   await expect(eventBlock).not.toHaveAttribute('aria-label', resizedEventLabel!)
 
-  const compactBox = await eventBlock.boundingBox()
-  const compactTimeBox = await eventBlock.locator('time').boundingBox()
-  expect(compactBox).not.toBeNull()
-  expect(compactTimeBox).not.toBeNull()
-  expect(compactBox!.height).toBeLessThanOrEqual(30)
-  expect(compactTimeBox!.y).toBeGreaterThanOrEqual(compactBox!.y)
-  expect(compactTimeBox!.y + compactTimeBox!.height).toBeLessThanOrEqual(
-    compactBox!.y + compactBox!.height,
-  )
-
   const deleteBox = await eventBlock.boundingBox()
   expect(deleteBox).not.toBeNull()
-  const deleteStartX = deleteBox!.x + deleteBox!.width / 2
-  const deleteStartY = deleteBox!.y + deleteBox!.height / 2
-  await page.mouse.move(deleteStartX, deleteStartY)
+  await page.mouse.move(deleteBox!.x + deleteBox!.width / 2, deleteBox!.y + 12)
   await page.mouse.down()
-  await page.mouse.move(deleteStartX, deleteStartY + 40, { steps: 5 })
-  const deleteZone = page.getByText(/^(Drop here to delete|Release to delete)$/)
+  await page.mouse.move(deleteBox!.x + deleteBox!.width / 2, deleteBox!.y + 24, { steps: 3 })
+  const deleteZone = page.getByText('Drop here to delete', { exact: true })
   const deleteZoneBox = await deleteZone.boundingBox()
   expect(deleteZoneBox).not.toBeNull()
   const deleted = page.waitForResponse(
