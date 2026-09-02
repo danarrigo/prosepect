@@ -568,16 +568,22 @@ function layoutTimelineGroup(group: TimelineItem[], layouts: TimelineItemLayout[
   for (const { item, column } of assigned) layouts.push({ ...item, column, columns })
 }
 
-function timelineItemStyle(item: TimelineItemLayout) {
-  const dayStart = startOfDay(selectedDate.value).getTime()
-  const dayEnd = dayStart + 24 * 60 * 60 * 1_000
+function timelineItemRange(item: TimelineItem) {
   const movePreview = timelineMovePreview.value?.key === item.key ? timelineMovePreview.value : null
   const resizePreview =
     timelineResizePreview.value?.key === item.key ? timelineResizePreview.value : null
-  const previewStart = resizePreview?.startsAt ?? movePreview?.startsAt ?? item.startsAt
-  const previewEnd = resizePreview?.endsAt ?? movePreview?.endsAt ?? item.endsAt
-  const start = Math.max(dayStart, new Date(previewStart).getTime())
-  const end = Math.min(dayEnd, new Date(previewEnd).getTime())
+  return {
+    startsAt: resizePreview?.startsAt ?? movePreview?.startsAt ?? item.startsAt,
+    endsAt: resizePreview?.endsAt ?? movePreview?.endsAt ?? item.endsAt,
+  }
+}
+
+function timelineItemStyle(item: TimelineItemLayout) {
+  const dayStart = startOfDay(selectedDate.value).getTime()
+  const dayEnd = dayStart + 24 * 60 * 60 * 1_000
+  const range = timelineItemRange(item)
+  const start = Math.max(dayStart, new Date(range.startsAt).getTime())
+  const end = Math.min(dayEnd, new Date(range.endsAt).getTime())
   const top = ((start - dayStart) / 3_600_000) * timelineHourHeight
   const height = Math.max(28, ((end - start) / 3_600_000) * timelineHourHeight)
   const columnWidth = 100 / item.columns
@@ -597,13 +603,23 @@ function colorTint(color: string) {
   return `rgb(${Number.parseInt(match[1]!, 16)} ${Number.parseInt(match[2]!, 16)} ${Number.parseInt(match[3]!, 16)} / 0.12)`
 }
 
+function timelineItemIsCompact(item: TimelineItem) {
+  const range = timelineItemRange(item)
+  const dayStart = startOfDay(selectedDate.value).getTime()
+  const dayEnd = dayStart + 24 * 60 * 60 * 1_000
+  const visibleStart = Math.max(dayStart, new Date(range.startsAt).getTime())
+  const visibleEnd = Math.min(dayEnd, new Date(range.endsAt).getTime())
+  return visibleEnd - visibleStart < 60 * 60 * 1_000
+}
+
 function timelineTimeRange(item: TimelineItem) {
+  const range = timelineItemRange(item)
   const formatter = new Intl.DateTimeFormat(undefined, {
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
   })
-  return `${formatter.format(new Date(item.startsAt))}–${formatter.format(new Date(item.endsAt))}`
+  return `${formatter.format(new Date(range.startsAt))}–${formatter.format(new Date(range.endsAt))}`
 }
 
 function timelineHourLabel(hour: number) {
@@ -1563,8 +1579,11 @@ function monthDays(cursor: Date) {
             <template v-for="item in timelineItems" :key="item.key">
               <button
                 v-if="item.event"
-                class="group pointer-events-auto absolute z-10 touch-none cursor-grab overflow-hidden rounded-sm border-l-[3px] px-2.5 py-1.5 text-left shadow-sm transition hover:brightness-95 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 dark:hover:brightness-110"
-                :class="{ 'opacity-40': draggedTimelineItemKey === item.key }"
+                class="group pointer-events-auto absolute z-10 touch-none cursor-grab overflow-hidden rounded-sm border-l-[3px] text-left shadow-sm transition hover:brightness-95 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 dark:hover:brightness-110"
+                :class="[
+                  { 'opacity-40': draggedTimelineItemKey === item.key },
+                  timelineItemIsCompact(item) ? 'px-2 py-1' : 'px-2.5 py-1.5',
+                ]"
                 :style="timelineItemStyle(item)"
                 type="button"
                 :aria-label="`Edit ${item.title}, ${timelineTimeRange(item)}. Drag to move.`"
@@ -1580,11 +1599,22 @@ function monthDays(cursor: Date) {
                     class="absolute left-1/2 top-0.5 h-px w-6 -translate-x-1/2 bg-current opacity-40"
                   />
                 </span>
-                <span class="block truncate text-[11px] font-semibold">{{ item.title }}</span>
-                <span class="block truncate text-[10px] opacity-65">
-                  {{ timelineTimeRange(item) }}
-                  <template v-if="item.event.location"> · {{ item.event.location }}</template>
+                <span
+                  v-if="timelineItemIsCompact(item)"
+                  class="flex min-w-0 items-center gap-1 overflow-hidden leading-4"
+                >
+                  <time class="shrink-0 text-[10px] tabular-nums opacity-65">
+                    {{ timelineTimeRange(item) }}
+                  </time>
+                  <span class="truncate text-[11px] font-semibold">{{ item.title }}</span>
                 </span>
+                <template v-else>
+                  <span class="block truncate text-[11px] font-semibold">{{ item.title }}</span>
+                  <span class="block truncate text-[10px] opacity-65">
+                    <time>{{ timelineTimeRange(item) }}</time>
+                    <template v-if="item.event.location"> · {{ item.event.location }}</template>
+                  </span>
+                </template>
                 <span
                   class="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
                   title="Drag bottom edge to resize"
@@ -1597,8 +1627,11 @@ function monthDays(cursor: Date) {
               </button>
               <button
                 v-else
-                class="group pointer-events-auto absolute z-10 touch-none cursor-grab overflow-hidden rounded-sm border-l-[3px] px-2.5 py-1.5 text-left shadow-sm transition hover:brightness-95 active:cursor-grabbing dark:hover:brightness-110"
-                :class="{ 'opacity-40': draggedTimelineItemKey === item.key }"
+                class="group pointer-events-auto absolute z-10 touch-none cursor-grab overflow-hidden rounded-sm border-l-[3px] text-left shadow-sm transition hover:brightness-95 active:cursor-grabbing dark:hover:brightness-110"
+                :class="[
+                  { 'opacity-40': draggedTimelineItemKey === item.key },
+                  timelineItemIsCompact(item) ? 'px-2 py-1' : 'px-2.5 py-1.5',
+                ]"
                 :style="timelineItemStyle(item)"
                 type="button"
                 :aria-label="`${item.title}, scheduled task, ${timelineTimeRange(item)}. Drag to move.`"
@@ -1613,10 +1646,21 @@ function monthDays(cursor: Date) {
                     class="absolute left-1/2 top-0.5 h-px w-6 -translate-x-1/2 bg-current opacity-40"
                   />
                 </span>
-                <span class="block truncate text-[11px] font-semibold">{{ item.title }}</span>
-                <span class="block truncate text-[10px] opacity-65">
-                  {{ timelineTimeRange(item) }} · task
+                <span
+                  v-if="timelineItemIsCompact(item)"
+                  class="flex min-w-0 items-center gap-1 overflow-hidden leading-4"
+                >
+                  <time class="shrink-0 text-[10px] tabular-nums opacity-65">
+                    {{ timelineTimeRange(item) }}
+                  </time>
+                  <span class="truncate text-[11px] font-semibold">{{ item.title }}</span>
                 </span>
+                <template v-else>
+                  <span class="block truncate text-[11px] font-semibold">{{ item.title }}</span>
+                  <span class="block truncate text-[10px] opacity-65">
+                    <time>{{ timelineTimeRange(item) }}</time> · task
+                  </span>
+                </template>
                 <span
                   class="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"
                   title="Drag bottom edge to resize"

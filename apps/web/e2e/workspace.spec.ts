@@ -107,12 +107,22 @@ test('creates an event and browses day, week, month, and agenda views', async ({
       response.status() === 200,
   )
   await page.mouse.down()
-  await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2 + 24, {
-    steps: 4,
+  await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2 + 84, {
+    steps: 6,
   })
   await page.mouse.up()
   await trimmed
   await expect(eventBlock).not.toHaveAttribute('aria-label', resizedEventLabel!)
+
+  const compactBox = await eventBlock.boundingBox()
+  const compactTimeBox = await eventBlock.locator('time').boundingBox()
+  expect(compactBox).not.toBeNull()
+  expect(compactTimeBox).not.toBeNull()
+  expect(compactBox!.height).toBeLessThanOrEqual(30)
+  expect(compactTimeBox!.y).toBeGreaterThanOrEqual(compactBox!.y)
+  expect(compactTimeBox!.y + compactTimeBox!.height).toBeLessThanOrEqual(
+    compactBox!.y + compactBox!.height,
+  )
 
   const deleteBox = await eventBlock.boundingBox()
   expect(deleteBox).not.toBeNull()
