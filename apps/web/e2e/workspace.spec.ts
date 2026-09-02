@@ -35,6 +35,44 @@ test('opens a scheduled task directly from an empty calendar slot', async ({ pag
   await expect(form).toBeHidden()
 })
 
+test('navigates and opens actions without a mouse', async ({ page }) => {
+  await page.goto('/')
+
+  await page.keyboard.press('g')
+  await page.keyboard.press('c')
+  await expect(page).toHaveURL(/\/calendar$/)
+
+  await page.keyboard.press('e')
+  const eventForm = page.getByRole('form', { name: 'New event' })
+  await expect(eventForm).toBeVisible()
+  await expect(eventForm.getByLabel('Title')).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(eventForm).toBeHidden()
+
+  await page.keyboard.press('g')
+  await page.keyboard.press('n')
+  await expect(page).toHaveURL(/\/notes$/)
+
+  await page.keyboard.press('Control+k')
+  const palette = page.getByRole('dialog', { name: 'Command palette' })
+  await expect(palette).toBeVisible()
+  await palette.getByLabel('Search commands').fill('projects')
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(/\/projects$/)
+
+  await page.keyboard.press('Shift+/')
+  const shortcutHelp = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
+  await expect(shortcutHelp).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(shortcutHelp).toBeHidden()
+
+  await page.keyboard.press('n')
+  const taskDialog = page.getByRole('dialog', { name: 'New task' })
+  await expect(taskDialog).toBeVisible()
+  await expect(taskDialog.getByLabel('Task title')).toBeFocused()
+  await page.keyboard.press('Escape')
+})
+
 test('keeps times visible on compact events and scheduled tasks', async ({ page }) => {
   const suffix = `${test.info().project.name}-${Date.now().toString().slice(-6)}`
   const eventName = `Compact event ${suffix}`
@@ -58,23 +96,14 @@ test('keeps times visible on compact events and scheduled tasks', async ({ page 
   expect(eventTimeBox!.y).toBeGreaterThanOrEqual(eventBox!.y)
   expect(eventTimeBox!.y + eventTimeBox!.height).toBeLessThanOrEqual(eventBox!.y + eventBox!.height)
 
-  const bottomHandle = eventBlock.locator('[title="Drag bottom edge to resize"]')
-  const bottomBox = await bottomHandle.boundingBox()
-  expect(bottomBox).not.toBeNull()
   const resized = page.waitForResponse(
     (response) =>
       /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
       response.request().method() === 'PUT' &&
       response.status() === 200,
   )
-  await page.mouse.move(bottomBox!.x + bottomBox!.width / 2, bottomBox!.y + bottomBox!.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(
-    bottomBox!.x + bottomBox!.width / 2,
-    bottomBox!.y + bottomBox!.height / 2 + 16,
-    { steps: 4 },
-  )
-  await page.mouse.up()
+  await eventBlock.focus()
+  await page.keyboard.press('Shift+ArrowDown')
   await resized
 
   const thirtyMinuteBox = await eventBlock.boundingBox()

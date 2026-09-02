@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { X } from '@lucide/vue'
 import {
   DialogContent,
@@ -27,34 +27,7 @@ async function focusTaskTitle(event: Event) {
   taskForm.value?.focusTitle()
 }
 
-function handleGlobalShortcut(event: KeyboardEvent) {
-  if (
-    event.defaultPrevented ||
-    event.repeat ||
-    event.ctrlKey ||
-    event.metaKey ||
-    event.altKey ||
-    event.shiftKey ||
-    event.key.toLowerCase() !== 'n' ||
-    isEditableTarget(event.target) ||
-    document.querySelector('[role="dialog"]')
-  ) {
-    return
-  }
-
-  event.preventDefault()
-  openTaskDialog()
-}
-
-function isEditableTarget(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || Boolean(target.closest('input, textarea, select')))
-  )
-}
-
-onMounted(() => window.addEventListener('keydown', handleGlobalShortcut))
-onBeforeUnmount(() => window.removeEventListener('keydown', handleGlobalShortcut))
+defineExpose({ open: openTaskDialog })
 </script>
 
 <template>

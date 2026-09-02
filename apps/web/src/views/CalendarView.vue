@@ -31,6 +31,7 @@ const eventFormOpen = ref(false)
 const editingEvent = ref<CalendarEvent | null>(null)
 const eventDeleteArmed = ref(false)
 const eventTitle = ref('')
+const eventTitleInput = ref<HTMLInputElement | null>(null)
 const eventDescription = ref('')
 const eventCalendarId = ref('')
 const eventStart = ref('')
@@ -241,6 +242,18 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => route.query.action,
+  (action) => {
+    if (action !== 'new-event') return
+    openEventForm()
+    const query = { ...route.query }
+    delete query.action
+    void router.replace({ query })
+  },
+  { immediate: true },
+)
+
 function sameDay(first: Date, second: Date) {
   return dateKey(first) === dateKey(second)
 }
@@ -320,6 +333,7 @@ function openEventForm(date = selectedDate.value, startHour = 9) {
   eventStart.value = localDateTimeValue(start)
   eventEnd.value = localDateTimeValue(end)
   eventFormOpen.value = true
+  void nextTick(() => eventTitleInput.value?.focus())
 }
 
 function openTaskForm(date = selectedDate.value, startHour = 9) {
@@ -830,6 +844,48 @@ function cancelTimelineResize(clearPreview = true) {
   window.removeEventListener('pointerup', finishTimelineResize)
 }
 
+function handleTimelineItemKeydown(item: TimelineItem, event: KeyboardEvent) {
+  if (store.saving || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+  const delta = event.key === 'ArrowUp' ? -15 : 15
+  if (event.altKey && !event.shiftKey) {
+    event.preventDefault()
+    void nudgeTimelineItem(item, 'move', delta)
+  } else if (event.shiftKey && !event.altKey) {
+    event.preventDefault()
+    void nudgeTimelineItem(item, 'resize', delta)
+  }
+}
+
+async function nudgeTimelineItem(item: TimelineItem, action: 'move' | 'resize', delta: number) {
+  const start = new Date(item.startsAt)
+  const end = new Date(item.endsAt)
+  const startMinute = start.getHours() * 60 + start.getMinutes()
+  const duration = Math.max(15, Math.round((end.getTime() - start.getTime()) / 60_000))
+  let nextStart: Date
+  let nextEnd: Date
+
+  if (action === 'move') {
+    const nextStartMinute = clampTimelineStart(startMinute + delta, duration)
+    if (nextStartMinute === startMinute) return
+    nextStart = new Date(start)
+    nextStart.setHours(0, nextStartMinute, 0, 0)
+    nextEnd = new Date(nextStart.getTime() + duration * 60_000)
+  } else {
+    const nextDuration = clampTimelineDuration(startMinute, duration + delta)
+    if (nextDuration === duration) return
+    nextStart = start
+    nextEnd = new Date(start.getTime() + nextDuration * 60_000)
+  }
+
+  await updateTimelineItemTime(item, nextStart, nextEnd)
+  const range = timelineTimeRange({
+    ...item,
+    startsAt: nextStart.toISOString(),
+    endsAt: nextEnd.toISOString(),
+  })
+  timelineAnnouncement.value = `${item.title} ${action === 'move' ? 'moved' : 'resized'} to ${range}`
+}
+
 async function updateTimelineItemTime(item: TimelineItem, start: Date, end: Date) {
   if (item.event) {
     await store.editEvent(item.event, {
@@ -967,6 +1023,9 @@ function monthDays(cursor: Date) {
     <div
       v-if="taskFormOpen"
       class="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="New scheduled task"
       @keydown.esc="taskFormOpen = false"
     >
       <button
@@ -1163,6 +1222,9 @@ function monthDays(cursor: Date) {
     <div
       v-if="eventFormOpen"
       class="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="editingEvent ? 'Edit event' : 'New event'"
       @keydown.esc="eventFormOpen = false"
     >
       <button
@@ -1192,7 +1254,13 @@ function monthDays(cursor: Date) {
         </div>
         <label class="sm:col-span-2">
           <span class="field-label">Title</span>
-          <input v-model="eventTitle" class="field-input" required maxlength="240" autofocus />
+          <input
+            ref="eventTitleInput"
+            v-model="eventTitle"
+            class="field-input"
+            required
+            maxlength="240"
+          />
         </label>
         <label>
           <span class="field-label">Save to</span>
@@ -1592,8 +1660,9 @@ function monthDays(cursor: Date) {
                 ]"
                 :style="timelineItemStyle(item)"
                 type="button"
-                :aria-label="`Edit ${item.title}, ${timelineTimeRange(item)}. Drag to move.`"
+                :aria-label="`Edit ${item.title}, ${timelineTimeRange(item)}. Drag to move. Alt plus arrow keys move; Shift plus arrow keys resize.`"
                 @pointerdown="startTimelineMove(item, $event)"
+                @keydown="handleTimelineItemKeydown(item, $event)"
                 @click="openTimelineEvent(item)"
               >
                 <span
@@ -1642,8 +1711,9 @@ function monthDays(cursor: Date) {
                 ]"
                 :style="timelineItemStyle(item)"
                 type="button"
-                :aria-label="`${item.title}, scheduled task, ${timelineTimeRange(item)}. Drag to move.`"
+                :aria-label="`${item.title}, scheduled task, ${timelineTimeRange(item)}. Drag to move. Alt plus arrow keys move; Shift plus arrow keys resize.`"
                 @pointerdown="startTimelineMove(item, $event)"
+                @keydown="handleTimelineItemKeydown(item, $event)"
               >
                 <span
                   class="absolute inset-x-0 top-0 cursor-ns-resize opacity-0 transition-opacity group-hover:opacity-100"

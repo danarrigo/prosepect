@@ -1,17 +1,25 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { RouterView, useRoute } from 'vue-router'
-import { Bell, LogOut, Menu, Moon, RotateCw, Sun, X } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { RouterView, useRoute, useRouter } from 'vue-router'
+import { Bell, CircleHelp, LogOut, Menu, Moon, RotateCw, Sun, X } from '@lucide/vue'
 import * as api from './api/client'
 import AppSidebar from './components/AppSidebar.vue'
 import CreateTaskDialog from './components/CreateTaskDialog.vue'
 import DailyReviewDialog from './components/DailyReviewDialog.vue'
 import GlobalSearch from './components/GlobalSearch.vue'
+import KeyboardPalette from './components/KeyboardPalette.vue'
+import {
+  isEditableTarget,
+  resolveKeyboardShortcut,
+  type GlobalKeyboardAction,
+  type KeyboardCommandId,
+} from './keyboard'
 import { dueInAppReminders, parseDismissedReminders, reminderKey } from './reminders'
 import { useWorkspaceStore } from './stores/workspace'
 
 const store = useWorkspaceStore()
 const route = useRoute()
+const router = useRouter()
 const sidebarOpen = ref(false)
 const dark = ref(false)
 const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -19,6 +27,12 @@ const now = ref(Date.now())
 const dismissedReminders = ref<string[]>(loadDismissedReminders())
 let reminderTimer: ReturnType<typeof setInterval> | undefined
 const reportedReminders = new Set<string>()
+const globalSearch = ref<{ focus: () => void } | null>(null)
+const createTaskDialog = ref<{ open: () => void } | null>(null)
+const mainContent = ref<HTMLElement | null>(null)
+const paletteMode = ref<'commands' | 'help' | null>(null)
+const awaitingGo = ref(false)
+let goSequenceTimer: ReturnType<typeof setTimeout> | undefined
 
 const dueReminders = computed(() =>
   dueInAppReminders(store.tasks, now.value, dismissedReminders.value),
@@ -68,16 +82,86 @@ function loadDismissedReminders() {
   return parseDismissedReminders(localStorage.getItem('prosepect.dismissed-reminders'))
 }
 
+function setAwaitingGo(value: boolean) {
+  awaitingGo.value = value
+  if (goSequenceTimer) clearTimeout(goSequenceTimer)
+  if (value) goSequenceTimer = setTimeout(() => (awaitingGo.value = false), 1_200)
+}
+
+async function focusMainContent() {
+  await nextTick()
+  mainContent.value?.focus()
+}
+
+async function executeCommand(command: KeyboardCommandId) {
+  paletteMode.value = null
+  if (command === 'navigate-today') {
+    await router.push('/')
+    await focusMainContent()
+  } else if (command === 'navigate-projects') {
+    store.selectProject(null)
+    await router.push('/projects')
+    await focusMainContent()
+  } else if (command === 'navigate-calendar') {
+    await router.push('/calendar')
+    await focusMainContent()
+  } else if (command === 'navigate-notes') {
+    await router.push('/notes')
+    await focusMainContent()
+  } else if (command === 'navigate-settings') {
+    await router.push('/settings')
+    await focusMainContent()
+  } else if (command === 'create-task') {
+    await nextTick()
+    createTaskDialog.value?.open()
+  } else if (command === 'create-event') {
+    const query =
+      route.name === 'calendar' ? { ...route.query, action: 'new-event' } : { action: 'new-event' }
+    await router.push({ name: 'calendar', query })
+  } else if (command === 'focus-search') {
+    await nextTick()
+    globalSearch.value?.focus()
+  }
+}
+
+function runKeyboardAction(action: GlobalKeyboardAction) {
+  if (action === 'open-command-palette') paletteMode.value = 'commands'
+  else if (action === 'open-shortcut-help') paletteMode.value = 'help'
+  else void executeCommand(action)
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if (
+    store.authenticationRequired ||
+    paletteMode.value ||
+    document.querySelector('[role="dialog"]')
+  ) {
+    return
+  }
+  const resolution = resolveKeyboardShortcut(
+    event,
+    awaitingGo.value,
+    isEditableTarget(event.target),
+  )
+  setAwaitingGo(resolution.awaitingGo)
+  if (!resolution.handled) return
+  event.preventDefault()
+  if (resolution.action) runKeyboardAction(resolution.action)
+}
+
 onMounted(() => {
   applyTheme()
   media.addEventListener('change', handleSystemTheme)
   reminderTimer = setInterval(() => (now.value = Date.now()), 30_000)
+  window.addEventListener('keydown', handleGlobalKeydown)
   void store.bootstrap()
 })
 
 onBeforeUnmount(() => {
   media.removeEventListener('change', handleSystemTheme)
+  window.removeEventListener('keydown', handleGlobalKeydown)
   if (reminderTimer) clearInterval(reminderTimer)
+  if (goSequenceTimer) clearTimeout(goSequenceTimer)
 })
 </script>
 
@@ -102,7 +186,19 @@ onBeforeUnmount(() => {
   </div>
 
   <div v-else class="flex min-h-dvh bg-white text-slate-950 dark:bg-slate-950 dark:text-slate-50">
+    <a
+      class="fixed left-4 top-3 z-[90] -translate-y-20 bg-slate-950 px-3 py-2 text-sm font-medium text-white transition focus:translate-y-0 dark:bg-white dark:text-slate-950"
+      href="#workspace-content"
+    >
+      Skip to content
+    </a>
     <DailyReviewDialog />
+    <KeyboardPalette
+      :open="paletteMode !== null"
+      :mode="paletteMode ?? 'commands'"
+      @close="paletteMode = null"
+      @select="executeCommand"
+    />
     <div
       v-if="sidebarOpen"
       class="fixed inset-0 z-30 bg-slate-950/35 backdrop-blur-[1px] lg:hidden"
@@ -125,8 +221,17 @@ onBeforeUnmount(() => {
         </button>
         <span class="text-xs font-medium text-slate-500 dark:text-slate-400">{{ pageTitle }}</span>
         <div class="ml-auto flex items-center gap-2">
-          <GlobalSearch />
-          <CreateTaskDialog />
+          <GlobalSearch ref="globalSearch" />
+          <CreateTaskDialog ref="createTaskDialog" />
+          <button
+            class="icon-button"
+            type="button"
+            aria-label="Show keyboard shortcuts"
+            title="Keyboard shortcuts (?)"
+            @click="paletteMode = 'help'"
+          >
+            <CircleHelp :size="17" />
+          </button>
           <button
             v-if="store.user"
             class="icon-button"
@@ -177,7 +282,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <main>
+      <main id="workspace-content" ref="mainContent" tabindex="-1" class="outline-none">
         <div v-if="store.loading" class="grid min-h-[calc(100dvh-3.5rem)] place-items-center">
           <div class="flex items-center gap-3 text-sm text-slate-500">
             <RotateCw :size="18" class="animate-spin" />
@@ -186,6 +291,14 @@ onBeforeUnmount(() => {
         </div>
         <RouterView v-else />
       </main>
+    </div>
+
+    <div
+      v-if="awaitingGo"
+      class="fixed bottom-5 left-1/2 z-[70] -translate-x-1/2 border border-slate-300 bg-white px-3 py-2 text-xs font-medium shadow-lg dark:border-slate-700 dark:bg-slate-900"
+      role="status"
+    >
+      <kbd>G</kbd> then <kbd>T</kbd>, <kbd>P</kbd>, <kbd>C</kbd>, <kbd>N</kbd>, or <kbd>S</kbd>
     </div>
   </div>
 </template>

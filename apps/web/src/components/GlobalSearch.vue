@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Search, X } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import * as api from '../api/client'
@@ -10,7 +10,9 @@ const query = ref('')
 const results = ref<SearchResult[]>([])
 const open = ref(false)
 const loading = ref(false)
+const selectedIndex = ref(0)
 const container = ref<HTMLElement>()
+const input = ref<HTMLInputElement | null>(null)
 let timer: ReturnType<typeof setTimeout> | undefined
 
 watch(query, (value) => {
@@ -23,6 +25,7 @@ watch(query, (value) => {
     loading.value = true
     try {
       results.value = await api.search(value)
+      selectedIndex.value = 0
       open.value = true
     } finally {
       loading.value = false
@@ -50,12 +53,32 @@ function choose(result: SearchResult) {
 function clear() {
   query.value = ''
   results.value = []
+  selectedIndex.value = 0
   open.value = false
+}
+
+function moveSelection(offset: number) {
+  if (!results.value.length) return
+  open.value = true
+  selectedIndex.value = (selectedIndex.value + offset + results.value.length) % results.value.length
+}
+
+function chooseSelected() {
+  const result = results.value[selectedIndex.value]
+  if (open.value && result) choose(result)
+}
+
+async function focusSearch() {
+  await nextTick()
+  input.value?.focus()
+  input.value?.select()
 }
 
 function handleDocumentPointerDown(event: PointerEvent) {
   if (event.target instanceof Node && !container.value?.contains(event.target)) clear()
 }
+
+defineExpose({ focus: focusSearch })
 </script>
 
 <template>
@@ -67,12 +90,18 @@ function handleDocumentPointerDown(event: PointerEvent) {
         :size="15"
       />
       <input
+        ref="input"
         v-model="query"
         class="h-8 w-44 rounded-md border border-slate-200 bg-transparent pl-8 pr-7 text-xs outline-none transition focus:w-64 focus:border-slate-400 dark:border-slate-800 dark:focus:border-slate-600"
         type="search"
         placeholder="Search workspace"
         autocomplete="off"
+        aria-autocomplete="list"
+        :aria-expanded="open"
         @focus="open = Boolean(query)"
+        @keydown.down.prevent="moveSelection(1)"
+        @keydown.up.prevent="moveSelection(-1)"
+        @keydown.enter.prevent="chooseSelected"
       />
       <button
         v-if="query"
@@ -87,14 +116,24 @@ function handleDocumentPointerDown(event: PointerEvent) {
     <div
       v-if="open"
       class="absolute right-0 top-10 z-50 w-80 overflow-hidden rounded-md border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-950"
+      role="listbox"
+      aria-label="Search results"
     >
       <p v-if="loading" class="px-4 py-5 text-xs text-slate-400">Searching…</p>
       <button
-        v-for="result in results"
+        v-for="(result, index) in results"
         v-else
         :key="`${result.kind}:${result.id}`"
-        class="block w-full border-b border-slate-100 px-4 py-3 text-left last:border-0 hover:bg-slate-50 dark:border-slate-900 dark:hover:bg-slate-900"
+        class="block w-full border-b border-slate-100 px-4 py-3 text-left last:border-0 dark:border-slate-900"
+        :class="
+          selectedIndex === index
+            ? 'bg-slate-50 dark:bg-slate-900'
+            : 'hover:bg-slate-50 dark:hover:bg-slate-900'
+        "
         type="button"
+        role="option"
+        :aria-selected="selectedIndex === index"
+        @mousemove="selectedIndex = index"
         @click="choose(result)"
       >
         <span class="flex items-center justify-between gap-3">
