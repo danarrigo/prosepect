@@ -132,7 +132,7 @@ Alert on sustained readiness failure, API 5xx responses, failed synchronization 
 
 The worker:
 
-1. enqueues selected Google calendars that have not synchronized recently and watches expiring within 24 hours;
+1. enqueues selected Google calendars that have not synchronized recently and writable-calendar watches expiring within 24 hours;
 2. claims one job with `FOR UPDATE SKIP LOCKED`;
 3. leases it for two minutes;
 4. refreshes credentials when required;

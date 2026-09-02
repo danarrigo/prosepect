@@ -251,7 +251,7 @@ async fn synchronization_creates_a_renewable_google_watch_channel(
         token_encryption_key: STANDARD.encode(encryption_key),
     })?;
     let service = SyncService::new(
-        store,
+        store.clone(),
         google,
         Some("https://api.prosepect.test/webhooks/google/calendar".to_owned()),
     )?
@@ -274,6 +274,22 @@ async fn synchronization_creates_a_renewable_google_watch_channel(
     .fetch_one(&pool)
     .await?;
     assert_ne!(active_channel, old_channel_id);
+    let read_only_calendar_id = Uuid::now_v7();
+    sqlx::query(
+        r#"
+        INSERT INTO calendars (
+            id, user_id, name, color, source, external_id, selected, access_role
+        ) VALUES ($1, $2, 'Read only', '#4285f4', 'google', 'read-only-calendar', TRUE, 'reader')
+        "#,
+    )
+    .bind(read_only_calendar_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await?;
+    let enqueued = store
+        .enqueue_expiring_calendar_watches(Some(user_id))
+        .await?;
+    assert_eq!(enqueued, 0);
     let pending_syncs: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sync_jobs WHERE user_id = $1 AND calendar_id = $2 AND kind = 'calendar_sync' AND status = 'pending'",
     )

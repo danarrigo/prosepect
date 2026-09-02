@@ -215,6 +215,7 @@ impl SyncService {
             SELECT id, external_id
             FROM calendars
             WHERE id = $1 AND user_id = $2 AND source = 'google' AND selected
+              AND access_role IN ('writer', 'owner')
             "#,
         )
         .bind(calendar_id)

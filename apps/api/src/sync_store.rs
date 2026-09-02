@@ -180,6 +180,7 @@ impl Store {
                    'calendar-watch:' || calendars.id::TEXT || ':' || $1::TEXT
             FROM calendars
             WHERE calendars.source = 'google' AND calendars.selected
+              AND calendars.access_role IN ('writer', 'owner')
               AND ($2::UUID IS NULL OR calendars.user_id = $2)
               AND NOT EXISTS (
                   SELECT 1 FROM google_watch_channels channels
