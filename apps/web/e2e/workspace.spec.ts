@@ -131,7 +131,7 @@ test('creates an event and browses day, week, month, and agenda views', async ({
   await page.mouse.move(deleteStartX, deleteStartY)
   await page.mouse.down()
   await page.mouse.move(deleteStartX, deleteStartY + 40, { steps: 5 })
-  const deleteZone = page.getByText('Drop here to delete', { exact: true })
+  const deleteZone = page.getByText(/^(Drop here to delete|Release to delete)$/)
   const deleteZoneBox = await deleteZone.boundingBox()
   expect(deleteZoneBox).not.toBeNull()
   const deleted = page.waitForResponse(
