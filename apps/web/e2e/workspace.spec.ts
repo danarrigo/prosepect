@@ -126,9 +126,11 @@ test('creates an event and browses day, week, month, and agenda views', async ({
 
   const deleteBox = await eventBlock.boundingBox()
   expect(deleteBox).not.toBeNull()
-  await page.mouse.move(deleteBox!.x + deleteBox!.width / 2, deleteBox!.y + 12)
+  const deleteStartX = deleteBox!.x + deleteBox!.width / 2
+  const deleteStartY = deleteBox!.y + deleteBox!.height / 2
+  await page.mouse.move(deleteStartX, deleteStartY)
   await page.mouse.down()
-  await page.mouse.move(deleteBox!.x + deleteBox!.width / 2, deleteBox!.y + 24, { steps: 3 })
+  await page.mouse.move(deleteStartX, deleteStartY + 40, { steps: 5 })
   const deleteZone = page.getByText('Drop here to delete', { exact: true })
   const deleteZoneBox = await deleteZone.boundingBox()
   expect(deleteZoneBox).not.toBeNull()
