@@ -59,8 +59,9 @@ test('navigates and opens actions without a mouse', async ({ page }) => {
   await palette.getByLabel('Search commands').fill('projects')
   await page.keyboard.press('Enter')
   await expect(page).toHaveURL(/\/projects$/)
+  await expect(palette).toBeHidden()
 
-  await page.keyboard.press('Shift+/')
+  await page.keyboard.press('?')
   const shortcutHelp = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
   await expect(shortcutHelp).toBeVisible()
   await page.keyboard.press('Escape')
