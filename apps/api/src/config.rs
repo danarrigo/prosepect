@@ -61,7 +61,9 @@ pub struct Config {
     pub google_oauth: Option<GoogleOAuthConfig>,
     pub object_storage: ObjectStorageConfig,
     pub max_file_size_bytes: usize,
+    pub max_user_file_storage_bytes: i64,
     pub max_total_file_storage_bytes: i64,
+    pub max_user_accounts: Option<i64>,
     pub worker_trigger_token: Option<String>,
     pub google_calendar_webhook_url: Option<String>,
 }
@@ -185,6 +187,23 @@ impl Config {
         if max_total_file_storage_bytes <= 0 {
             bail!("MAX_TOTAL_FILE_STORAGE_BYTES must be greater than zero");
         }
+        let max_user_file_storage_bytes = env::var("MAX_USER_FILE_STORAGE_BYTES")
+            .unwrap_or_else(|_| max_total_file_storage_bytes.to_string())
+            .parse::<i64>()
+            .context("MAX_USER_FILE_STORAGE_BYTES must be a positive integer")?;
+        if max_user_file_storage_bytes <= 0 {
+            bail!("MAX_USER_FILE_STORAGE_BYTES must be greater than zero");
+        }
+        if max_user_file_storage_bytes > max_total_file_storage_bytes {
+            bail!("MAX_USER_FILE_STORAGE_BYTES must not exceed MAX_TOTAL_FILE_STORAGE_BYTES");
+        }
+        let max_user_accounts = env_nonempty("MAX_USER_ACCOUNTS")
+            .map(|value| value.parse::<i64>())
+            .transpose()
+            .context("MAX_USER_ACCOUNTS must be a positive integer")?;
+        if max_user_accounts.is_some_and(|limit| limit <= 0) {
+            bail!("MAX_USER_ACCOUNTS must be greater than zero");
+        }
         let worker_trigger_token = env_nonempty("WORKER_TRIGGER_TOKEN");
         if worker_trigger_token
             .as_ref()
@@ -214,7 +233,9 @@ impl Config {
             google_oauth,
             object_storage,
             max_file_size_bytes,
+            max_user_file_storage_bytes,
             max_total_file_storage_bytes,
+            max_user_accounts,
             worker_trigger_token,
             google_calendar_webhook_url,
         })

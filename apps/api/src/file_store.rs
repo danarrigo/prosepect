@@ -19,6 +19,7 @@ impl Store {
         filename: &str,
         content_type: &str,
         byte_size: i64,
+        max_user_storage_bytes: i64,
         max_total_storage_bytes: i64,
     ) -> AppResult<FileRecord> {
         validate_one_parent(project_id, task_id, note_id, event_id)?;
@@ -30,11 +31,23 @@ impl Store {
             .bind(741_733_074_i64)
             .execute(&mut *transaction)
             .await?;
-        let used_bytes =
+        let user_used_bytes = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(byte_size), 0)::BIGINT FROM files WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if byte_size > max_user_storage_bytes.saturating_sub(user_used_bytes) {
+            return Err(AppError::InvalidRequest {
+                status: axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                message: "personal attachment storage quota exceeded".to_owned(),
+            });
+        }
+        let total_used_bytes =
             sqlx::query_scalar::<_, i64>("SELECT COALESCE(SUM(byte_size), 0)::BIGINT FROM files")
                 .fetch_one(&mut *transaction)
                 .await?;
-        if byte_size > max_total_storage_bytes.saturating_sub(used_bytes) {
+        if byte_size > max_total_storage_bytes.saturating_sub(total_used_bytes) {
             return Err(AppError::InvalidRequest {
                 status: axum::http::StatusCode::PAYLOAD_TOO_LARGE,
                 message: "attachment storage quota exceeded".to_owned(),

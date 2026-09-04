@@ -220,10 +220,15 @@ impl Store {
         login: &GoogleLoginStart,
         user_id: Option<Uuid>,
         purpose: &str,
+        legal_versions: Option<(&str, &str)>,
     ) -> AppResult<()> {
-        if !matches!(purpose, "login" | "calendar_connect") {
-            return Err(AppError::Validation("invalid OAuth purpose".to_owned()));
-        }
+        let (terms_version, privacy_version, age_confirmed) = match (purpose, legal_versions) {
+            ("login", Some((terms_version, privacy_version))) => {
+                (Some(terms_version), Some(privacy_version), true)
+            }
+            ("calendar_connect", None) => (None, None, false),
+            _ => return Err(AppError::Validation("invalid OAuth purpose".to_owned())),
+        };
         let mut transaction = self.pool.begin().await?;
         sqlx::query("DELETE FROM oauth_login_attempts WHERE expires_at <= NOW()")
             .execute(&mut *transaction)
@@ -231,9 +236,10 @@ impl Store {
         sqlx::query(
             r#"
             INSERT INTO oauth_login_attempts (
-                state_hash, nonce, pkce_verifier, expires_at, user_id, purpose
+                state_hash, nonce, pkce_verifier, expires_at, user_id, purpose,
+                terms_version, privacy_version, age_confirmed
             )
-            VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes', $4, $5)
+            VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes', $4, $5, $6, $7, $8)
             "#,
         )
         .bind(token_hash(&login.state))
@@ -241,6 +247,9 @@ impl Store {
         .bind(&login.pkce_verifier)
         .bind(user_id)
         .bind(purpose)
+        .bind(terms_version)
+        .bind(privacy_version)
+        .bind(age_confirmed)
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
@@ -252,7 +261,8 @@ impl Store {
             r#"
             DELETE FROM oauth_login_attempts
             WHERE state_hash = $1 AND expires_at > NOW()
-            RETURNING nonce, pkce_verifier, user_id, purpose
+            RETURNING nonce, pkce_verifier, user_id, purpose,
+                      terms_version, privacy_version, age_confirmed
             "#,
         )
         .bind(token_hash(state))
@@ -261,6 +271,32 @@ impl Store {
         .ok_or(AppError::Forbidden(
             "the Google sign-in request expired or is invalid",
         ))
+    }
+
+    pub async fn record_legal_acceptance(
+        &self,
+        user_id: Uuid,
+        terms_version: &str,
+        privacy_version: &str,
+        age_confirmed: bool,
+    ) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO legal_acceptances (
+                id, user_id, terms_version, privacy_version, age_confirmed
+            )
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id, terms_version, privacy_version) DO NOTHING
+            "#,
+        )
+        .bind(Uuid::now_v7())
+        .bind(user_id)
+        .bind(terms_version)
+        .bind(privacy_version)
+        .bind(age_confirmed)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn daily_plan(&self, user_id: Uuid, date: chrono::NaiveDate) -> AppResult<DailyPlan> {
@@ -374,8 +410,34 @@ impl Store {
         Ok(LabelList { items })
     }
 
-    pub async fn upsert_google_user(&self, login: GoogleLoginResult) -> AppResult<UserProfile> {
+    pub async fn upsert_google_user(
+        &self,
+        login: GoogleLoginResult,
+        max_user_accounts: Option<i64>,
+    ) -> AppResult<UserProfile> {
         let mut transaction = self.pool.begin().await?;
+        if let Some(max_user_accounts) = max_user_accounts {
+            sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                .bind(741_733_075_i64)
+                .execute(&mut *transaction)
+                .await?;
+            let already_registered = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE google_subject = $1)",
+            )
+            .bind(&login.subject)
+            .fetch_one(&mut *transaction)
+            .await?;
+            if !already_registered {
+                let user_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users")
+                    .fetch_one(&mut *transaction)
+                    .await?;
+                if user_count >= max_user_accounts {
+                    return Err(AppError::Forbidden(
+                        "new registrations are temporarily paused because service capacity has been reached",
+                    ));
+                }
+            }
+        }
         let user = sqlx::query_as::<_, UserProfile>(
             r#"
             INSERT INTO users (
@@ -1563,6 +1625,9 @@ pub struct OAuthLoginAttempt {
     pub pkce_verifier: String,
     pub user_id: Option<Uuid>,
     pub purpose: String,
+    pub terms_version: Option<String>,
+    pub privacy_version: Option<String>,
+    pub age_confirmed: bool,
 }
 
 #[derive(sqlx::FromRow)]

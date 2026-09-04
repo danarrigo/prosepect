@@ -1,6 +1,31 @@
 <script setup lang="ts">
-import { RouterLink } from 'vue-router'
+import { computed, ref } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 import * as api from '../api/client'
+
+const route = useRoute()
+const legalAccepted = ref(false)
+const authenticationError = computed(() => {
+  if (route.query.auth_error === 'capacity_reached') {
+    return 'New registrations are temporarily paused because service capacity has been reached.'
+  }
+  if (route.query.auth_error === 'invite_required') {
+    return 'This account does not currently have access during the private launch period.'
+  }
+  if (route.query.auth_error === 'legal_acceptance_required') {
+    return 'Please review and accept the current Terms and Privacy Policy before signing in.'
+  }
+  return ''
+})
+
+function signIn() {
+  if (!legalAccepted.value) return
+  window.location.assign(
+    api.apiUrl(
+      '/api/v1/auth/google/start?terms_version=2026-09-04&privacy_version=2026-09-04&age_confirmed=true',
+    ),
+  )
+}
 </script>
 
 <template>
@@ -47,14 +72,33 @@ import * as api from '../api/client'
 
         <div class="border-y border-slate-200 py-8 dark:border-slate-800 lg:border lg:p-8">
           <p class="text-sm font-semibold">Open your workspace</p>
+          <p
+            v-if="authenticationError"
+            class="mt-4 border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+            role="alert"
+          >
+            {{ authenticationError }}
+          </p>
           <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
             Access is currently limited while public-launch safeguards and Google verification are
             completed.
           </p>
-          <a
-            class="mt-6 inline-flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-slate-950 dark:focus-visible:outline-white"
-            :href="api.apiUrl('/api/v1/auth/google/start')"
+          <label
+            class="mt-5 flex items-start gap-2 text-xs leading-5 text-slate-500 dark:text-slate-400"
+          >
+            <input v-model="legalAccepted" class="mt-1" type="checkbox" />
+            <span>
+              I confirm that I am at least 18 and agree to the
+              <RouterLink class="underline" to="/terms">Terms</RouterLink> and acknowledge the
+              <RouterLink class="underline" to="/privacy">Privacy Policy</RouterLink>.
+            </span>
+          </label>
+          <button
+            class="mt-5 inline-flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-slate-950 disabled:cursor-not-allowed disabled:opacity-50 dark:focus-visible:outline-white"
+            type="button"
+            :disabled="!legalAccepted"
             aria-label="Sign in with Google"
+            @click="signIn"
           >
             <img
               class="h-10 w-[180px] dark:hidden"
@@ -70,13 +114,11 @@ import * as api from '../api/client'
               width="180"
               height="40"
             />
-          </a>
+          </button>
           <p class="mt-5 text-xs leading-5 text-slate-400">
             Sign-in shares your Google account identifier, email, name, and profile image with
             Prosepect. Google Calendar access is optional and requested separately when you connect
-            it in Settings. By signing in, you agree to the
-            <RouterLink class="underline" to="/terms">Terms</RouterLink> and acknowledge the
-            <RouterLink class="underline" to="/privacy">Privacy Policy</RouterLink>.
+            it in Settings.
           </p>
         </div>
       </section>

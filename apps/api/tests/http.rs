@@ -95,6 +95,41 @@ async fn development_session_uses_an_http_only_cookie_and_csrf_token(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn google_login_requires_current_legal_acceptance(pool: PgPool) -> anyhow::Result<()> {
+    let router = app::build(&test_config(), Store::from_pool(pool))?;
+
+    let missing = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/google/start")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let outdated = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/google/start?terms_version=old&privacy_version=old&age_confirmed=true")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(outdated.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let accepted = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/google/start?terms_version=2026-09-04&privacy_version=2026-09-04&age_confirmed=true")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(accepted.status(), StatusCode::SERVICE_UNAVAILABLE);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn synchronization_trigger_requires_its_service_token(pool: PgPool) -> anyhow::Result<()> {
     let token = "worker-trigger-token-for-tests-123";
     let mut config = test_config();
@@ -354,6 +389,56 @@ async fn file_uploads_respect_the_global_storage_quota(pool: PgPool) -> anyhow::
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn file_uploads_respect_the_per_user_storage_quota(pool: PgPool) -> anyhow::Result<()> {
+    let mut config = test_config();
+    config.max_user_file_storage_bytes = 8;
+    config.max_total_file_storage_bytes = 16;
+    let router = app::build(&config, Store::from_pool(pool.clone()))?;
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+
+    for (contents, expected) in [
+        ("12345678", StatusCode::CREATED),
+        ("x", StatusCode::PAYLOAD_TOO_LARGE),
+    ] {
+        let boundary = format!("prosepect-user-quota-{}", contents.len());
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"quota.txt\"\r\nContent-Type: text/plain\r\n\r\n{contents}\r\n--{boundary}--\r\n"
+        );
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/files")
+                    .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))?,
+            )
+            .await?;
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 64 * 1024).await?;
+        assert_eq!(status, expected);
+        if expected == StatusCode::PAYLOAD_TOO_LARGE {
+            assert!(String::from_utf8_lossy(&body).contains("personal attachment storage quota"));
+        }
+    }
+
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn settings_exports_and_account_deletion_work_end_to_end(pool: PgPool) -> anyhow::Result<()> {
     let config = test_config();
     let router = app::build(&config, Store::from_pool(pool.clone()))?;
@@ -556,7 +641,9 @@ fn test_config() -> Config {
                 .into_owned(),
         },
         max_file_size_bytes: 25 * 1024 * 1024,
+        max_user_file_storage_bytes: 5_i64 * 1024 * 1024 * 1024,
         max_total_file_storage_bytes: 5_i64 * 1024 * 1024 * 1024,
+        max_user_accounts: None,
         worker_trigger_token: None,
         google_calendar_webhook_url: None,
     }

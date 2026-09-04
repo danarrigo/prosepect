@@ -11,7 +11,9 @@ Production startup intentionally fails unless these invariants hold:
 - all Google OAuth variables are present
 - `TOKEN_ENCRYPTION_KEY` decodes to exactly 32 bytes
 - all required S3 variables are present
+- `MAX_USER_FILE_STORAGE_BYTES` is positive and does not exceed `MAX_TOTAL_FILE_STORAGE_BYTES`
 - `MAX_TOTAL_FILE_STORAGE_BYTES` is set below the provider's free storage allowance
+- `MAX_USER_ACCOUNTS` is a positive hard capacity when configured
 - `WORKER_TRIGGER_TOKEN` contains at least 32 random characters when hosted cron is enabled
 - `DATABASE_URL`, `APP_URL`, and `CORS_ALLOWED_ORIGIN` point at production services
 
@@ -29,6 +31,8 @@ VALUES (gen_random_uuid(), LOWER('person@example.com'));
 ```
 
 Only set `TRUST_PROXY_HEADERS=true` when untrusted clients cannot bypass the hosting platform or configured reverse proxy.
+
+For public registration, keep `INVITE_ONLY=true` until the Privacy Policy and Terms are live, Google OAuth production verification is complete, backup restoration has been tested, alerts are enabled, and production smoke tests pass. Then set `INVITE_ONLY=false` while retaining `MAX_USER_ACCOUNTS`. The account limit is checked under a PostgreSQL advisory transaction lock: new registrations are rejected at capacity, while existing users remain able to sign in. Hosted sign-in requires affirmative acceptance of the current Terms and Privacy Policy and stores the accepted versions and age confirmation in `legal_acceptances`.
 
 ## Hosted free-tier deployment
 
@@ -65,6 +69,8 @@ CORS_ALLOWED_ORIGIN             https://prosepect.com
 GOOGLE_REDIRECT_URI             https://api.prosepect.com/api/v1/auth/google/callback
 GOOGLE_CALENDAR_WEBHOOK_URL     https://api.prosepect.com/webhooks/google/calendar
 BIND_ADDRESS                    0.0.0.0:10000
+MAX_USER_ACCOUNTS               100
+MAX_USER_FILE_STORAGE_BYTES     104857600
 MAX_TOTAL_FILE_STORAGE_BYTES    5368709120
 ```
 
@@ -91,6 +97,17 @@ CORS allowed origin       https://prosepect.com
 ```
 
 The Google OAuth client must use the redirect URI exactly. The Vercel production environment must set `VITE_API_URL=https://api.prosepect.com`.
+
+A public Google OAuth application must configure:
+
+```text
+Application homepage     https://prosepect.com
+Privacy Policy           https://prosepect.com/privacy
+Terms of Service         https://prosepect.com/terms
+Authorized domain        prosepect.com
+```
+
+Verify domain ownership using a Google Cloud project owner or editor in Google Search Console. Submit brand and sensitive-scope verification with an English-language video showing the full OAuth consent screen, the exact requested Calendar scopes, and the user-facing synchronization workflow. Keep production in Testing and `INVITE_ONLY=true` until Google approves it.
 
 ## Docker Compose
 

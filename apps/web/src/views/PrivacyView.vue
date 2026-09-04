@@ -24,6 +24,8 @@ import PublicPageShell from '../components/PublicPageShell.vue'
       <p>
         When you sign in with Google, Prosepect receives your Google account identifier, email
         address, display name, and profile image. This information creates and secures your account.
+        Prosepect also records the accepted Terms and Privacy Policy versions, acceptance time, and
+        confirmation that the account holder meets the stated age requirement.
       </p>
 
       <h3>Workspace content</h3>

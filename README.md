@@ -95,7 +95,7 @@ The frontend runs at <http://localhost:5173>. Swagger UI runs at <http://localho
 5. In production, set `GOOGLE_CALENDAR_WEBHOOK_URL` to a public HTTPS endpoint ending in `/webhooks/google/calendar`. Omit it locally when no public HTTPS callback is available.
 6. Restart the API and worker.
 
-Production requires Google configuration, S3-compatible storage, secure cookies, and development authentication disabled. Set `INVITE_ONLY=true` for hosted beta access and insert lowercase emails into `account_invites` before first sign-in. Hosted deployments should set a random `WORKER_TRIGGER_TOKEN`; the scheduled GitHub workflow renews watches and recovers missed synchronization without compiling Rust on every run.
+Production requires Google configuration, S3-compatible storage, secure cookies, and development authentication disabled. Set `INVITE_ONLY=true` for private access and insert lowercase emails into `account_invites` before first sign-in. For open registration, set a hard `MAX_USER_ACCOUNTS` capacity; existing accounts can still sign in after capacity is reached. `MAX_USER_FILE_STORAGE_BYTES` limits each account independently, while `MAX_TOTAL_FILE_STORAGE_BYTES` remains the deployment-wide ceiling. Hosted deployments should set a random `WORKER_TRIGGER_TOKEN`; the scheduled GitHub workflow renews watches and recovers missed synchronization without compiling Rust on every run.
 
 ## Keyboard shortcuts
 

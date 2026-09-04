@@ -564,6 +564,14 @@ pub struct LabelList {
 
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
+pub struct GoogleLoginQuery {
+    pub terms_version: String,
+    pub privacy_version: String,
+    pub age_confirmed: bool,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GoogleCallbackQuery {
     pub code: Option<String>,
     pub state: Option<String>,

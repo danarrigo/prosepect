@@ -113,6 +113,7 @@ pub async fn upload_file(
             &upload.filename,
             &upload.content_type,
             upload.bytes.len() as i64,
+            state.max_user_file_storage_bytes,
             state.max_total_file_storage_bytes,
         )
         .await?;

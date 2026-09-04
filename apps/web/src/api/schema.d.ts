@@ -1357,7 +1357,11 @@ export interface operations {
     };
     google_auth_start: {
         parameters: {
-            query?: never;
+            query: {
+                terms_version: string;
+                privacy_version: string;
+                age_confirmed: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1370,6 +1374,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             503: {
                 headers: {

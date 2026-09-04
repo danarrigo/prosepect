@@ -1,6 +1,7 @@
 use chrono::{Duration, NaiveDate, TimeZone, Utc};
 use prosepect_api::{
     error::AppError,
+    google_auth::{GoogleLoginResult, GoogleLoginStart},
     models::{
         CalendarEventQuery, CompleteDailyReviewRequest, CreateCalendarEventRequest,
         CreateNoteRequest, CreateProjectRequest, CreateTaskRequest, EventRecurrence, ProjectStatus,
@@ -13,6 +14,63 @@ use prosepect_api::{
 };
 use sqlx::PgPool;
 use uuid::Uuid;
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn oauth_login_records_current_legal_acceptance(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let login = GoogleLoginStart {
+        authorization_url: "https://accounts.example/authorize".to_owned(),
+        state: "oauth-state".to_owned(),
+        nonce: "0123456789abcdef".to_owned(),
+        pkce_verifier: "0123456789012345678901234567890123456789012".to_owned(),
+    };
+    store
+        .save_google_login_attempt(&login, None, "login", Some(("2026-09-04", "2026-09-04")))
+        .await?;
+    let attempt = store.consume_google_login_attempt(&login.state).await?;
+    assert_eq!(attempt.terms_version.as_deref(), Some("2026-09-04"));
+    assert_eq!(attempt.privacy_version.as_deref(), Some("2026-09-04"));
+    assert!(attempt.age_confirmed);
+
+    let user_id = create_user(&pool, "legal-acceptance@example.com").await?;
+    store
+        .record_legal_acceptance(user_id, "2026-09-04", "2026-09-04", true)
+        .await?;
+    store
+        .record_legal_acceptance(user_id, "2026-09-04", "2026-09-04", true)
+        .await?;
+    let acceptance_count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM legal_acceptances WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(acceptance_count, 1);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn account_capacity_limits_new_users_without_locking_out_existing_users(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let first = store
+        .upsert_google_user(google_login("subject-1", "first@example.com"), Some(1))
+        .await?;
+    let returning = store
+        .upsert_google_user(google_login("subject-1", "first@example.com"), Some(1))
+        .await?;
+    assert_eq!(returning.id, first.id);
+
+    let blocked = store
+        .upsert_google_user(google_login("subject-2", "second@example.com"), Some(1))
+        .await;
+    assert!(matches!(blocked, Err(AppError::Forbidden(_))));
+    let user_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(user_count, 1);
+    Ok(())
+}
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn project_and_task_queries_are_tenant_isolated(pool: PgPool) -> anyhow::Result<()> {
@@ -1106,6 +1164,19 @@ async fn conflict_resolution_updates_mapping_and_enqueues_atomically(
     .await?;
     assert_eq!(jobs, 1);
     Ok(())
+}
+
+fn google_login(subject: &str, email: &str) -> GoogleLoginResult {
+    GoogleLoginResult {
+        subject: subject.to_owned(),
+        email: email.to_owned(),
+        display_name: "Test User".to_owned(),
+        avatar_url: None,
+        encrypted_access_token: vec![1, 2, 3],
+        encrypted_refresh_token: None,
+        access_token_expires_at: None,
+        scopes: vec!["openid".to_owned(), "email".to_owned()],
+    }
 }
 
 async fn create_user(pool: &PgPool, email: &str) -> anyhow::Result<Uuid> {

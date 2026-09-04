@@ -17,13 +17,16 @@ use crate::{
     models::{
         CompleteDailyReviewRequest, CreateProjectRequest, CreateTaskRequest, DailyPlan,
         DailyReview, DailyReviewResponse, ExpectedVersionQuery, GoogleCallbackQuery,
-        HealthResponse, LabelList, PageQuery, Project, ProjectPage, ReorderTasksRequest,
-        SessionResponse, StartDailyReviewRequest, Task, TaskListQuery, TaskPage,
-        UpdateDailyFocusRequest, UpdateProjectRequest, UpdateTaskRequest,
+        GoogleLoginQuery, HealthResponse, LabelList, PageQuery, Project, ProjectPage,
+        ReorderTasksRequest, SessionResponse, StartDailyReviewRequest, Task, TaskListQuery,
+        TaskPage, UpdateDailyFocusRequest, UpdateProjectRequest, UpdateTaskRequest,
         UpdateUserSettingsRequest, UserSettings,
     },
     rate_limit::ClientAddress,
 };
+
+const CURRENT_TERMS_VERSION: &str = "2026-09-04";
+const CURRENT_PRIVACY_VERSION: &str = "2026-09-04";
 
 #[utoipa::path(
     get,
@@ -249,20 +252,31 @@ pub async fn update_settings(
 #[utoipa::path(
     get,
     path = "/api/v1/auth/google/start",
+    params(GoogleLoginQuery),
     responses(
         (status = 307, description = "Redirect to Google authorization"),
+        (status = 422, body = ErrorResponse),
         (status = 503, body = ErrorResponse)
     ),
     tag = "authentication"
 )]
 pub async fn google_auth_start(
     State(state): State<AppState>,
+    ApiQuery(query): ApiQuery<GoogleLoginQuery>,
     headers: HeaderMap,
     ClientAddress(peer): ClientAddress,
 ) -> AppResult<Redirect> {
     state
         .login_rate_limiter
         .check(&headers, peer, state.trust_proxy_headers)?;
+    if query.terms_version != CURRENT_TERMS_VERSION
+        || query.privacy_version != CURRENT_PRIVACY_VERSION
+        || !query.age_confirmed
+    {
+        return Err(AppError::Validation(
+            "the current Terms, Privacy Policy, and age requirement must be accepted".to_owned(),
+        ));
+    }
     let google = state
         .google_oauth
         .as_ref()
@@ -270,7 +284,12 @@ pub async fn google_auth_start(
     let login = google.begin_login().await.map_err(AppError::Integration)?;
     state
         .store
-        .save_google_login_attempt(&login, None, "login")
+        .save_google_login_attempt(
+            &login,
+            None,
+            "login",
+            Some((CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION)),
+        )
         .await?;
     Ok(Redirect::temporary(&login.authorization_url))
 }
@@ -305,7 +324,7 @@ pub async fn google_calendar_connect_start(
         .map_err(AppError::Integration)?;
     state
         .store
-        .save_google_login_attempt(&login, Some(user_id), "calendar_connect")
+        .save_google_login_attempt(&login, Some(user_id), "calendar_connect", None)
         .await?;
     Ok(Redirect::temporary(&login.authorization_url))
 }
@@ -370,19 +389,57 @@ pub async fn google_auth_callback(
             Redirect::to(&format!("{}/settings", state.app_url.trim_end_matches('/'))),
         ));
     }
+    let (Some(terms_version), Some(privacy_version)) = (
+        attempt.terms_version.as_deref(),
+        attempt.privacy_version.as_deref(),
+    ) else {
+        return Ok((
+            HeaderMap::new(),
+            authentication_error_redirect(&state.app_url, "legal_acceptance_required"),
+        ));
+    };
+    if !attempt.age_confirmed {
+        return Ok((
+            HeaderMap::new(),
+            authentication_error_redirect(&state.app_url, "legal_acceptance_required"),
+        ));
+    }
     if state.invite_only && !state.store.email_can_sign_in(&login.email).await? {
-        return Err(AppError::Forbidden(
-            "this deployment requires an account invitation",
+        return Ok((
+            HeaderMap::new(),
+            authentication_error_redirect(&state.app_url, "invite_required"),
         ));
     }
     let login_email = login.email.clone();
-    let user = state.store.upsert_google_user(login).await?;
+    let user = match state
+        .store
+        .upsert_google_user(login, state.max_user_accounts)
+        .await
+    {
+        Ok(user) => user,
+        Err(AppError::Forbidden(_)) => {
+            return Ok((
+                HeaderMap::new(),
+                authentication_error_redirect(&state.app_url, "capacity_reached"),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
     if state.invite_only {
         state
             .store
             .consume_account_invite(&login_email, user.id)
             .await?;
     }
+    state
+        .store
+        .record_legal_acceptance(
+            user.id,
+            terms_version,
+            privacy_version,
+            attempt.age_confirmed,
+        )
+        .await?;
     let session = state.store.create_session(user).await?;
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -395,6 +452,13 @@ pub async fn google_auth_callback(
         )?,
     );
     Ok((headers, Redirect::to(&state.app_url)))
+}
+
+fn authentication_error_redirect(app_url: &str, error: &str) -> Redirect {
+    Redirect::to(&format!(
+        "{}/?auth_error={error}",
+        app_url.trim_end_matches('/')
+    ))
 }
 
 #[utoipa::path(

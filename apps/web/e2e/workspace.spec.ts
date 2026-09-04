@@ -12,8 +12,14 @@ test('publishes a descriptive signed-out homepage and legal policies', async ({ 
   await expect(
     page.getByRole('heading', { name: 'Plan what matters without scattering your attention.' }),
   ).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Sign in with Google' })).toBeVisible()
+  const signIn = page.getByRole('button', { name: 'Sign in with Google' })
+  await expect(signIn).toBeDisabled()
+  await page.getByRole('checkbox', { name: /I confirm that I am at least 18/ }).check()
+  await expect(signIn).toBeEnabled()
   await expect(page.getByRole('link', { name: 'Privacy Policy' })).toBeVisible()
+
+  await page.goto('/?auth_error=capacity_reached')
+  await expect(page.getByRole('alert')).toContainText('registrations are temporarily paused')
 
   await page.goto('/privacy')
   await expect(page).toHaveTitle('Privacy Policy | Prosepect')
