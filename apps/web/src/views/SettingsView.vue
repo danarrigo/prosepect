@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { Download, RefreshCw, Trash2, Upload } from '@lucide/vue'
 import * as api from '../api/client'
 import type {
@@ -226,6 +227,14 @@ async function deleteAccount() {
           </button>
         </div>
       </div>
+      <p class="mt-4 max-w-3xl text-xs leading-5 text-slate-500 dark:text-slate-400">
+        Connecting lets Prosepect view your Google calendar list and access roles and read, create,
+        update, or delete events on calendars allowed by your Google permissions. Prosepect stores
+        synchronized event fields and encrypted OAuth credentials only to provide calendar and
+        scheduled-task synchronization. It does not use Google data for advertising, sale, or AI
+        training. You can disconnect at any time. See the
+        <RouterLink class="underline" to="/privacy">Privacy Policy</RouterLink>.
+      </p>
       <p v-if="integrationMessage" class="mt-4 text-xs text-slate-500">{{ integrationMessage }}</p>
 
       <div v-if="conflicts.length" class="mt-6">
@@ -362,6 +371,17 @@ async function deleteAccount() {
           :href="api.apiUrl('/api/v1/exports/calendars.ics')"
           ><Download :size="15" /> Calendars ICS</a
         >
+      </div>
+    </section>
+
+    <section class="border-b border-slate-200 py-8 dark:border-slate-800">
+      <h2 class="text-sm font-semibold">Legal and privacy</h2>
+      <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
+        Review how Prosepect handles your data and the terms for using the hosted service.
+      </p>
+      <div class="mt-4 flex gap-4 text-sm">
+        <RouterLink class="underline underline-offset-4" to="/privacy">Privacy Policy</RouterLink>
+        <RouterLink class="underline underline-offset-4" to="/terms">Terms of Service</RouterLink>
       </div>
     </section>
 

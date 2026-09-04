@@ -21,6 +21,22 @@ export const router = createRouter({
       name: 'settings',
       component: () => import('./views/SettingsView.vue'),
     },
+    {
+      path: '/privacy',
+      name: 'privacy',
+      component: () => import('./views/PrivacyView.vue'),
+      meta: { public: true, title: 'Privacy Policy' },
+    },
+    {
+      path: '/terms',
+      name: 'terms',
+      component: () => import('./views/TermsView.vue'),
+      meta: { public: true, title: 'Terms of Service' },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
+})
+
+router.afterEach((to) => {
+  document.title = to.meta.title ? `${String(to.meta.title)} | Prosepect` : 'Prosepect'
 })

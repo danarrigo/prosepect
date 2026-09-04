@@ -18,6 +18,7 @@ import CreateTaskDialog from './components/CreateTaskDialog.vue'
 import DailyReviewDialog from './components/DailyReviewDialog.vue'
 import GlobalSearch from './components/GlobalSearch.vue'
 import KeyboardPalette from './components/KeyboardPalette.vue'
+import PublicHome from './components/PublicHome.vue'
 import {
   isEditableTarget,
   resolveKeyboardShortcut,
@@ -48,6 +49,7 @@ const dueReminders = computed(() =>
   dueInAppReminders(store.tasks, now.value, dismissedReminders.value),
 )
 const sidebarVisible = computed(() => store.settings?.sidebar_visible ?? false)
+const publicRoute = computed(() => route.meta.public === true)
 
 watch(dueReminders, (tasks) => {
   for (const task of tasks) {
@@ -143,6 +145,7 @@ function runKeyboardAction(action: GlobalKeyboardAction) {
 
 function handleGlobalKeydown(event: KeyboardEvent) {
   if (
+    publicRoute.value ||
     store.authenticationRequired ||
     paletteMode.value ||
     document.querySelector('[role="dialog"]')
@@ -177,24 +180,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div
-    v-if="store.authenticationRequired"
-    class="grid min-h-dvh place-items-center bg-white px-5 text-slate-950 dark:bg-slate-950 dark:text-white"
-  >
-    <main class="w-full max-w-sm border-y border-slate-200 py-12 text-center dark:border-slate-800">
-      <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Prosepect</p>
-      <h1 class="mt-4 text-3xl font-semibold tracking-[-0.04em]">Plan what matters.</h1>
-      <p class="mx-auto mt-3 max-w-xs text-sm leading-6 text-slate-500 dark:text-slate-400">
-        Sign in to open your private productivity workspace and connected calendars.
-      </p>
-      <a
-        class="mt-8 inline-flex h-11 items-center justify-center rounded-md bg-slate-950 px-5 text-sm font-medium text-white transition hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-950 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
-        :href="api.apiUrl('/api/v1/auth/google/start')"
-      >
-        Continue with Google
-      </a>
-    </main>
-  </div>
+  <RouterView v-if="publicRoute" />
+
+  <PublicHome v-else-if="store.authenticationRequired" />
 
   <div v-else class="flex min-h-dvh bg-white text-slate-950 dark:bg-slate-950 dark:text-slate-50">
     <a

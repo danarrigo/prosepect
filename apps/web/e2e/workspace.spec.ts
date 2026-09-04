@@ -1,5 +1,31 @@
 import { expect, test, type Page } from '@playwright/test'
 
+test('publishes a descriptive signed-out homepage and legal policies', async ({ page }) => {
+  await page.route('**/api/v1/session', async (route) => {
+    await route.fulfill({ status: 401, contentType: 'application/json', body: '{}' })
+  })
+  await page.route('**/api/v1/development/session', async (route) => {
+    await route.fulfill({ status: 401, contentType: 'application/json', body: '{}' })
+  })
+
+  await page.goto('/')
+  await expect(
+    page.getByRole('heading', { name: 'Plan what matters without scattering your attention.' }),
+  ).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Sign in with Google' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Privacy Policy' })).toBeVisible()
+
+  await page.goto('/privacy')
+  await expect(page).toHaveTitle('Privacy Policy | Prosepect')
+  await expect(page.getByRole('heading', { name: 'Privacy Policy', level: 1 })).toBeVisible()
+  await expect(page.getByText('Google API Services User Data Policy')).toBeVisible()
+
+  await page.goto('/terms')
+  await expect(page).toHaveTitle('Terms of Service | Prosepect')
+  await expect(page.getByRole('heading', { name: 'Terms of Service', level: 1 })).toBeVisible()
+  await expect(page.getByText('laws of the Republic of Indonesia')).toBeVisible()
+})
+
 test('does not render demo identity or unfinished feature placeholders', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Make today count.' })).toBeVisible()
