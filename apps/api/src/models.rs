@@ -605,6 +605,7 @@ pub struct UserSettings {
     pub theme: ThemePreference,
     pub automatic_daily_review: bool,
     pub sync_conflict_policy: SyncConflictPolicy,
+    pub sidebar_visible: bool,
     pub updated_at: DateTime<Utc>,
     pub version: i32,
 }
@@ -614,6 +615,7 @@ pub struct UpdateUserSettingsRequest {
     pub theme: ThemePreference,
     pub automatic_daily_review: bool,
     pub sync_conflict_policy: SyncConflictPolicy,
+    pub sidebar_visible: bool,
     pub expected_version: i32,
 }
 

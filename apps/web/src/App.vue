@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { Bell, CircleHelp, LogOut, Menu, Moon, RotateCw, Sun, X } from '@lucide/vue'
+import {
+  Bell,
+  CircleHelp,
+  LogOut,
+  Menu,
+  Moon,
+  RotateCw,
+  Settings as SettingsIcon,
+  Sun,
+  X,
+} from '@lucide/vue'
 import * as api from './api/client'
 import AppSidebar from './components/AppSidebar.vue'
 import CreateTaskDialog from './components/CreateTaskDialog.vue'
@@ -37,6 +47,7 @@ let goSequenceTimer: ReturnType<typeof setTimeout> | undefined
 const dueReminders = computed(() =>
   dueInAppReminders(store.tasks, now.value, dismissedReminders.value),
 )
+const sidebarVisible = computed(() => store.settings?.sidebar_visible ?? false)
 
 watch(dueReminders, (tasks) => {
   for (const task of tasks) {
@@ -200,18 +211,19 @@ onBeforeUnmount(() => {
       @select="executeCommand"
     />
     <div
-      v-if="sidebarOpen"
+      v-if="sidebarVisible && sidebarOpen"
       class="fixed inset-0 z-30 bg-slate-950/35 backdrop-blur-[1px] lg:hidden"
       aria-hidden="true"
       @click="sidebarOpen = false"
     />
-    <AppSidebar :open="sidebarOpen" @close="sidebarOpen = false" />
+    <AppSidebar v-if="sidebarVisible" :open="sidebarOpen" @close="sidebarOpen = false" />
 
     <div class="min-w-0 flex-1">
       <header
         class="sticky top-0 z-20 flex h-14 items-center border-b border-slate-200 bg-white px-5 dark:border-slate-800 dark:bg-slate-950 sm:px-8"
       >
         <button
+          v-if="sidebarVisible"
           class="icon-button mr-3 lg:hidden"
           type="button"
           aria-label="Open navigation"
@@ -223,6 +235,16 @@ onBeforeUnmount(() => {
         <div class="ml-auto flex items-center gap-2">
           <GlobalSearch ref="globalSearch" />
           <CreateTaskDialog ref="createTaskDialog" />
+          <button
+            v-if="store.settings && !sidebarVisible"
+            class="icon-button"
+            type="button"
+            aria-label="Open settings"
+            title="Settings (G then S)"
+            @click="executeCommand('navigate-settings')"
+          >
+            <SettingsIcon :size="17" />
+          </button>
           <button
             class="icon-button"
             type="button"

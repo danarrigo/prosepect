@@ -377,7 +377,7 @@ async fn settings_exports_and_account_deletion_work_end_to_end(pool: PgPool) -> 
                 .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    r#"{"theme":"dark","automatic_daily_review":false,"sync_conflict_policy":"latest","expected_version":1}"#,
+                    r#"{"theme":"dark","automatic_daily_review":false,"sync_conflict_policy":"latest","sidebar_visible":false,"expected_version":1}"#,
                 ))?,
         )
         .await?;

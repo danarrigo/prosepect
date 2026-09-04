@@ -74,6 +74,40 @@ test('navigates and opens actions without a mouse', async ({ page }) => {
   await page.keyboard.press('Escape')
 })
 
+test('hides the sidebar persistently and keeps Settings reachable', async ({ page }) => {
+  await page.goto('/settings')
+  const settings = page.getByRole('form', { name: 'Workspace settings' })
+  const sidebar = page.getByRole('complementary', { name: 'Primary navigation' })
+  const toggle = settings.getByRole('checkbox', { name: 'Show sidebar' })
+  await expect(toggle).toBeChecked()
+
+  const hidden = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/v1/settings') &&
+      response.request().method() === 'PUT' &&
+      response.status() === 200,
+  )
+  await toggle.uncheck()
+  await settings.getByRole('button', { name: 'Save settings' }).click()
+  await hidden
+  await expect(sidebar).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Open settings' })).toBeVisible()
+
+  await page.reload()
+  await expect(sidebar).toHaveCount(0)
+
+  const restored = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/v1/settings') &&
+      response.request().method() === 'PUT' &&
+      response.status() === 200,
+  )
+  await settings.getByRole('checkbox', { name: 'Show sidebar' }).check()
+  await settings.getByRole('button', { name: 'Save settings' }).click()
+  await restored
+  await expect(sidebar).toBeVisible()
+})
+
 test('keeps times visible on compact events and scheduled tasks', async ({ page }) => {
   const suffix = `${test.info().project.name}-${Date.now().toString().slice(-6)}`
   const eventName = `Compact event ${suffix}`

@@ -848,6 +848,7 @@ async fn settings_use_optimistic_concurrency(pool: PgPool) -> anyhow::Result<()>
     let user_id = create_user(&pool, "settings@example.com").await?;
     let settings = store.user_settings(user_id).await?;
     assert_eq!(settings.theme, ThemePreference::System);
+    assert!(settings.sidebar_visible);
 
     let updated = store
         .update_user_settings(
@@ -856,12 +857,14 @@ async fn settings_use_optimistic_concurrency(pool: PgPool) -> anyhow::Result<()>
                 theme: ThemePreference::Dark,
                 automatic_daily_review: false,
                 sync_conflict_policy: SyncConflictPolicy::Latest,
+                sidebar_visible: false,
                 expected_version: settings.version,
             },
         )
         .await?;
     assert_eq!(updated.theme, ThemePreference::Dark);
     assert!(!updated.automatic_daily_review);
+    assert!(!updated.sidebar_visible);
 
     let stale = store
         .update_user_settings(
@@ -870,6 +873,7 @@ async fn settings_use_optimistic_concurrency(pool: PgPool) -> anyhow::Result<()>
                 theme: ThemePreference::Light,
                 automatic_daily_review: true,
                 sync_conflict_policy: SyncConflictPolicy::Ask,
+                sidebar_visible: true,
                 expected_version: settings.version,
             },
         )

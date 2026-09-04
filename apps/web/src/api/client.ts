@@ -204,6 +204,7 @@ export async function updateSettings(settings: UserSettings): Promise<UserSettin
         theme: settings.theme,
         automatic_daily_review: settings.automatic_daily_review,
         sync_conflict_policy: settings.sync_conflict_policy,
+        sidebar_visible: settings.sidebar_visible,
         expected_version: settings.version,
       },
     }),

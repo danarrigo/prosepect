@@ -121,7 +121,7 @@ impl Store {
             INSERT INTO user_settings (user_id)
             VALUES ($1)
             ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
-            RETURNING theme, automatic_daily_review, sync_conflict_policy, updated_at, version
+            RETURNING theme, automatic_daily_review, sync_conflict_policy, sidebar_visible, updated_at, version
             "#,
         )
         .bind(user_id)
@@ -143,16 +143,18 @@ impl Store {
                 theme = $2,
                 automatic_daily_review = $3,
                 sync_conflict_policy = $4,
+                sidebar_visible = $5,
                 updated_at = NOW(),
                 version = version + 1
-            WHERE user_id = $1 AND version = $5
-            RETURNING theme, automatic_daily_review, sync_conflict_policy, updated_at, version
+            WHERE user_id = $1 AND version = $6
+            RETURNING theme, automatic_daily_review, sync_conflict_policy, sidebar_visible, updated_at, version
             "#,
         )
         .bind(user_id)
         .bind(request.theme)
         .bind(request.automatic_daily_review)
         .bind(request.sync_conflict_policy)
+        .bind(request.sidebar_visible)
         .bind(request.expected_version)
         .fetch_optional(&self.pool)
         .await?;

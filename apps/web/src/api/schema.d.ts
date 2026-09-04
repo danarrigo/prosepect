@@ -1171,6 +1171,7 @@ export interface components {
             automatic_daily_review: boolean;
             /** Format: int32 */
             expected_version: number;
+            sidebar_visible: boolean;
             sync_conflict_policy: components["schemas"]["SyncConflictPolicy"];
             theme: components["schemas"]["ThemePreference"];
         };
@@ -1184,6 +1185,7 @@ export interface components {
         };
         UserSettings: {
             automatic_daily_review: boolean;
+            sidebar_visible: boolean;
             sync_conflict_policy: components["schemas"]["SyncConflictPolicy"];
             theme: components["schemas"]["ThemePreference"];
             /** Format: date-time */

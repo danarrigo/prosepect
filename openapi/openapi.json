@@ -4914,6 +4914,7 @@
           "theme",
           "automatic_daily_review",
           "sync_conflict_policy",
+          "sidebar_visible",
           "expected_version"
         ],
         "properties": {
@@ -4923,6 +4924,9 @@
           "expected_version": {
             "type": "integer",
             "format": "int32"
+          },
+          "sidebar_visible": {
+            "type": "boolean"
           },
           "sync_conflict_policy": {
             "$ref": "#/components/schemas/SyncConflictPolicy"
@@ -4968,11 +4972,15 @@
           "theme",
           "automatic_daily_review",
           "sync_conflict_policy",
+          "sidebar_visible",
           "updated_at",
           "version"
         ],
         "properties": {
           "automatic_daily_review": {
+            "type": "boolean"
+          },
+          "sidebar_visible": {
             "type": "boolean"
           },
           "sync_conflict_policy": {

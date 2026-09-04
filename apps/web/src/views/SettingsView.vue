@@ -15,6 +15,7 @@ import { parseTodoistCsv, todoistProjectName, type ParsedTodoistImport } from '.
 const store = useWorkspaceStore()
 const theme = ref<ThemePreference>('system')
 const automaticReview = ref(true)
+const sidebarVisible = ref(true)
 const conflictPolicy = ref<SyncConflictPolicy>('ask')
 const integration = ref<GoogleIntegrationStatus | null>(null)
 const conflicts = ref<SyncConflict[]>([])
@@ -33,6 +34,7 @@ watch(
     if (!settings) return
     theme.value = settings.theme
     automaticReview.value = settings.automatic_daily_review
+    sidebarVisible.value = settings.sidebar_visible
     conflictPolicy.value = settings.sync_conflict_policy
   },
   { immediate: true },
@@ -75,6 +77,7 @@ async function save() {
     theme: theme.value,
     automatic_daily_review: automaticReview.value,
     sync_conflict_policy: conflictPolicy.value,
+    sidebar_visible: sidebarVisible.value,
   })
   if (theme.value === 'system') localStorage.removeItem('prosepect.theme')
   else localStorage.setItem('prosepect.theme', theme.value)
@@ -168,6 +171,16 @@ async function deleteAccount() {
           <strong class="font-medium">Start the daily review automatically</strong>
           <span class="mt-1 block text-xs leading-5 text-slate-400">
             Prompt for carry-forward decisions when yesterday has unfinished focus tasks.
+          </span>
+        </span>
+      </label>
+      <label class="mt-5 flex items-start gap-3 text-sm">
+        <input v-model="sidebarVisible" class="mt-0.5" type="checkbox" />
+        <span>
+          <strong class="font-medium">Show sidebar</strong>
+          <span class="mt-1 block text-xs leading-5 text-slate-400">
+            Turn this off for a full-width, command-focused workspace. Return here with
+            <kbd>G</kbd> then <kbd>S</kbd>, or use <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd>.
           </span>
         </span>
       </label>
