@@ -22,17 +22,8 @@ export type FileRecord = components['schemas']['FileRecord']
 export type UserSettings = components['schemas']['UserSettings']
 export type ThemePreference = components['schemas']['ThemePreference']
 export type SyncConflictPolicy = components['schemas']['SyncConflictPolicy']
-// Replace these additive contracts with generated aliases after remote OpenAPI export.
-export interface FileUsage {
-  used_bytes: number
-  max_user_storage_bytes: number
-  max_file_size_bytes: number
-}
-export type GoogleIntegrationStatus = components['schemas']['GoogleIntegrationStatus'] & {
-  latest_synchronization?: Synchronization | null
-  pending_synchronization_count?: number
-  failed_synchronization_count?: number
-}
+export type FileUsage = components['schemas']['FileUsage']
+export type GoogleIntegrationStatus = components['schemas']['GoogleIntegrationStatus']
 export type Synchronization = components['schemas']['Synchronization']
 export type SyncConflict = components['schemas']['SyncConflict']
 export type ActivityEntry = components['schemas']['ActivityEntry']

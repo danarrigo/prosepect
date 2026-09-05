@@ -1477,6 +1477,44 @@
         ]
       }
     },
+    "/api/v1/files/usage": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "operationId": "file_usage",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileUsage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
     "/api/v1/files/{file_id}": {
       "delete": {
         "tags": [
@@ -3973,11 +4011,36 @@
           }
         }
       },
+      "FileUsage": {
+        "type": "object",
+        "description": "Personal usage only; service-wide storage usage is never exposed.",
+        "required": [
+          "used_bytes",
+          "max_user_storage_bytes",
+          "max_file_size_bytes"
+        ],
+        "properties": {
+          "max_file_size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_user_storage_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "GoogleIntegrationStatus": {
         "type": "object",
         "required": [
           "connected",
-          "scopes"
+          "scopes",
+          "pending_synchronization_count",
+          "failed_synchronization_count"
         ],
         "properties": {
           "connected": {
@@ -3989,6 +4052,24 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "failed_synchronization_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "latest_synchronization": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Synchronization"
+              }
+            ]
+          },
+          "pending_synchronization_count": {
+            "type": "integer",
+            "format": "int64"
           },
           "scopes": {
             "type": "array",

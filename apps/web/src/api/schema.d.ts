@@ -308,6 +308,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["file_usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/files/{file_id}": {
         parameters: {
             query?: never;
@@ -897,10 +913,23 @@ export interface components {
             /** Format: uuid */
             task_id?: string | null;
         };
+        /** @description Personal usage only; service-wide storage usage is never exposed. */
+        FileUsage: {
+            max_file_size_bytes: number;
+            /** Format: int64 */
+            max_user_storage_bytes: number;
+            /** Format: int64 */
+            used_bytes: number;
+        };
         GoogleIntegrationStatus: {
             connected: boolean;
             /** Format: date-time */
             expires_at?: string | null;
+            /** Format: int64 */
+            failed_synchronization_count: number;
+            latest_synchronization?: null | components["schemas"]["Synchronization"];
+            /** Format: int64 */
+            pending_synchronization_count: number;
             scopes: string[];
         };
         HealthResponse: {
@@ -2154,6 +2183,33 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    file_usage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileUsage"];
+                };
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

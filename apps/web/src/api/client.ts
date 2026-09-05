@@ -43,13 +43,7 @@ export function apiUrl(path: string, baseUrl = API_URL) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   return `${normalizedBaseUrl}${normalizedPath}`
 }
-// Temporary additive path until remote Rust OpenAPI export; shares client middleware/errors.
-type FileUsagePath = {
-  '/api/v1/files/usage': {
-    get: { responses: { 200: { content: { 'application/json': FileUsage } } } }
-  }
-}
-const client = createClient<paths & FileUsagePath>({ baseUrl: API_URL, credentials: 'include' })
+const client = createClient<paths>({ baseUrl: API_URL, credentials: 'include' })
 let csrfToken = ''
 
 interface ErrorEnvelope {
