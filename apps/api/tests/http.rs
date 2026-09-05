@@ -106,7 +106,7 @@ async fn google_login_requires_current_legal_acceptance(pool: PgPool) -> anyhow:
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(missing.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
 
     let outdated = router
         .clone()
