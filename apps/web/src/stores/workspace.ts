@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import * as api from '../api/client'
 import { collectCursorPages } from '../api/pagination'
 import { localDateKey } from '../calendar'
+import { fileUploadError } from '../file-usage'
 import type {
   Calendar,
   CalendarEvent,
@@ -16,6 +17,7 @@ import type {
   EditableProjectFields,
   EditableTaskFields,
   FileRecord,
+  FileUsage,
   Note,
   Project,
   ReviewTaskDecision,
@@ -34,6 +36,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const events = ref<CalendarEvent[]>([])
   const notes = ref<Note[]>([])
   const files = ref<FileRecord[]>([])
+  const fileUsage = ref<FileUsage | null>(null)
+  const fileUsageLoading = ref(false)
+  const fileUsageError = ref('')
+  let usageRequest: Promise<void> | null = null
+  let usageGeneration = 0
   const user = ref<UserProfile | null>(null)
   const settings = ref<UserSettings | null>(null)
   const authenticationRequired = ref(false)
@@ -260,18 +267,54 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
+  async function refreshFileUsage() {
+    if (usageRequest) return usageRequest
+    const generation = usageGeneration
+    fileUsageLoading.value = true
+    fileUsageError.value = ''
+    usageRequest = (async () => {
+      try {
+        const usage = await api.getFileUsage()
+        if (generation === usageGeneration) fileUsage.value = usage
+      } catch {
+        if (generation === usageGeneration) {
+          fileUsage.value = null
+          fileUsageError.value = 'Could not load attachment limits. Retry before uploading.'
+        }
+      } finally {
+        if (generation === usageGeneration) {
+          fileUsageLoading.value = false
+          usageRequest = null
+        }
+      }
+    })()
+    return usageRequest
+  }
+
   async function addFile(
     file: File,
     link: { project_id?: string; task_id?: string; note_id?: string; event_id?: string } = {},
   ) {
-    const uploaded = await api.uploadFile(file, link)
-    files.value = [uploaded, ...files.value]
-    return uploaded
+    await refreshFileUsage()
+    if (!fileUsage.value) throw new Error(fileUsageError.value)
+    const validationError = fileUploadError(file.size, fileUsage.value)
+    if (validationError) throw new Error(validationError)
+    try {
+      const uploaded = await api.uploadFile(file, link)
+      files.value = [uploaded, ...files.value]
+      return uploaded
+    } finally {
+      await refreshFileUsage()
+    }
   }
 
   async function removeFile(file: FileRecord) {
-    await api.deleteFile(file.id)
-    files.value = files.value.filter((candidate) => candidate.id !== file.id)
+    try {
+      await api.deleteFile(file.id)
+      files.value = files.value.filter((candidate) => candidate.id !== file.id)
+    } finally {
+      await refreshFileUsage()
+    }
   }
 
   async function addNote(input: CreateNoteRequest) {
@@ -424,6 +467,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     events.value = []
     notes.value = []
     files.value = []
+    resetFileUsage()
     authenticationRequired.value = true
   }
 
@@ -432,6 +476,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     user.value = null
     projects.value = []
     tasks.value = []
+    calendars.value = []
+    events.value = []
+    notes.value = []
+    files.value = []
+    resetFileUsage()
     authenticationRequired.value = true
   }
 
@@ -446,6 +495,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function replaceTask(updated: Task) {
     const index = tasks.value.findIndex((task) => task.id === updated.id)
     if (index >= 0) tasks.value[index] = updated
+  }
+
+  function resetFileUsage() {
+    usageGeneration += 1
+    usageRequest = null
+    fileUsage.value = null
+    fileUsageLoading.value = false
+    fileUsageError.value = ''
   }
 
   async function reloadProjectSummaries() {
@@ -472,6 +529,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     events,
     notes,
     files,
+    fileUsage,
+    fileUsageLoading,
+    fileUsageError,
+    refreshFileUsage,
     user,
     settings,
     authenticationRequired,

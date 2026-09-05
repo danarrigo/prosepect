@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SchedulingHelp from '../components/SchedulingHelp.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CalendarCog, ChevronLeft, ChevronRight, Pencil, Plus, Trash2, X } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -966,6 +967,7 @@ function monthDays(cursor: Date) {
       <div>
         <h1 class="page-title !mt-0">Calendar</h1>
         <p class="page-description">Events, scheduled work, and deadlines in one place.</p>
+        <SchedulingHelp />
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <div
@@ -1042,7 +1044,9 @@ function monthDays(cursor: Date) {
         <div class="flex items-start justify-between gap-4">
           <div>
             <h2 class="text-lg font-semibold">New scheduled task</h2>
-            <p class="mt-1 text-sm text-slate-500">Reserve time for focused work.</p>
+            <p class="mt-1 text-sm text-slate-500">
+              Reserve time for a task you can complete. Events stay separate.
+            </p>
           </div>
           <button
             class="icon-button"
@@ -1053,6 +1057,7 @@ function monthDays(cursor: Date) {
             <X :size="18" />
           </button>
         </div>
+        <SchedulingHelp />
         <div class="mt-6 grid gap-4 sm:grid-cols-2">
           <label class="sm:col-span-2">
             <span class="field-label">Title</span>

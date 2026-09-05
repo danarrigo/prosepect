@@ -31,8 +31,8 @@ use crate::{
         CreateCalendarRequest, CreateNoteRequest, CreateProjectRequest,
         CreateSynchronizationRequest, CreateTaskRequest, DailyPlan, DailyReview,
         DailyReviewResponse, DailyReviewStatus, DeleteAccountRequest, EventRecurrence, FileList,
-        FileRecord, GoogleIntegrationStatus, HealthResponse, LabelList, Note, NoteList, Project,
-        ProjectPage, ProjectStatus, ReorderTasksRequest, ResolveSyncConflictRequest,
+        FileRecord, FileUsage, GoogleIntegrationStatus, HealthResponse, LabelList, Note, NoteList,
+        Project, ProjectPage, ProjectStatus, ReorderTasksRequest, ResolveSyncConflictRequest,
         ReviewDecisionAction, ReviewTaskDecision, SearchResult, SearchResultKind, SearchResultList,
         SessionResponse, StartDailyReviewRequest, SyncConflict, SyncConflictList,
         SyncConflictPolicy, Synchronization, Task, TaskPage, TaskPriority, TaskRecurrence,
@@ -125,6 +125,7 @@ pub struct AppState {
         export_routes::export_calendars_ics,
         export_routes::delete_account,
         import_routes::import_todoist,
+        file_routes::file_usage,
         file_routes::list_files,
         file_routes::upload_file,
         file_routes::download_file,
@@ -181,6 +182,7 @@ pub struct AppState {
         TodoistImportResult,
         FileRecord,
         FileList,
+        FileUsage,
         GoogleIntegrationStatus,
         Synchronization,
         CreateSynchronizationRequest,
@@ -394,6 +396,7 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
             "/files",
             get(file_routes::list_files).post(file_routes::upload_file),
         )
+        .route("/files/usage", get(file_routes::file_usage))
         .route("/files/{file_id}/download", get(file_routes::download_file))
         .route(
             "/files/{file_id}",

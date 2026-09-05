@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { formatBytes as bytes } from '../file-usage'
 import { Download, FileUp, Trash2 } from '@lucide/vue'
+import FileUsageStatus from '../components/FileUsageStatus.vue'
 import { apiUrl } from '../api/client'
 import type { FileRecord } from '../api/types'
 import { useWorkspaceStore } from '../stores/workspace'
@@ -26,7 +28,13 @@ async function upload(event: Event) {
 }
 
 async function remove(file: FileRecord) {
-  if (window.confirm(`Delete “${file.filename}”?`)) await store.removeFile(file)
+  if (!window.confirm(`Delete “${file.filename}”?`)) return
+  error.value = ''
+  try {
+    await store.removeFile(file)
+  } catch {
+    error.value = 'Could not delete this file. Retry deletion.'
+  }
 }
 
 function fileContext(file: FileRecord) {
@@ -35,12 +43,6 @@ function fileContext(file: FileRecord) {
   if (file.note_id) return 'Note attachment'
   if (file.event_id) return 'Event attachment'
   return 'Workspace file'
-}
-
-function bytes(value: number) {
-  if (value < 1024) return `${value} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
-  return `${(value / 1024 / 1024).toFixed(1)} MiB`
 }
 </script>
 
@@ -55,10 +57,16 @@ function bytes(value: number) {
       </div>
       <label class="primary-button cursor-pointer">
         <FileUp :size="16" /> {{ uploading ? 'Uploading…' : 'Upload file' }}
-        <input class="sr-only" type="file" :disabled="uploading" @change="upload" />
+        <input
+          class="sr-only"
+          type="file"
+          :disabled="uploading || store.fileUsageLoading || !store.fileUsage"
+          @change="upload"
+        />
       </label>
     </div>
-    <p v-if="error" class="mt-5 text-sm text-rose-600">{{ error }}</p>
+    <FileUsageStatus />
+    <p v-if="error" role="alert" class="mt-5 text-sm text-rose-600">{{ error }}</p>
 
     <div class="mt-10 border-y border-slate-200 dark:border-slate-800">
       <div

@@ -12,6 +12,7 @@ import type {
   DailyPlan,
   DailyReview,
   FileRecord,
+  FileUsage,
   GoogleIntegrationStatus,
   LabelList,
   Note,
@@ -42,7 +43,13 @@ export function apiUrl(path: string, baseUrl = API_URL) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   return `${normalizedBaseUrl}${normalizedPath}`
 }
-const client = createClient<paths>({ baseUrl: API_URL, credentials: 'include' })
+// Temporary additive path until remote Rust OpenAPI export; shares client middleware/errors.
+type FileUsagePath = {
+  '/api/v1/files/usage': {
+    get: { responses: { 200: { content: { 'application/json': FileUsage } } } }
+  }
+}
+const client = createClient<paths & FileUsagePath>({ baseUrl: API_URL, credentials: 'include' })
 let csrfToken = ''
 
 interface ErrorEnvelope {
@@ -95,8 +102,8 @@ export async function logout(): Promise<void> {
   localStorage.removeItem(USER_ID_KEY)
 }
 
-export async function getGoogleIntegration(): Promise<GoogleIntegrationStatus> {
-  return unwrap(await client.GET('/api/v1/integrations/google'))
+export async function getGoogleIntegration(signal?: AbortSignal): Promise<GoogleIntegrationStatus> {
+  return unwrap(await client.GET('/api/v1/integrations/google', { signal }))
 }
 
 export async function discoverGoogleCalendars(): Promise<Synchronization> {
@@ -118,8 +125,8 @@ export async function revokeGoogleIntegration(): Promise<Synchronization> {
   return unwrap(await client.DELETE('/api/v1/integrations/google'))
 }
 
-export async function listSyncConflicts(): Promise<SyncConflict[]> {
-  return unwrap(await client.GET('/api/v1/sync-conflicts')).items
+export async function listSyncConflicts(signal?: AbortSignal): Promise<SyncConflict[]> {
+  return unwrap(await client.GET('/api/v1/sync-conflicts', { signal })).items
 }
 
 export async function resolveSyncConflict(
@@ -134,8 +141,24 @@ export async function resolveSyncConflict(
   )
 }
 
-export async function listActivity(): Promise<ActivityEntry[]> {
-  return unwrap(await client.GET('/api/v1/activity')).items
+export async function listActivity(signal?: AbortSignal): Promise<ActivityEntry[]> {
+  return unwrap(await client.GET('/api/v1/activity', { signal })).items
+}
+
+export async function getFileUsage(): Promise<FileUsage> {
+  return unwrap(await client.GET('/api/v1/files/usage'))
+}
+
+export async function getSynchronization(
+  id: string,
+  signal?: AbortSignal,
+): Promise<Synchronization> {
+  return unwrap(
+    await client.GET('/api/v1/synchronizations/{synchronization_id}', {
+      params: { path: { synchronization_id: id } },
+      signal,
+    }),
+  )
 }
 
 export async function listFiles(

@@ -42,6 +42,7 @@ struct MutationState {
     updates: Arc<AtomicUsize>,
     deletes: Arc<AtomicUsize>,
     remote_change: Arc<AtomicBool>,
+    remote_delete: Arc<AtomicBool>,
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -174,6 +175,46 @@ async fn scheduled_task_time_blocks_follow_the_google_event_lifecycle(
             .fetch_one(&pool)
             .await?;
     assert_eq!(mappings, 0);
+
+    // A dirty local task and a Google deletion must require a decision first.
+    let unscheduled = store
+        .list_tasks(user_id, None, None, 10)
+        .await?
+        .items
+        .remove(0);
+    let mut reschedule = update_task_request(&unscheduled, TaskStatus::Completed, false);
+    reschedule.scheduled_start = Some(starts_at);
+    reschedule.scheduled_end = Some(starts_at + Duration::hours(1));
+    let rescheduled = store.update_task(user_id, task.id, reschedule).await?;
+    assert!(service.run_once().await?);
+    let mut local_edit = update_task_request(&rescheduled, TaskStatus::Completed, true);
+    local_edit.title = "Keep my local work".to_owned();
+    store.update_task(user_id, task.id, local_edit).await?;
+    state.remote_delete.store(true, Ordering::SeqCst);
+    assert!(service.run_once().await?);
+    let conflicts = store.list_sync_conflicts(user_id).await?.items;
+    assert_eq!(conflicts.len(), 1);
+    let before_decision = store
+        .list_tasks(user_id, None, None, 10)
+        .await?
+        .items
+        .remove(0);
+    assert!(before_decision.scheduled_start.is_some());
+    store
+        .resolve_sync_conflict(user_id, conflicts[0].id, "google")
+        .await?;
+    assert!(service.run_once().await?);
+    let after_deletion = store
+        .list_tasks(user_id, None, None, 10)
+        .await?
+        .items
+        .remove(0);
+    assert_eq!(after_deletion.id, task.id);
+    assert_eq!(after_deletion.status, TaskStatus::Completed);
+    assert!(after_deletion.scheduled_start.is_none());
+    assert!(after_deletion.scheduled_end.is_none());
+    assert!(store.list_sync_conflicts(user_id).await?.items.is_empty());
+    assert_eq!(state.deletes.load(Ordering::SeqCst), 1);
 
     server.abort();
     Ok(())
@@ -399,6 +440,13 @@ async fn mock_empty_google_events(
 ) -> Response {
     if !has_provider_access_token(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if state.remote_delete.load(Ordering::SeqCst) {
+        return Json(json!({
+            "items": [{"id": "provider-task-event", "status": "cancelled", "etag": "deleted"}],
+            "nextSyncToken": "provider-token-after-deletion"
+        }))
+        .into_response();
     }
     if state.remote_change.load(Ordering::SeqCst) {
         return Json(json!({

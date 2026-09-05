@@ -7,6 +7,16 @@ use crate::{
 };
 
 impl Store {
+    pub async fn file_usage_bytes(&self, user_id: Uuid) -> AppResult<i64> {
+        sqlx::query_scalar(
+            "SELECT COALESCE(SUM(byte_size), 0)::BIGINT FROM files WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(AppError::from)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn create_file_metadata(
         &self,

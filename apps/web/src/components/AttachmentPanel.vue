@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Download, Paperclip, Trash2 } from '@lucide/vue'
+import FileUsageStatus from './FileUsageStatus.vue'
 import { apiUrl } from '../api/client'
 import type { FileRecord } from '../api/types'
 import { useWorkspaceStore } from '../stores/workspace'
@@ -34,7 +35,13 @@ async function upload(event: Event) {
 }
 
 async function remove(file: FileRecord) {
-  if (window.confirm(`Delete “${file.filename}”?`)) await store.removeFile(file)
+  if (!window.confirm(`Delete “${file.filename}”?`)) return
+  error.value = ''
+  try {
+    await store.removeFile(file)
+  } catch {
+    error.value = 'Could not delete this file. Retry deletion.'
+  }
 }
 </script>
 
@@ -44,10 +51,16 @@ async function remove(file: FileRecord) {
       <span class="field-label !mb-0">Attachments</span>
       <label class="secondary-button cursor-pointer !h-8 !px-3 !text-xs">
         <Paperclip :size="14" /> {{ uploading ? 'Uploading…' : 'Attach file' }}
-        <input class="sr-only" type="file" :disabled="uploading" @change="upload" />
+        <input
+          class="sr-only"
+          type="file"
+          :disabled="uploading || store.fileUsageLoading || !store.fileUsage"
+          @change="upload"
+        />
       </label>
     </div>
-    <p v-if="error" class="mt-2 text-xs text-rose-600">{{ error }}</p>
+    <FileUsageStatus />
+    <p v-if="error" role="alert" class="mt-2 text-xs text-rose-600">{{ error }}</p>
     <div class="mt-2 space-y-1">
       <div
         v-for="file in attachments"

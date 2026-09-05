@@ -243,20 +243,15 @@ function parseImportedDate(
 function parseRecurrence(input: string): { value: ImportedRecurrence; unsupported: boolean } {
   const normalized = input.trim().toLowerCase()
   if (!normalized) return { value: 'none', unsupported: false }
-  if (/^(?:daily|every day)(?:\s|$)/.test(normalized)) {
-    return { value: 'daily', unsupported: false }
-  }
-  if (
-    /^(?:weekly|every week)(?:\s|$)/.test(normalized) ||
-    new RegExp(String.raw`^every\s+${WEEKDAY}(?:\s|$)`).test(normalized)
-  ) {
-    return { value: 'weekly', unsupported: false }
-  }
-  if (/^(?:monthly|every month)(?:\s|$)/.test(normalized)) {
-    return { value: 'monthly', unsupported: false }
-  }
-  if (/^(?:yearly|annually|every year)(?:\s|$)/.test(normalized)) {
-    return { value: 'yearly', unsupported: false }
+  const clock = String.raw`(?:\s+(?:at\s+)?(?:\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?`
+  const rules: Array<[ImportedRecurrence, string]> = [
+    ['daily', '(?:daily|every day)'],
+    ['weekly', `(?:weekly|every week|every ${WEEKDAY})`],
+    ['monthly', '(?:monthly|every month)'],
+    ['yearly', '(?:yearly|annually|every year)'],
+  ]
+  for (const [value, rule] of rules) {
+    if (new RegExp(`^${rule}${clock}$`).test(normalized)) return { value, unsupported: false }
   }
   return {
     value: 'none',

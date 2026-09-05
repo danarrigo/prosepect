@@ -59,12 +59,51 @@ describe('parseTodoistCsv', () => {
     const csv = [
       'TYPE,CONTENT,DESCRIPTION,PRIORITY,INDENT,DATE,DATE_LANG,TIMEZONE',
       'task,Complex repeat,,4,1,every other Wednesday,de,Europe/Berlin',
+      'task,Multi-day repeat,,4,1,every Monday and Friday,en,America/New_York',
     ].join('\n')
 
     const parsed = parseTodoistCsv(csv, 'Imported', reference)
 
     expect(parsed.request.tasks[0]).toMatchObject({ recurrence: 'none' })
+    expect(parsed.request.tasks[1]).toMatchObject({
+      recurrence: 'none',
+      description: expect.stringContaining('Todoist recurrence: every Monday and Friday'),
+    })
     expect(parsed.report.warnings.join(' ')).toContain('language')
     expect(parsed.report.warnings.join(' ')).toContain('recurrence')
+  })
+
+  it('uses the Todoist timezone across DST boundaries for scheduled imports', () => {
+    const csv = [
+      'TYPE,CONTENT,DATE,DATE_LANG,TIMEZONE,DURATION,DURATION_UNIT',
+      'task,Before DST,March 28 2026 at 9am,en,Europe/Berlin,30,minute',
+      'task,After DST,March 29 2026 at 9am,en,Europe/Berlin,30,minute',
+    ].join('\n')
+
+    const parsed = parseTodoistCsv(csv, 'Imported', reference)
+
+    expect(parsed.request.tasks[0]).toMatchObject({
+      scheduled_start: '2026-03-28T08:00:00.000Z',
+      scheduled_end: '2026-03-28T08:30:00.000Z',
+    })
+    expect(parsed.request.tasks[1]).toMatchObject({
+      scheduled_start: '2026-03-29T07:00:00.000Z',
+      scheduled_end: '2026-03-29T07:30:00.000Z',
+    })
+  })
+
+  it('keeps malformed import rows actionable without creating tasks', () => {
+    const csv = [
+      'TYPE,CONTENT,DESCRIPTION',
+      'task,,Missing title',
+      'label,Inbox,Unsupported metadata row',
+    ].join('\n')
+
+    const parsed = parseTodoistCsv(csv, 'Imported', reference)
+
+    expect(parsed.request.tasks).toEqual([])
+    expect(parsed.report.skippedRows).toBe(2)
+    expect(parsed.report.warnings.join(' ')).toContain('empty task was skipped')
+    expect(parsed.report.warnings.join(' ')).toContain('unsupported Todoist row type "label"')
   })
 })

@@ -1233,3 +1233,52 @@ fn update_request(task: &prosepect_api::models::Task, status: TaskStatus) -> Upd
         expected_version: task.version,
     }
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn google_status_keeps_failures_tenant_scoped_and_provider_errors_private(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user_id = create_user(&pool, "sync-status@example.com").await?;
+    let other_id = create_user(&pool, "other-sync-status@example.com").await?;
+    let failed = store
+        .enqueue_sync(user_id, None, "calendar_sync", "failed-status")
+        .await?;
+    sqlx::query("UPDATE sync_jobs SET status = 'failed', attempt_count = 8, last_error = 'secret provider response' WHERE id = $1")
+        .bind(failed.id).execute(&pool).await?;
+    let safe = store.synchronization(user_id, failed.id).await?;
+    assert!(safe.last_error.is_none());
+    assert!(store.synchronization(other_id, failed.id).await.is_err());
+    // Discovery succeeding is not proof that a calendar synchronization succeeded.
+    let discovery = store
+        .enqueue_sync(user_id, None, "calendar_discovery", "discovery-status")
+        .await?;
+    store.complete_sync_job(discovery.id).await?;
+    let status = store.google_integration_status(user_id).await?;
+    assert!(!status.connected);
+    assert_eq!(status.failed_synchronization_count, 1);
+    assert_eq!(status.pending_synchronization_count, 0);
+    assert_eq!(status.latest_synchronization.unwrap().id, discovery.id);
+    let other = store.google_integration_status(other_id).await?;
+    assert_eq!(other.failed_synchronization_count, 0);
+    assert!(other.latest_synchronization.is_none());
+    let retry = store
+        .enqueue_sync(user_id, None, "calendar_sync", "retry-status")
+        .await?;
+    assert_eq!(
+        store
+            .google_integration_status(user_id)
+            .await?
+            .pending_synchronization_count,
+        1
+    );
+    store.complete_sync_job(retry.id).await?;
+    assert_eq!(
+        store
+            .google_integration_status(user_id)
+            .await?
+            .failed_synchronization_count,
+        0
+    );
+    Ok(())
+}

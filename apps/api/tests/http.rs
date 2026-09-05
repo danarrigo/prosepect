@@ -257,7 +257,9 @@ async fn google_calendar_webhooks_are_authenticated_and_idempotent(
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn file_upload_download_and_deletion_are_tenant_scoped(pool: PgPool) -> anyhow::Result<()> {
-    let config = test_config();
+    let mut config = test_config();
+    config.max_file_size_bytes = 100;
+    config.max_user_file_storage_bytes = 200;
     let router = app::build(&config, Store::from_pool(pool))?;
     router
         .clone()
@@ -326,7 +328,38 @@ async fn file_upload_download_and_deletion_are_tenant_scoped(pool: PgPool) -> an
         "private attachment"
     );
 
+    let unauthenticated = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/files/usage")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    for (user_id, expected_bytes) in [(DEVELOPMENT_USER_ID, 18), (uuid::Uuid::new_v4(), 0)] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/files/usage?user_id={DEVELOPMENT_USER_ID}"))
+                    .header(DEVELOPMENT_USER_HEADER, user_id.to_string())
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let usage: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1024).await?)?;
+        assert_eq!(
+            usage,
+            serde_json::json!({
+                "used_bytes": expected_bytes, "max_user_storage_bytes": 200, "max_file_size_bytes": 100
+            })
+        );
+    }
+
     let deleted = router
+        .clone()
         .oneshot(
             Request::builder()
                 .method("DELETE")
@@ -336,6 +369,17 @@ async fn file_upload_download_and_deletion_are_tenant_scoped(pool: PgPool) -> an
         )
         .await?;
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/files/usage")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    let usage: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024).await?)?;
+    assert_eq!(usage["used_bytes"], 0);
     Ok(())
 }
 

@@ -9,6 +9,7 @@ import {
   DialogRoot,
   DialogTitle,
 } from 'reka-ui'
+import SchedulingHelp from './SchedulingHelp.vue'
 import QuickTaskForm from './QuickTaskForm.vue'
 
 const open = ref(false)
@@ -42,7 +43,7 @@ defineExpose({ open: openTaskDialog })
           <div class="min-w-0 flex-1">
             <DialogTitle class="text-lg font-semibold tracking-tight">New task</DialogTitle>
             <DialogDescription class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Add a deadline phrase or choose the details below.
+              Tasks are work you can complete. Add a deadline phrase or choose the details below.
             </DialogDescription>
           </div>
           <button class="icon-button" type="button" aria-label="Close" @click="open = false">
@@ -59,6 +60,7 @@ defineExpose({ open: openTaskDialog })
             @created="open = false"
           />
         </div>
+        <SchedulingHelp />
         <p class="mt-4 text-right text-[11px] text-slate-400">
           <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to create
         </p>

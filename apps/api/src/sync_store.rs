@@ -37,20 +37,55 @@ impl Store {
         .bind(user_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(match credentials {
-            Some(credentials) => GoogleIntegrationStatus {
-                connected: credentials
+        let latest_synchronization = sqlx::query_as::<_, Synchronization>(
+            r#"
+            SELECT id, calendar_id, kind, status, attempt_count, available_at,
+                   NULL::TEXT AS last_error, created_at, updated_at
+            FROM sync_jobs WHERE user_id = $1
+            ORDER BY created_at DESC, id DESC LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let pending_synchronization_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sync_jobs WHERE user_id = $1 AND (status IN ('pending', 'running') OR (status = 'failed' AND attempt_count < 8))",
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        // Only a later success of the same job kind and calendar supersedes a failure.
+        let failed_synchronization_count = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*) FROM sync_jobs failed
+            WHERE failed.user_id = $1 AND failed.status = 'failed' AND failed.attempt_count >= 8
+              AND NOT EXISTS (
+                SELECT 1 FROM sync_jobs succeeded
+                WHERE succeeded.user_id = failed.user_id AND succeeded.status = 'succeeded'
+                  AND succeeded.kind = failed.kind
+                  AND succeeded.calendar_id IS NOT DISTINCT FROM failed.calendar_id
+                  AND succeeded.created_at > failed.created_at
+              )
+            "#,
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(GoogleIntegrationStatus {
+            connected: credentials.as_ref().is_some_and(|credentials| {
+                credentials
                     .scopes
                     .iter()
-                    .any(|scope| scope.contains("/auth/calendar")),
-                scopes: credentials.scopes,
-                expires_at: credentials.access_token_expires_at,
-            },
-            None => GoogleIntegrationStatus {
-                connected: false,
-                scopes: Vec::new(),
-                expires_at: None,
-            },
+                    .any(|scope| scope.contains("/auth/calendar"))
+            }),
+            scopes: credentials
+                .as_ref()
+                .map(|value| value.scopes.clone())
+                .unwrap_or_default(),
+            expires_at: credentials.and_then(|value| value.access_token_expires_at),
+            latest_synchronization,
+            pending_synchronization_count,
+            failed_synchronization_count,
         })
     }
 
@@ -111,7 +146,7 @@ impl Store {
             ON CONFLICT (user_id, idempotency_key) DO UPDATE
                 SET idempotency_key = EXCLUDED.idempotency_key
             RETURNING id, calendar_id, kind, status, attempt_count, available_at,
-                      last_error, created_at, updated_at
+                      NULL::TEXT AS last_error, created_at, updated_at
             "#,
         )
         .bind(Uuid::now_v7())
@@ -132,7 +167,7 @@ impl Store {
         sqlx::query_as::<_, Synchronization>(
             r#"
             SELECT id, calendar_id, kind, status, attempt_count, available_at,
-                   last_error, created_at, updated_at
+                   NULL::TEXT AS last_error, created_at, updated_at
             FROM sync_jobs WHERE id = $1 AND user_id = $2
             "#,
         )

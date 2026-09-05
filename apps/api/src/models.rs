@@ -210,6 +210,14 @@ impl TaskListQuery {
     }
 }
 
+/// Personal usage only; service-wide storage usage is never exposed.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct FileUsage {
+    pub used_bytes: i64,
+    pub max_user_storage_bytes: i64,
+    pub max_file_size_bytes: usize,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema, FromRow)]
 pub struct FileRecord {
     pub id: Uuid,
@@ -335,6 +343,9 @@ pub struct GoogleIntegrationStatus {
     pub connected: bool,
     pub scopes: Vec<String>,
     pub expires_at: Option<DateTime<Utc>>,
+    pub latest_synchronization: Option<Synchronization>,
+    pub pending_synchronization_count: i64,
+    pub failed_synchronization_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema, FromRow)]

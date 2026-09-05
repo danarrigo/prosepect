@@ -11,8 +11,26 @@ use crate::{
     app::AppState,
     auth::CurrentUser,
     error::{AppError, AppResult, ErrorResponse},
-    models::{FileList, FileListQuery, FileRecord},
+    models::{FileList, FileListQuery, FileRecord, FileUsage},
 };
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/usage",
+    responses((status = 200, body = FileUsage), (status = 401, body = ErrorResponse)),
+    security(("session_cookie" = []), ("development_user" = [])),
+    tag = "files"
+)]
+pub async fn file_usage(
+    State(state): State<AppState>,
+    CurrentUser(user_id): CurrentUser,
+) -> AppResult<Json<FileUsage>> {
+    Ok(Json(FileUsage {
+        used_bytes: state.store.file_usage_bytes(user_id).await?,
+        max_user_storage_bytes: state.max_user_file_storage_bytes,
+        max_file_size_bytes: state.max_file_size_bytes,
+    }))
+}
 
 #[utoipa::path(
     get,

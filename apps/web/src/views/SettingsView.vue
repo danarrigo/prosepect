@@ -1,15 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
-import { Download, RefreshCw, Trash2, Upload } from '@lucide/vue'
+import { ref, watch } from 'vue'
+import { Download, Trash2, Upload } from '@lucide/vue'
 import * as api from '../api/client'
-import type {
-  ActivityEntry,
-  GoogleIntegrationStatus,
-  SyncConflict,
-  SyncConflictPolicy,
-  ThemePreference,
-} from '../api/types'
+import GoogleSyncPanel from '../components/GoogleSyncPanel.vue'
+import type { SyncConflictPolicy, ThemePreference } from '../api/types'
 import { useWorkspaceStore } from '../stores/workspace'
 import { parseTodoistCsv, todoistProjectName, type ParsedTodoistImport } from '../todoist-import'
 
@@ -18,11 +12,6 @@ const theme = ref<ThemePreference>('system')
 const automaticReview = ref(true)
 const sidebarVisible = ref(true)
 const conflictPolicy = ref<SyncConflictPolicy>('ask')
-const integration = ref<GoogleIntegrationStatus | null>(null)
-const conflicts = ref<SyncConflict[]>([])
-const activity = ref<ActivityEntry[]>([])
-const integrationMessage = ref('')
-const integrationBusy = ref(false)
 const todoistImport = ref<ParsedTodoistImport | null>(null)
 const todoistProject = ref('')
 const todoistImportBusy = ref(false)
@@ -40,36 +29,6 @@ watch(
   },
   { immediate: true },
 )
-
-onMounted(async () => {
-  const [loadedIntegration, loadedConflicts, loadedActivity] = await Promise.all([
-    api.getGoogleIntegration(),
-    api.listSyncConflicts(),
-    api.listActivity(),
-  ])
-  integration.value = loadedIntegration
-  conflicts.value = loadedConflicts
-  activity.value = loadedActivity
-})
-
-async function queueIntegrationAction(action: () => Promise<unknown>, message: string) {
-  integrationBusy.value = true
-  integrationMessage.value = ''
-  try {
-    await action()
-    integrationMessage.value = message
-  } finally {
-    integrationBusy.value = false
-  }
-}
-
-async function resolveConflict(
-  conflict: SyncConflict,
-  resolution: 'google' | 'prosepect' | 'latest',
-) {
-  await api.resolveSyncConflict(conflict.id, resolution)
-  conflicts.value = conflicts.value.filter((candidate) => candidate.id !== conflict.id)
-}
 
 async function save() {
   if (!store.settings) return
@@ -190,101 +149,7 @@ async function deleteAccount() {
       </div>
     </form>
 
-    <section class="border-b border-slate-200 py-8 dark:border-slate-800">
-      <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 class="text-sm font-semibold">Google Calendar</h2>
-          <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
-            {{
-              integration?.connected ? 'Connected with encrypted credentials.' : 'Not connected.'
-            }}
-          </p>
-        </div>
-        <a
-          v-if="integration && !integration.connected"
-          class="primary-button"
-          :href="api.apiUrl('/api/v1/auth/google/calendar/start')"
-          >Connect Google</a
-        >
-        <div v-else-if="integration?.connected" class="flex flex-wrap gap-2">
-          <button
-            class="secondary-button"
-            type="button"
-            :disabled="integrationBusy"
-            @click="
-              queueIntegrationAction(api.discoverGoogleCalendars, 'Calendar discovery queued.')
-            "
-          >
-            <RefreshCw :size="14" /> Discover calendars
-          </button>
-          <button
-            class="primary-button"
-            type="button"
-            :disabled="integrationBusy"
-            @click="queueIntegrationAction(() => api.synchronize(), 'Synchronization queued.')"
-          >
-            Sync now
-          </button>
-        </div>
-      </div>
-      <p class="mt-4 max-w-3xl text-xs leading-5 text-slate-500 dark:text-slate-400">
-        Connecting lets Prosepect view your Google calendar list and access roles and read, create,
-        update, or delete events on calendars allowed by your Google permissions. Prosepect stores
-        synchronized event fields and encrypted OAuth credentials only to provide calendar and
-        scheduled-task synchronization. It does not use Google data for advertising, sale, or AI
-        training. You can disconnect at any time. See the
-        <RouterLink class="underline" to="/privacy">Privacy Policy</RouterLink>.
-      </p>
-      <p v-if="integrationMessage" class="mt-4 text-xs text-slate-500">{{ integrationMessage }}</p>
-
-      <div v-if="conflicts.length" class="mt-6">
-        <h3 class="text-xs font-semibold uppercase tracking-wide text-amber-600">
-          Needs a decision
-        </h3>
-        <div
-          v-for="conflict in conflicts"
-          :key="conflict.id"
-          class="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-100 py-3 dark:border-slate-900"
-        >
-          <span class="min-w-0 flex-1 truncate text-sm">{{ conflict.title }}</span>
-          <button
-            class="secondary-button !h-8 !text-xs"
-            type="button"
-            @click="resolveConflict(conflict, 'google')"
-          >
-            Use Google
-          </button>
-          <button
-            class="secondary-button !h-8 !text-xs"
-            type="button"
-            @click="resolveConflict(conflict, 'prosepect')"
-          >
-            Use Prosepect
-          </button>
-        </div>
-      </div>
-      <div v-if="activity.length" class="mt-6">
-        <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-400">
-          Recent activity
-        </h3>
-        <p
-          v-for="entry in activity.slice(0, 5)"
-          :key="`${entry.created_at}:${entry.kind}`"
-          class="mt-2 text-xs text-slate-500"
-        >
-          {{ entry.message }} · {{ new Date(entry.created_at).toLocaleString() }}
-        </p>
-      </div>
-      <button
-        v-if="integration?.connected"
-        class="mt-6 text-xs text-rose-600 hover:underline"
-        type="button"
-        :disabled="integrationBusy"
-        @click="queueIntegrationAction(api.revokeGoogleIntegration, 'Google disconnection queued.')"
-      >
-        Disconnect Google Calendar
-      </button>
-    </section>
+    <GoogleSyncPanel />
 
     <section class="border-b border-slate-200 py-8 dark:border-slate-800">
       <h2 class="text-sm font-semibold">Import from Todoist</h2>
