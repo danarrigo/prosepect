@@ -3,6 +3,7 @@ import { localDateKey } from './calendar'
 
 export interface TemporalSuggestion {
   dueDate: string | null
+  dueTime?: string
   scheduledStart: string | null
   scheduledEnd: string | null
   label: string
@@ -41,9 +42,10 @@ const DAY_PERIOD_HOURS: Record<string, number> = {
 export function detectTemporalSuggestion(
   input: string,
   referenceDate = new Date(),
+  options: { includeNextWeekdayTime?: boolean } = {},
 ): TemporalSuggestion | null {
   const reference = startOfLocalDay(referenceDate)
-  const todoistSpecific = detectTodoistSpecific(input, reference)
+  const todoistSpecific = detectTodoistSpecific(input, reference, options.includeNextWeekdayTime)
   if (todoistSpecific) return todoistSpecific
 
   const result = chrono.casual.parse(input, referenceDate, { forwardDate: true })[0]
@@ -79,22 +81,38 @@ export function applyDeadlineSuggestion(input: string, suggestion: TemporalSugge
     .trim()
 }
 
-function detectTodoistSpecific(input: string, reference: Date): TemporalSuggestion | null {
+function detectTodoistSpecific(
+  input: string,
+  reference: Date,
+  includeNextWeekdayTime = false,
+): TemporalSuggestion | null {
   const nextWeekday = NEXT_WEEKDAY_PATTERN.exec(input)
   if (nextWeekday?.index !== undefined && nextWeekday[1]) {
     const weekday = WEEKDAYS.indexOf(nextWeekday[1].toLowerCase() as (typeof WEEKDAYS)[number])
     let daysAhead = (weekday - reference.getDay() + 7) % 7
     if (daysAhead === 0) daysAhead = 7
     const date = addDays(reference, daysAhead + 7)
+    // Only quick capture can consume this suffix; date-only editors must retain its text.
+    const parsed = includeNextWeekdayTime
+      ? chrono.casual.parse(input.slice(nextWeekday.index), reference)[0]
+      : undefined
+    const hasTime = Boolean(
+      parsed?.start.isCertain('hour') &&
+      parsed.index < nextWeekday[0].length &&
+      parsed.index + parsed.text.length > nextWeekday[0].length,
+    )
+    const end =
+      nextWeekday.index + (hasTime ? parsed!.index + parsed!.text.length : nextWeekday[0].length)
+    if (hasTime) date.setHours(parsed!.start.get('hour')!, parsed!.start.get('minute') ?? 0)
     return temporalSuggestion(
       {
         start: nextWeekday.index,
-        end: nextWeekday.index + nextWeekday[0].length,
-        text: nextWeekday[0],
+        end,
+        text: input.slice(nextWeekday.index, end),
       },
       date,
       true,
-      false,
+      hasTime,
       reference,
     )
   }

@@ -1,4 +1,5 @@
 import type { Calendar, CalendarEvent, Task } from './api/types'
+import { allDayDateRange } from './all-day-events'
 
 export function defaultEventCalendarId(calendars: Calendar[], userEmail?: string) {
   const normalizedEmail = userEmail?.trim().toLowerCase()
@@ -55,8 +56,13 @@ export function taskOccursOnDate(task: Task, date: Date) {
 
 export function eventOccursOnDate(event: CalendarEvent, date: Date) {
   const target = startOfLocalDay(date)
-  const start = startOfLocalDay(new Date(event.starts_at))
-  const end = startOfLocalDay(new Date(event.ends_at))
+  const allDayRange = allDayDateRange(event)
+  const start = allDayRange
+    ? parseLocalDateKey(allDayRange.start)!
+    : startOfLocalDay(new Date(event.starts_at))
+  const end = allDayRange
+    ? parseLocalDateKey(allDayRange.lastDay)!
+    : startOfLocalDay(new Date(event.ends_at))
   if (target >= start && target <= end) return true
   if (event.recurrence === 'none' || target < start) return false
   if (event.recurrence_until && target > new Date(event.recurrence_until)) return false

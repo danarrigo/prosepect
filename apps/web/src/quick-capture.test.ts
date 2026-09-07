@@ -92,3 +92,52 @@ describe('parseQuickCapture', () => {
     })
   })
 })
+
+describe('explicit quick-capture deadlines', () => {
+  it.each(['due', 'by'])('keeps %s timed deadlines separate from reserved work time', (prefix) => {
+    expect(
+      parseQuickCapture(`Write report ${prefix} tomorrow at 3pm`, new Date(2026, 7, 29, 9)),
+    ).toMatchObject({
+      title: 'Write report',
+      dueDate: '2026-08-30',
+      dueTime: '15:00',
+      scheduledStart: null,
+      scheduledEnd: null,
+    })
+    expect(parseQuickCapture(`Write report ${prefix} 3pm`, new Date(2026, 7, 29, 9))).toMatchObject(
+      {
+        title: 'Write report',
+        dueDate: '2026-08-29',
+        dueTime: '15:00',
+        scheduledStart: null,
+        scheduledEnd: null,
+      },
+    )
+  })
+
+  it.each(['due', 'by'])('retains the time in %s next-weekday deadlines', (prefix) => {
+    expect(
+      parseQuickCapture(`Write report ${prefix} next Monday at 3pm`, new Date(2026, 7, 29, 9)),
+    ).toMatchObject({
+      title: 'Write report',
+      dueDate: '2026-09-07',
+      dueTime: '15:00',
+      scheduledStart: null,
+      scheduledEnd: null,
+    })
+  })
+
+  it('preserves unqualified time scheduling and date-only deadlines', () => {
+    const reference = new Date(2026, 7, 29, 9)
+    expect(parseQuickCapture('Write report tomorrow at 3pm', reference)).toMatchObject({
+      scheduledStart: '2026-08-30T15:00',
+      scheduledEnd: '2026-08-30T16:00',
+    })
+    expect(parseQuickCapture('Write report due tomorrow', reference)).toMatchObject({
+      dueDate: '2026-08-30',
+      scheduledStart: null,
+      scheduledEnd: null,
+    })
+    expect(parseQuickCapture('Write report due tomorrow', reference).dueTime).toBeUndefined()
+  })
+})

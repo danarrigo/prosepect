@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import SchedulingHelp from '../components/SchedulingHelp.vue'
+import { allDayDateRange, allDayEventTimes, moveAllDayEvent } from '../all-day-events'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CalendarCog, ChevronLeft, ChevronRight, Pencil, Plus, Trash2, X } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -40,6 +41,11 @@ const eventEnd = ref('')
 const eventLocation = ref('')
 const eventAttendees = ref('')
 const eventAllDay = ref(false)
+const eventFirstDay = ref('')
+const eventLastDay = ref('')
+const legacyAllDay = ref(false)
+const eventSaveError = ref('')
+const eventSaving = ref(false)
 const eventRecurrence = ref<EventRecurrence>('none')
 const eventRecurrenceUntil = ref('')
 const taskFormOpen = ref(false)
@@ -50,6 +56,7 @@ const taskPriority = ref<TaskPriority>('medium')
 const taskStart = ref('')
 const taskEnd = ref('')
 const taskTitleInput = ref<HTMLInputElement | null>(null)
+const taskSaveError = ref('')
 const draggedTimelineItemKey = ref<string | null>(null)
 const timelineMovePreview = ref<{ key: string; startsAt: string; endsAt: string } | null>(null)
 const timelineResizePreview = ref<{
@@ -126,16 +133,74 @@ const selectedWeekday = computed(() =>
 const preferredEventCalendarId = computed(() =>
   defaultEventCalendarId(store.calendars, store.user?.email),
 )
-const eventDraftDurationMinutes = computed(() => {
-  if (!eventStart.value || !eventEnd.value) return null
-  const duration = Math.round(
-    (new Date(eventEnd.value).getTime() - new Date(eventStart.value).getTime()) / 60_000,
-  )
-  return duration > 0 ? duration : null
+// Minute-resolution inputs must not invalidate or truncate untouched legacy timestamps.
+const unchangedLegacyTimes = computed(() => {
+  const event = editingEvent.value
+  return legacyAllDay.value &&
+    event &&
+    eventStart.value === localDateTimeValue(new Date(event.starts_at)) &&
+    eventEnd.value === localDateTimeValue(new Date(event.ends_at))
+    ? { starts_at: event.starts_at, ends_at: event.ends_at }
+    : null
+})
+const eventRangeError = computed(() => {
+  if (eventAllDay.value && !legacyAllDay.value) {
+    if (!eventFirstDay.value || !eventLastDay.value) return 'Choose a start date and last day.'
+    if (eventLastDay.value < eventFirstDay.value)
+      return 'Last day must be on or after the start date.'
+  } else {
+    if (!eventStart.value || !eventEnd.value) return 'Choose a start and end time.'
+    const start = unchangedLegacyTimes.value?.starts_at ?? eventStart.value
+    const end = unchangedLegacyTimes.value?.ends_at ?? eventEnd.value
+    if (!(new Date(end) > new Date(start))) return 'End must be after start.'
+  }
+  return ''
+})
+const eventTimes = computed(() => {
+  if (eventRangeError.value) return null
+  if (eventAllDay.value && !legacyAllDay.value)
+    return allDayEventTimes(eventFirstDay.value, eventLastDay.value)
+  if (unchangedLegacyTimes.value) return unchangedLegacyTimes.value
+  return {
+    starts_at: new Date(eventStart.value).toISOString(),
+    ends_at: new Date(eventEnd.value).toISOString(),
+  }
+})
+const eventRecurrenceError = computed(() => {
+  if (
+    eventRecurrence.value !== 'none' &&
+    eventRecurrenceUntil.value &&
+    eventTimes.value &&
+    !(new Date(eventRecurrenceUntil.value) > new Date(eventTimes.value.starts_at))
+  ) {
+    return 'Repeat until must be after the event start, or leave it empty.'
+  }
+  return ''
+})
+const eventSubmitHint = computed(() => {
+  if (eventSaving.value || store.saving) return 'Saving event…'
+  if (!eventTitle.value.trim()) return 'Enter an event title.'
+  if (!eventCalendarId.value)
+    return 'Choose a calendar. If none are available, cancel and add one in Calendars.'
+  return eventRangeError.value || eventRecurrenceError.value
+})
+const taskRangeError = computed(() => {
+  if (!taskStart.value || !taskEnd.value) return 'Choose a start and end time to reserve work time.'
+  if (!(new Date(taskEnd.value) > new Date(taskStart.value))) return 'End must be after start.'
+  return ''
+})
+const taskSubmitHint = computed(() => {
+  if (store.saving) return 'Creating task…'
+  if (!taskTitle.value.trim()) return 'Enter a task title.'
+  return taskRangeError.value
 })
 const eventDraftDurationLabel = computed(() => {
-  const duration = eventDraftDurationMinutes.value
-  if (!duration) return ''
+  if (!eventTimes.value || eventAllDay.value) return ''
+  const duration = Math.round(
+    (new Date(eventTimes.value.ends_at).getTime() -
+      new Date(eventTimes.value.starts_at).getTime()) /
+      60_000,
+  )
   const hours = Math.floor(duration / 60)
   const minutes = duration % 60
   return [hours ? `${hours}h` : '', minutes ? `${minutes}m` : ''].filter(Boolean).join(' ')
@@ -325,6 +390,10 @@ function openEventForm(date = selectedDate.value, startHour = 9) {
   eventLocation.value = ''
   eventAttendees.value = ''
   eventAllDay.value = false
+  legacyAllDay.value = false
+  eventSaveError.value = ''
+  eventFirstDay.value = dateKey(date)
+  eventLastDay.value = dateKey(date)
   eventRecurrence.value = 'none'
   eventRecurrenceUntil.value = ''
   eventCalendarId.value = preferredEventCalendarId.value
@@ -343,6 +412,7 @@ function openTaskForm(date = selectedDate.value, startHour = 9) {
   start.setHours(startHour, 0, 0, 0)
   const end = new Date(start.getTime() + 60 * 60 * 1_000)
   taskTitle.value = ''
+  taskSaveError.value = ''
   taskDescription.value = ''
   taskProjectId.value = store.selectedProjectId ?? ''
   taskPriority.value = 'medium'
@@ -353,26 +423,31 @@ function openTaskForm(date = selectedDate.value, startHour = 9) {
 }
 
 async function saveCalendarTask() {
-  if (!taskTitle.value.trim() || !taskStart.value || !taskEnd.value) return
+  if (taskSubmitHint.value) return
+  taskSaveError.value = ''
   const start = new Date(taskStart.value)
   const end = new Date(taskEnd.value)
   if (end <= start) return
 
-  await store.addTask({
-    project_id: taskProjectId.value || null,
-    parent_task_id: null,
-    title: taskTitle.value.trim(),
-    description: taskDescription.value.trim(),
-    due_at: null,
-    scheduled_start: start.toISOString(),
-    scheduled_end: end.toISOString(),
-    status: 'todo',
-    priority: taskPriority.value,
-    recurrence: 'none',
-    labels: [],
-    remind_at: null,
-  })
-  taskFormOpen.value = false
+  try {
+    await store.addTask({
+      project_id: taskProjectId.value || null,
+      parent_task_id: null,
+      title: taskTitle.value.trim(),
+      description: taskDescription.value.trim(),
+      due_at: null,
+      scheduled_start: start.toISOString(),
+      scheduled_end: end.toISOString(),
+      status: 'todo',
+      priority: taskPriority.value,
+      recurrence: 'none',
+      labels: [],
+      remind_at: null,
+    })
+    taskFormOpen.value = false
+  } catch {
+    taskSaveError.value = 'Could not create task. Your draft is kept. Try again.'
+  }
 }
 
 function openEventEditor(event: CalendarEvent) {
@@ -381,11 +456,17 @@ function openEventEditor(event: CalendarEvent) {
   eventTitle.value = event.title
   eventDescription.value = event.description
   eventCalendarId.value = event.calendar_id
-  eventStart.value = localDateTimeValue(new Date(event.starts_at))
-  eventEnd.value = localDateTimeValue(new Date(event.ends_at))
+  const range = allDayDateRange(event)
+  // Canonical all-day timestamps encode dates, not a prior timed draft.
+  eventStart.value = range ? '' : localDateTimeValue(new Date(event.starts_at))
+  eventEnd.value = range ? '' : localDateTimeValue(new Date(event.ends_at))
   eventLocation.value = event.location
   eventAttendees.value = event.attendees.join(', ')
   eventAllDay.value = event.all_day
+  legacyAllDay.value = event.all_day && !range
+  eventFirstDay.value = range?.start ?? dateKey(new Date(event.starts_at))
+  eventLastDay.value = range?.lastDay ?? dateKey(new Date(event.ends_at))
+  eventSaveError.value = ''
   eventRecurrence.value = event.recurrence
   eventRecurrenceUntil.value = event.recurrence_until
     ? localDateTimeValue(new Date(event.recurrence_until))
@@ -393,37 +474,66 @@ function openEventEditor(event: CalendarEvent) {
   eventFormOpen.value = true
 }
 
-async function saveEvent() {
-  if (!eventTitle.value.trim() || !eventCalendarId.value || !eventStart.value || !eventEnd.value) {
-    return
+function changeEventTiming() {
+  legacyAllDay.value = false
+  if (eventAllDay.value) {
+    eventFirstDay.value = eventStart.value.slice(0, 10) || dateKey(selectedDate.value)
+    eventLastDay.value = eventEnd.value.slice(0, 10) || eventFirstDay.value
+    if (eventLastDay.value < eventFirstDay.value) eventLastDay.value = eventFirstDay.value
+  } else {
+    eventStart.value = `${eventFirstDay.value}T${eventStart.value.slice(11) || '09:00'}`
+    eventEnd.value = `${eventLastDay.value}T${eventEnd.value.slice(11) || '10:00'}`
   }
+}
+
+function useAllDayDates() {
+  eventFirstDay.value = eventStart.value.slice(0, 10)
+  eventLastDay.value = eventEnd.value.slice(0, 10)
+  legacyAllDay.value = false
+}
+
+async function saveEvent() {
+  if (eventSubmitHint.value || !eventTimes.value) return
+  eventSaveError.value = ''
+  eventSaving.value = true
   const input = {
     calendar_id: eventCalendarId.value,
     title: eventTitle.value.trim(),
     description: eventDescription.value.trim(),
-    starts_at: new Date(eventStart.value).toISOString(),
-    ends_at: new Date(eventEnd.value).toISOString(),
+    ...eventTimes.value,
     all_day: eventAllDay.value,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    timezone:
+      legacyAllDay.value && editingEvent.value
+        ? editingEvent.value.timezone
+        : eventAllDay.value
+          ? 'UTC'
+          : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     location: eventLocation.value.trim(),
     attendees: eventAttendees.value
       .split(',')
       .map((attendee) => attendee.trim())
       .filter(Boolean),
     recurrence: eventRecurrence.value,
-    recurrence_until: eventRecurrenceUntil.value
-      ? new Date(eventRecurrenceUntil.value).toISOString()
-      : null,
+    recurrence_until:
+      eventRecurrence.value !== 'none' && eventRecurrenceUntil.value
+        ? new Date(eventRecurrenceUntil.value).toISOString()
+        : null,
   }
-  if (editingEvent.value) {
-    await store.editEvent(editingEvent.value, {
-      ...input,
-      expected_version: editingEvent.value.version,
-    })
-  } else {
-    await store.addEvent(input)
+  try {
+    if (editingEvent.value) {
+      await store.editEvent(editingEvent.value, {
+        ...input,
+        expected_version: editingEvent.value.version,
+      })
+    } else {
+      await store.addEvent(input)
+    }
+    eventFormOpen.value = false
+  } catch {
+    eventSaveError.value = 'Could not save event. Your draft is kept. Try again.'
+  } finally {
+    eventSaving.value = false
   }
-  eventFormOpen.value = false
 }
 
 async function deleteEditedEvent() {
@@ -439,6 +549,7 @@ async function deleteEditedEvent() {
 }
 
 async function moveEvent(event: CalendarEvent, date: Date) {
+  const allDayMove = moveAllDayEvent(event, dateKey(date))
   const oldStart = new Date(event.starts_at)
   const duration = new Date(event.ends_at).getTime() - oldStart.getTime()
   const start = new Date(date)
@@ -447,8 +558,8 @@ async function moveEvent(event: CalendarEvent, date: Date) {
     calendar_id: event.calendar_id,
     title: event.title,
     description: event.description,
-    starts_at: start.toISOString(),
-    ends_at: new Date(start.getTime() + duration).toISOString(),
+    starts_at: allDayMove?.starts_at ?? start.toISOString(),
+    ends_at: allDayMove?.ends_at ?? new Date(start.getTime() + duration).toISOString(),
     all_day: event.all_day,
     timezone: event.timezone,
     location: event.location,
@@ -1045,7 +1156,8 @@ function monthDays(cursor: Date) {
           <div>
             <h2 class="text-lg font-semibold">New scheduled task</h2>
             <p class="mt-1 text-sm text-slate-500">
-              Reserve time for a task you can complete. Events stay separate.
+              Title and work time are required here to reserve a calendar block. This does not set a
+              deadline.
             </p>
           </div>
           <button
@@ -1057,62 +1169,102 @@ function monthDays(cursor: Date) {
             <X :size="18" />
           </button>
         </div>
-        <SchedulingHelp />
         <div class="mt-6 grid gap-4 sm:grid-cols-2">
           <label class="sm:col-span-2">
-            <span class="field-label">Title</span>
+            <span class="field-label">Title (required)</span>
             <input
               ref="taskTitleInput"
               v-model="taskTitle"
+              aria-describedby="calendar-task-feedback"
               class="field-input"
               required
               maxlength="240"
             />
           </label>
           <label>
-            <span class="field-label">Starts</span>
+            <span class="field-label">Starts (required)</span>
             <input v-model="taskStart" class="field-input" type="datetime-local" required />
           </label>
           <label>
-            <span class="field-label">Ends</span>
-            <input v-model="taskEnd" class="field-input" type="datetime-local" required />
-          </label>
-          <label>
-            <span class="field-label">Project</span>
-            <select v-model="taskProjectId" class="field-input">
-              <option value="">No project</option>
-              <option
-                v-for="project in store.projects.filter((item) => item.status !== 'archived')"
-                :key="project.id"
-                :value="project.id"
-              >
-                {{ project.name }}
-              </option>
-            </select>
-          </label>
-          <label>
-            <span class="field-label">Priority</span>
-            <select v-model="taskPriority" class="field-input">
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
-          </label>
-          <label class="sm:col-span-2">
-            <span class="field-label">Description</span>
-            <textarea
-              v-model="taskDescription"
-              class="field-input min-h-24 py-2"
-              maxlength="10000"
+            <span class="field-label">Ends (required)</span>
+            <input
+              v-model="taskEnd"
+              class="field-input"
+              type="datetime-local"
+              :min="taskStart"
+              :aria-invalid="Boolean(taskRangeError)"
+              aria-describedby="calendar-task-range-error"
+              required
             />
           </label>
+          <p
+            v-if="taskRangeError"
+            id="calendar-task-range-error"
+            class="text-xs text-rose-600 dark:text-rose-400 sm:col-span-2"
+            role="status"
+          >
+            {{ taskRangeError }}
+          </p>
+          <details class="sm:col-span-2">
+            <summary class="cursor-pointer text-sm text-slate-500 dark:text-slate-400">
+              Details (optional) ·
+              {{
+                store.projects.find((project) => project.id === taskProjectId)?.name ?? 'No project'
+              }}
+              · {{ taskPriority }} priority
+            </summary>
+            <div class="mt-3 grid gap-4 sm:grid-cols-2">
+              <label>
+                <span class="field-label">Project (optional)</span>
+                <select v-model="taskProjectId" class="field-input">
+                  <option value="">No project</option>
+                  <option
+                    v-for="project in store.projects.filter((item) => item.status !== 'archived')"
+                    :key="project.id"
+                    :value="project.id"
+                  >
+                    {{ project.name }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                <span class="field-label">Priority (optional)</span>
+                <select v-model="taskPriority" class="field-input">
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </label>
+              <label class="sm:col-span-2">
+                <span class="field-label">Description (optional)</span>
+                <textarea
+                  v-model="taskDescription"
+                  class="field-input min-h-24 py-2"
+                  maxlength="10000"
+                />
+              </label>
+            </div>
+          </details>
         </div>
+        <p
+          id="calendar-task-feedback"
+          class="mt-3 text-xs text-slate-500 dark:text-slate-400"
+          role="status"
+        >
+          {{ taskSubmitHint }}
+        </p>
+        <p v-if="taskSaveError" class="mt-3 text-sm text-rose-600 dark:text-rose-400" role="alert">
+          {{ taskSaveError }}
+        </p>
+        <SchedulingHelp />
         <div class="mt-6 flex justify-end gap-2">
           <button class="secondary-button" type="button" @click="taskFormOpen = false">
             Cancel
           </button>
-          <button class="primary-button" type="submit" :disabled="store.saving">Create task</button>
+          <button class="primary-button" type="submit" :disabled="Boolean(taskSubmitHint)">
+            Create task
+          </button>
         </div>
       </form>
     </div>
@@ -1246,7 +1398,9 @@ function monthDays(cursor: Date) {
         <div class="flex items-start justify-between gap-4 sm:col-span-2 lg:col-span-6">
           <div>
             <h2 class="text-lg font-semibold">{{ editingEvent ? 'Edit event' : 'New event' }}</h2>
-            <p class="mt-1 text-sm text-slate-500">Plan time on your calendar.</p>
+            <p class="mt-1 text-sm text-slate-500">
+              Title, calendar and dates are required. Everything in Details is optional.
+            </p>
           </div>
           <button
             class="icon-button"
@@ -1257,89 +1411,183 @@ function monthDays(cursor: Date) {
             <X :size="18" />
           </button>
         </div>
-        <label class="sm:col-span-2">
-          <span class="field-label">Title</span>
+        <label class="sm:col-span-2 lg:col-span-4">
+          <span class="field-label">Title (required)</span>
           <input
             ref="eventTitleInput"
             v-model="eventTitle"
             class="field-input"
             required
             maxlength="240"
+            aria-describedby="event-feedback"
           />
         </label>
-        <label>
-          <span class="field-label">Save to</span>
-          <select v-model="eventCalendarId" class="field-input" required>
+        <label class="lg:col-span-2">
+          <span class="field-label">Calendar (required)</span>
+          <select
+            v-model="eventCalendarId"
+            class="field-input"
+            required
+            aria-describedby="event-feedback"
+          >
+            <option disabled value="">Choose a calendar</option>
             <option v-for="calendar in store.calendars" :key="calendar.id" :value="calendar.id">
               {{ calendar.name }} ·
               {{ calendar.source === 'google' ? 'Google Calendar' : 'Prosepect only' }}
             </option>
           </select>
-          <span class="mt-1 block text-[11px] text-slate-400">
-            Google Calendar changes normally synchronize within seconds.
-          </span>
         </label>
-        <label>
-          <span class="field-label">Starts</span>
-          <input
-            v-model="eventStart"
-            class="field-input"
-            type="datetime-local"
-            step="900"
-            required
-          />
-        </label>
-        <label>
-          <span class="field-label">Ends</span>
-          <input
-            v-model="eventEnd"
-            class="field-input"
-            type="datetime-local"
-            step="900"
-            :min="eventStart"
-            required
-          />
-          <span v-if="eventDraftDurationLabel" class="mt-1 block text-[11px] text-slate-400">
-            Duration {{ eventDraftDurationLabel }}
-          </span>
-        </label>
-        <label>
-          <span class="field-label">Repeat</span>
-          <select v-model="eventRecurrence" class="field-input">
-            <option value="none">Never</option>
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
-            <option value="yearly">Yearly</option>
-          </select>
-        </label>
-        <label v-if="eventRecurrence !== 'none'">
-          <span class="field-label">Repeat until</span>
-          <input v-model="eventRecurrenceUntil" class="field-input" type="datetime-local" />
-        </label>
-        <label class="flex items-center gap-2 pt-6 text-sm">
-          <input v-model="eventAllDay" type="checkbox" /> All day
-        </label>
-        <label class="sm:col-span-2 lg:col-span-3">
-          <span class="field-label">Location</span>
-          <input v-model="eventLocation" class="field-input" maxlength="500" />
-        </label>
-        <label class="sm:col-span-2 lg:col-span-3">
-          <span class="field-label">Attendees</span>
-          <input
-            v-model="eventAttendees"
-            class="field-input"
-            placeholder="alex@example.com, sam@example.com"
-          />
-        </label>
-        <label class="sm:col-span-2 lg:col-span-6">
-          <span class="field-label">Description</span>
-          <textarea
-            v-model="eventDescription"
-            class="field-input min-h-20 py-2"
-            maxlength="10000"
-          />
-        </label>
+        <fieldset class="grid gap-4 sm:col-span-2 sm:grid-cols-2 lg:col-span-6">
+          <legend class="mb-2 text-sm font-medium">When (required)</legend>
+          <label class="flex items-center gap-2 text-sm sm:col-span-2">
+            <input v-model="eventAllDay" type="checkbox" @change="changeEventTiming" /> All day (no
+            time)
+          </label>
+          <template v-if="eventAllDay && !legacyAllDay">
+            <label>
+              <span class="field-label">Starts (required)</span>
+              <input
+                v-model="eventFirstDay"
+                class="field-input"
+                type="date"
+                required
+                aria-describedby="event-range-feedback"
+              />
+            </label>
+            <label>
+              <span class="field-label">Last day (required)</span>
+              <input
+                v-model="eventLastDay"
+                class="field-input"
+                type="date"
+                :min="eventFirstDay"
+                required
+                :aria-invalid="Boolean(eventRangeError)"
+                aria-describedby="event-range-feedback"
+              />
+            </label>
+            <p class="text-xs text-slate-500 dark:text-slate-400 sm:col-span-2">
+              Includes the last day. For one day, use the same date.
+            </p>
+          </template>
+          <template v-else>
+            <p v-if="legacyAllDay" class="text-xs text-slate-500 dark:text-slate-400 sm:col-span-2">
+              This older all-day event has saved times. They stay unchanged unless you edit them.
+              <button class="underline" type="button" @click="useAllDayDates">
+                Use all-day dates instead
+              </button>
+            </p>
+            <label>
+              <span class="field-label">Starts (required)</span>
+              <input
+                v-model="eventStart"
+                class="field-input"
+                type="datetime-local"
+                required
+                aria-describedby="event-range-feedback"
+              />
+            </label>
+            <label>
+              <span class="field-label">Ends (required)</span>
+              <input
+                v-model="eventEnd"
+                class="field-input"
+                type="datetime-local"
+                :min="eventStart"
+                required
+                :aria-invalid="Boolean(eventRangeError)"
+                aria-describedby="event-range-feedback"
+              />
+              <span
+                v-if="eventDraftDurationLabel"
+                class="mt-1 block text-[11px] text-slate-500 dark:text-slate-400"
+                >Duration {{ eventDraftDurationLabel }}</span
+              >
+            </label>
+          </template>
+          <p
+            id="event-range-feedback"
+            class="text-xs text-rose-600 dark:text-rose-400 sm:col-span-2"
+            role="status"
+          >
+            {{ eventRangeError }}
+          </p>
+        </fieldset>
+        <details class="sm:col-span-2 lg:col-span-6" :open="Boolean(editingEvent)">
+          <summary class="cursor-pointer text-sm text-slate-500 dark:text-slate-400">
+            Details (optional) ·
+            {{ eventRecurrence === 'none' ? 'Does not repeat' : `Repeats ${eventRecurrence}` }}
+            <template v-if="eventLocation"> · Location set</template>
+            <template v-if="eventAttendees"> · Attendees set</template>
+          </summary>
+          <div class="mt-3 grid gap-4 sm:grid-cols-2">
+            <label>
+              <span class="field-label">Repeat (optional)</span>
+              <select v-model="eventRecurrence" class="field-input">
+                <option value="none">Does not repeat</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </label>
+            <label v-if="eventRecurrence !== 'none'">
+              <span class="field-label">Repeat until (optional)</span>
+              <input
+                v-model="eventRecurrenceUntil"
+                class="field-input"
+                type="datetime-local"
+                :aria-invalid="Boolean(eventRecurrenceError)"
+                aria-describedby="event-recurrence-feedback"
+              />
+              <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400"
+                >Leave empty to repeat indefinitely.</span
+              >
+            </label>
+            <label>
+              <span class="field-label">Location (optional)</span>
+              <input v-model="eventLocation" class="field-input" maxlength="500" />
+            </label>
+            <label>
+              <span class="field-label">Attendees (optional)</span>
+              <input
+                v-model="eventAttendees"
+                class="field-input"
+                placeholder="alex@example.com, sam@example.com"
+              />
+            </label>
+            <label class="sm:col-span-2">
+              <span class="field-label">Description (optional)</span>
+              <textarea
+                v-model="eventDescription"
+                class="field-input min-h-20 py-2"
+                maxlength="10000"
+              />
+            </label>
+          </div>
+        </details>
+        <p
+          v-if="eventRecurrenceError"
+          id="event-recurrence-feedback"
+          class="text-xs text-rose-600 dark:text-rose-400 sm:col-span-2 lg:col-span-6"
+          role="status"
+        >
+          {{ eventRecurrenceError }}
+        </p>
+        <p
+          id="event-feedback"
+          class="text-xs text-slate-500 dark:text-slate-400 sm:col-span-2 lg:col-span-6"
+          role="status"
+        >
+          {{ eventSubmitHint }}
+        </p>
+        <p
+          v-if="eventSaveError"
+          class="text-sm text-rose-600 dark:text-rose-400 sm:col-span-2 lg:col-span-6"
+          role="alert"
+        >
+          {{ eventSaveError }}
+        </p>
         <div v-if="editingEvent" class="sm:col-span-2 lg:col-span-6">
           <AttachmentPanel kind="event" :parent-id="editingEvent.id" />
         </div>
@@ -1358,11 +1606,7 @@ function monthDays(cursor: Date) {
             <button class="secondary-button" type="button" @click="eventFormOpen = false">
               Cancel
             </button>
-            <button
-              class="primary-button"
-              type="submit"
-              :disabled="store.saving || !eventDraftDurationMinutes"
-            >
+            <button class="primary-button" type="submit" :disabled="Boolean(eventSubmitHint)">
               {{ editingEvent ? 'Save event' : 'Create event' }}
             </button>
           </div>

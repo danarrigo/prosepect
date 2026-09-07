@@ -14,6 +14,7 @@ export interface QuickCaptureProject {
 export interface QuickCaptureResult {
   title: string
   dueDate: string | null
+  dueTime?: string
   scheduledStart: string | null
   scheduledEnd: string | null
   labels: string[]
@@ -55,7 +56,20 @@ export function analyzeQuickCapture(
   projects: readonly QuickCaptureProject[] = [],
   recognizeDates = true,
 ): QuickCaptureAnalysis {
-  const temporalSuggestion = recognizeDates ? detectTemporalSuggestion(input, referenceDate) : null
+  const detected = recognizeDates
+    ? detectTemporalSuggestion(input, referenceDate, { includeNextWeekdayTime: true })
+    : null
+  // Explicit deadline language must not reserve work time. Unqualified times still do.
+  const temporalSuggestion: TemporalSuggestion | null =
+    detected?.scheduledStart && /^(?:due|by)\b/i.test(detected.matchedText)
+      ? {
+          ...detected,
+          dueDate: detected.scheduledStart.slice(0, 10),
+          dueTime: detected.scheduledStart.slice(11, 16),
+          scheduledStart: null,
+          scheduledEnd: null,
+        }
+      : detected
   const project = detectProject(input, projects)
   const ranges: TextRange[] = []
   if (temporalSuggestion) ranges.push(toRange(temporalSuggestion))
@@ -74,6 +88,7 @@ export function analyzeQuickCapture(
     result: {
       title: cleanTitle(removeRanges(input, ranges)),
       dueDate: temporalSuggestion?.dueDate ?? null,
+      ...(temporalSuggestion?.dueTime ? { dueTime: temporalSuggestion.dueTime } : {}),
       scheduledStart: temporalSuggestion?.scheduledStart ?? null,
       scheduledEnd: temporalSuggestion?.scheduledEnd ?? null,
       labels: labels.values,

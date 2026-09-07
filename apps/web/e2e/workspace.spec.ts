@@ -370,10 +370,8 @@ test('creates and edits a standalone task with an automatic deadline', async ({ 
     await expect(dialog.getByLabel('Task title')).toBeFocused()
     await dialog.getByLabel('Project').selectOption('')
     await dialog.getByLabel('Task title').fill(`${taskName} tomorrow`)
-    await expect(
-      dialog.locator('p').filter({ hasText: 'Deadline detected: Tomorrow' }),
-    ).toBeVisible()
-    await expect(dialog.getByLabel('Due date')).not.toHaveValue('')
+    await expect(dialog.locator('p').filter({ hasText: 'Deadline detected:' })).toBeVisible()
+    await expect(dialog.getByLabel('Deadline (optional)', { exact: true })).not.toHaveValue('')
     await page.keyboard.press('Control+Enter')
     await expect(dialog).toBeHidden()
     const createdTask = page.getByText(taskName, { exact: true }).locator('xpath=ancestor::article')
@@ -417,12 +415,12 @@ test('manages descriptions, labels, reminders, and subtasks', async ({ page }) =
     await page.keyboard.press('n')
     const dialog = page.getByRole('dialog', { name: 'New task' })
     await dialog.getByLabel('Task title').fill(taskName)
-    await dialog.getByLabel('Due date').fill(localDateKey(due))
+    await dialog.getByLabel('Deadline (optional)', { exact: true }).fill(localDateKey(due))
     await dialog.getByRole('button', { name: 'Details' }).click()
     await dialog.getByLabel('Description').fill('Context that survives the quick capture flow')
     await dialog.getByLabel('Reminder').fill(localDateTimeKey(reminder))
     await dialog.getByLabel('Labels').fill('E2E, Review')
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Create task', exact: true }).click()
     await expect(dialog).toBeHidden()
 
     const task = page.getByText(taskName, { exact: true }).locator('xpath=ancestor::article')
@@ -458,10 +456,10 @@ test('creates the next recurring task when an occurrence is completed', async ({
     await page.keyboard.press('n')
     const dialog = page.getByRole('dialog', { name: 'New task' })
     await dialog.getByLabel('Task title').fill(taskName)
-    await dialog.getByLabel('Due date').fill(localDateKey(due))
+    await dialog.getByLabel('Deadline (optional)', { exact: true }).fill(localDateKey(due))
     await dialog.getByRole('button', { name: 'Details' }).click()
     await dialog.getByLabel('Repeat').selectOption('daily')
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Create task', exact: true }).click()
     await expect(dialog).toBeHidden()
 
     const occurrence = page.getByRole('article').filter({ hasText: taskName }).first()
@@ -522,8 +520,8 @@ test('creates a project and completes its first task', async ({ page }) => {
     ).toBeVisible()
 
     await page.getByLabel('Task title').fill(taskName)
-    await page.getByLabel('Due date').fill(dueDate)
-    await page.getByRole('button', { name: /^Add(?: task)?$/ }).click()
+    await page.getByLabel('Deadline (optional)', { exact: true }).fill(dueDate)
+    await page.getByRole('button', { name: 'Create task', exact: true }).click()
     await expect(page.getByText(taskName, { exact: true })).toBeVisible()
 
     await page.goto(`/calendar?date=${dueDate}`)

@@ -4,7 +4,8 @@ import { useRouter } from 'vue-router'
 import CreateProjectDialog from '../components/CreateProjectDialog.vue'
 import QuickTaskForm from '../components/QuickTaskForm.vue'
 import TaskList from '../components/TaskList.vue'
-import { localDateKey, tasksForDate as findTasksForDate } from '../calendar'
+import { eventOccursOnDate, localDateKey, tasksForDate as findTasksForDate } from '../calendar'
+import { allDayDateRange } from '../all-day-events'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const store = useWorkspaceStore()
@@ -103,8 +104,10 @@ function eventsForDate(date: Date) {
   const start = startOfDay(date)
   const end = new Date(start)
   end.setDate(end.getDate() + 1)
-  return store.events.filter(
-    (event) => new Date(event.starts_at) < end && new Date(event.ends_at) > start,
+  return store.events.filter((event) =>
+    allDayDateRange(event)
+      ? eventOccursOnDate(event, date)
+      : new Date(event.starts_at) < end && new Date(event.ends_at) > start,
   )
 }
 
