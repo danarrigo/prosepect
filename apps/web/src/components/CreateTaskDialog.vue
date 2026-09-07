@@ -43,7 +43,7 @@ defineExpose({ open: openTaskDialog })
           <div class="min-w-0 flex-1">
             <DialogTitle class="text-lg font-semibold tracking-tight">New task</DialogTitle>
             <DialogDescription class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Tasks are work you can complete. Add a deadline phrase or choose the details below.
+              Start with a title. Project, deadline and details are optional.
             </DialogDescription>
           </div>
           <button class="icon-button" type="button" aria-label="Close" @click="open = false">

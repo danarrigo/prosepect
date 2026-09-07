@@ -11,9 +11,14 @@ const store = useWorkspaceStore()
 const componentId = useId()
 const titleInputId = `quick-task-title-${componentId}`
 const labelListId = `quick-task-labels-${componentId}`
+const feedbackId = `quick-task-feedback-${componentId}`
+const detailsId = `quick-task-details-${componentId}`
 const title = ref('')
+const saveError = ref('')
 const titleInput = ref<HTMLInputElement | null>(null)
 const dueDate = ref('')
+const dueTime = ref('')
+const manualDeadlineForTitle = ref<string | null>(null)
 const autoDueDate = ref<string | null>(null)
 const priority = ref<TaskPriority>('medium')
 const projectId = ref('')
@@ -31,7 +36,7 @@ const quickCaptureAnalysis = computed(() =>
 const quickCapture = computed(() => quickCaptureAnalysis.value.result)
 const deadlineSuggestion = computed(() => {
   const suggestion = quickCaptureAnalysis.value.temporalSuggestion
-  if (!dueDate.value || autoDueDate.value) {
+  if (manualDeadlineForTitle.value !== title.value && (!dueDate.value || autoDueDate.value)) {
     return suggestion?.dueDate ? { ...suggestion, dueDate: suggestion.dueDate } : null
   }
   return null
@@ -52,21 +57,30 @@ const todoistHints = computed(() => {
   }
   return hints
 })
-const canSubmit = computed(
-  () =>
-    submittedTitle.value.length > 0 &&
-    !store.saving &&
-    (recurrence.value === 'none' || Boolean(dueDate.value)),
-)
+const submitHint = computed(() => {
+  if (store.saving) return 'Creating task…'
+  if (!submittedTitle.value) return 'Enter a task title to create it.'
+  if (recurrence.value !== 'none' && !dueDate.value) return 'Choose a deadline for repeating tasks.'
+  return ''
+})
+const canSubmit = computed(() => !submitHint.value)
+const detectedWorkTime = computed(() => {
+  const { scheduledStart, scheduledEnd } = quickCapture.value
+  if (!scheduledStart || !scheduledEnd) return ''
+  const format = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  return `${format.format(new Date(scheduledStart))} to ${format.format(new Date(scheduledEnd))}`
+})
 
 watch(deadlineSuggestion, (suggestion) => {
   if (suggestion) {
     if (!dueDate.value || dueDate.value === autoDueDate.value) {
       dueDate.value = suggestion.dueDate
+      dueTime.value = suggestion.dueTime ?? ''
       autoDueDate.value = suggestion.dueDate
     }
   } else if (autoDueDate.value && dueDate.value === autoDueDate.value) {
     dueDate.value = ''
+    dueTime.value = ''
     autoDueDate.value = null
   }
 })
@@ -94,14 +108,18 @@ defineExpose({ focusTitle })
 
 function markDeadlineManual() {
   autoDueDate.value = null
+  manualDeadlineForTitle.value = title.value
+  if (!dueDate.value) dueTime.value = ''
 }
 
 function keepDetectedDateInTitle() {
   ignoredSmartDateForTitle.value = title.value
+  focusTitle()
 }
 
 async function submit() {
   if (!canSubmit.value) return
+  saveError.value = ''
 
   try {
     await store.addTask({
@@ -132,6 +150,9 @@ async function submit() {
     })
     title.value = ''
     dueDate.value = ''
+    dueTime.value = ''
+    autoDueDate.value = null
+    manualDeadlineForTitle.value = null
     description.value = ''
     recurrence.value = 'none'
     labels.value = ''
@@ -139,12 +160,12 @@ async function submit() {
     detailsOpen.value = false
     emit('created')
   } catch {
-    // The workspace error banner keeps the form populated so the user can retry.
+    saveError.value = 'Could not create task. Your draft is kept. Try again.'
   }
 }
 
 function deadlineIsoDate(value: string) {
-  return value ? new Date(`${value}T23:59:00`).toISOString() : null
+  return value ? new Date(`${value}T${dueTime.value || '23:59'}:00`).toISOString() : null
 }
 </script>
 
@@ -158,7 +179,7 @@ function deadlineIsoDate(value: string) {
     <div class="flex items-end gap-3">
       <label class="min-w-0 flex-1" :for="titleInputId">
         <span class="block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-          Task title
+          Task title (required)
         </span>
         <input
           :id="titleInputId"
@@ -166,25 +187,44 @@ function deadlineIsoDate(value: string) {
           v-model="title"
           class="mt-1 h-9 w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-white"
           type="text"
+          required
+          :aria-describedby="feedbackId"
           maxlength="240"
           :autofocus="props.autofocus"
           placeholder="What needs to be done?"
         />
       </label>
       <button class="primary-button hidden sm:inline-flex" type="submit" :disabled="!canSubmit">
-        Add
+        Create task
       </button>
     </div>
 
+    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+      Only a title is required. A deadline does not reserve work time.
+    </p>
     <p v-if="deadlineSuggestion" class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-      Deadline detected: {{ deadlineSuggestion.label }}
+      Deadline detected: {{ deadlineSuggestion.dueDate }}
+      {{ deadlineSuggestion.dueTime ? `at ${deadlineSuggestion.dueTime}` : '(end of day)' }}
+    </p>
+    <p
+      v-if="detectedWorkTime"
+      class="mt-1 text-xs text-slate-700 dark:text-slate-200"
+      role="status"
+    >
+      Work time detected: {{ detectedWorkTime }} (1-hour block).
+    </p>
+    <p
+      v-if="quickCaptureAnalysis.temporalSuggestion"
+      class="mt-1 text-xs text-slate-500 dark:text-slate-400"
+    >
+      Dates and times above will be saved.
       <button
         class="ml-1 underline decoration-dotted underline-offset-2 hover:text-slate-700 dark:hover:text-slate-200"
         type="button"
-        :aria-label="`Keep ${deadlineSuggestion.matchedText} in task title`"
+        :aria-label="`Keep ${quickCaptureAnalysis.temporalSuggestion.matchedText} in task title`"
         @click="keepDetectedDateInTitle"
       >
-        keep as text
+        Keep as text instead
       </button>
     </p>
     <p v-if="todoistHints.length" class="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -192,51 +232,81 @@ function deadlineIsoDate(value: string) {
     </p>
 
     <div class="mt-1 flex flex-wrap items-center gap-2 pb-1">
-      <select v-model="projectId" class="subtle-select" aria-label="Project">
-        <option value="">No project</option>
-        <option
-          v-for="project in store.projects.filter((item) => item.status !== 'archived')"
-          :key="project.id"
-          :value="project.id"
+      <label class="text-[11px] text-slate-500 dark:text-slate-400">
+        <span class="block">Project (optional)</span>
+        <select v-model="projectId" class="subtle-select">
+          <option value="">No project</option>
+          <option
+            v-for="project in store.projects.filter((item) => item.status !== 'archived')"
+            :key="project.id"
+            :value="project.id"
+          >
+            {{ project.name }}
+          </option>
+        </select>
+      </label>
+      <label class="text-[11px] text-slate-500 dark:text-slate-400">
+        <span class="block"
+          >Deadline ({{ recurrence === 'none' ? 'optional' : 'required for repeat' }})</span
         >
-          {{ project.name }}
-        </option>
-      </select>
-      <label class="subtle-control">
-        <span class="sr-only">Due date</span>
         <input
           v-model="dueDate"
-          class="w-[7.3rem] bg-transparent outline-none"
+          class="subtle-control w-[9rem] bg-transparent outline-none"
           type="date"
+          :required="recurrence !== 'none'"
+          :aria-describedby="feedbackId"
           @input="markDeadlineManual"
         />
       </label>
-      <select v-model="priority" class="subtle-select" aria-label="Priority">
-        <option value="low">Low priority</option>
-        <option value="medium">Medium priority</option>
-        <option value="high">High priority</option>
-        <option value="urgent">Urgent</option>
-      </select>
+      <label v-if="dueDate" class="text-[11px] text-slate-500 dark:text-slate-400">
+        <span class="block">Deadline time (optional)</span>
+        <input
+          v-model="dueTime"
+          class="subtle-control bg-transparent"
+          type="time"
+          @input="markDeadlineManual"
+        />
+        <span v-if="!dueTime" class="block">Default: end of day</span>
+      </label>
+      <label class="text-[11px] text-slate-500 dark:text-slate-400">
+        <span class="block">Priority (optional)</span>
+        <select v-model="priority" class="subtle-select">
+          <option value="low">Low priority</option>
+          <option value="medium">Medium priority</option>
+          <option value="high">High priority</option>
+          <option value="urgent">Urgent</option>
+        </select>
+      </label>
       <button
         class="inline-flex h-7 items-center gap-1 text-xs text-slate-400 transition hover:text-slate-700 dark:hover:text-slate-300"
         type="button"
         :aria-expanded="detailsOpen"
+        :aria-controls="detailsId"
         @click="detailsOpen = !detailsOpen"
       >
         <SlidersHorizontal :size="13" />
-        Details
+        Details (optional)
       </button>
       <button class="primary-button ml-auto sm:hidden" type="submit" :disabled="!canSubmit">
-        Add
+        Create task
       </button>
     </div>
 
+    <p :id="feedbackId" class="text-xs text-slate-500 dark:text-slate-400" role="status">
+      {{ submitHint }}
+      <template v-if="!detailsOpen && recurrence !== 'none'">Repeats {{ recurrence }}.</template>
+      <template v-if="!detailsOpen && remindAt">Reminder set.</template>
+    </p>
+    <p v-if="saveError" class="mt-2 text-sm text-rose-600 dark:text-rose-400" role="alert">
+      {{ saveError }}
+    </p>
     <div
-      v-if="detailsOpen"
+      v-show="detailsOpen"
+      :id="detailsId"
       class="grid gap-3 border-t border-slate-100 py-3 dark:border-slate-900 sm:grid-cols-2"
     >
       <label class="field-label sm:col-span-2">
-        Description
+        Description (optional)
         <textarea
           v-model="description"
           class="field-input min-h-20 resize-y py-3"
@@ -245,7 +315,7 @@ function deadlineIsoDate(value: string) {
         />
       </label>
       <label class="field-label">
-        Repeat
+        Repeat (optional)
         <select v-model="recurrence" class="field-input">
           <option value="none">Does not repeat</option>
           <option value="daily">Daily</option>
@@ -255,11 +325,11 @@ function deadlineIsoDate(value: string) {
         </select>
       </label>
       <label class="field-label">
-        Reminder
+        Reminder (optional)
         <input v-model="remindAt" class="field-input" type="datetime-local" />
       </label>
       <label class="field-label sm:col-span-2">
-        Labels
+        Labels (optional)
         <input
           v-model="labels"
           class="field-input"
@@ -270,9 +340,6 @@ function deadlineIsoDate(value: string) {
           <option v-for="label in existingLabels" :key="label" :value="label" />
         </datalist>
       </label>
-      <p v-if="recurrence !== 'none' && !dueDate" class="text-xs text-rose-600 sm:col-span-2">
-        Choose a deadline for repeating tasks.
-      </p>
     </div>
   </form>
 </template>

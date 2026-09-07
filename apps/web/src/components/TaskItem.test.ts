@@ -63,6 +63,26 @@ describe('TaskItem', () => {
     expect(wrapper.emitted('move')).toEqual([[task, 'up']])
   })
 
+  it('retains explicit next-weekday time text in the date-only editor', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 7, 29, 12))
+    try {
+      const wrapper = mountTask({ task })
+      await wrapper.get('button[aria-label="Edit Write PRD"]').trigger('click')
+      const editor = wrapper.get('form[aria-label="Edit Write PRD"]')
+      await editor.get('input[autofocus]').setValue('Write report due next Monday at 3pm')
+      await editor.trigger('submit')
+      expect(wrapper.emitted('edit')?.[0]?.[1]).toMatchObject({
+        title: 'Write report at 3pm',
+        due_at: new Date('2026-09-07T23:59:00').toISOString(),
+        scheduled_start: null,
+        scheduled_end: null,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('automatically applies a deadline suggestion when saving', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 7, 29, 12))
