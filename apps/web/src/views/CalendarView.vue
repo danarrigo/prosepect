@@ -1171,7 +1171,7 @@ function monthDays(cursor: Date) {
         </div>
         <div class="mt-6 grid gap-4 sm:grid-cols-2">
           <label class="sm:col-span-2">
-            <span class="field-label">Title (required)</span>
+            <span class="field-label">Title</span>
             <input
               ref="taskTitleInput"
               v-model="taskTitle"
@@ -1182,11 +1182,11 @@ function monthDays(cursor: Date) {
             />
           </label>
           <label>
-            <span class="field-label">Starts (required)</span>
+            <span class="field-label">Starts</span>
             <input v-model="taskStart" class="field-input" type="datetime-local" required />
           </label>
           <label>
-            <span class="field-label">Ends (required)</span>
+            <span class="field-label">Ends</span>
             <input
               v-model="taskEnd"
               class="field-input"
@@ -1207,7 +1207,7 @@ function monthDays(cursor: Date) {
           </p>
           <details class="sm:col-span-2">
             <summary class="cursor-pointer text-sm text-slate-500 dark:text-slate-400">
-              Details (optional) ·
+              Details ·
               {{
                 store.projects.find((project) => project.id === taskProjectId)?.name ?? 'No project'
               }}
@@ -1215,7 +1215,7 @@ function monthDays(cursor: Date) {
             </summary>
             <div class="mt-3 grid gap-4 sm:grid-cols-2">
               <label>
-                <span class="field-label">Project (optional)</span>
+                <span class="field-label">Project</span>
                 <select v-model="taskProjectId" class="field-input">
                   <option value="">No project</option>
                   <option
@@ -1228,7 +1228,7 @@ function monthDays(cursor: Date) {
                 </select>
               </label>
               <label>
-                <span class="field-label">Priority (optional)</span>
+                <span class="field-label">Priority</span>
                 <select v-model="taskPriority" class="field-input">
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
@@ -1237,7 +1237,7 @@ function monthDays(cursor: Date) {
                 </select>
               </label>
               <label class="sm:col-span-2">
-                <span class="field-label">Description (optional)</span>
+                <span class="field-label">Description</span>
                 <textarea
                   v-model="taskDescription"
                   class="field-input min-h-24 py-2"
@@ -1412,7 +1412,7 @@ function monthDays(cursor: Date) {
           </button>
         </div>
         <label class="sm:col-span-2 lg:col-span-4">
-          <span class="field-label">Title (required)</span>
+          <span class="field-label">Title</span>
           <input
             ref="eventTitleInput"
             v-model="eventTitle"
@@ -1423,7 +1423,7 @@ function monthDays(cursor: Date) {
           />
         </label>
         <label class="lg:col-span-2">
-          <span class="field-label">Calendar (required)</span>
+          <span class="field-label">Calendar</span>
           <select
             v-model="eventCalendarId"
             class="field-input"
@@ -1438,14 +1438,14 @@ function monthDays(cursor: Date) {
           </select>
         </label>
         <fieldset class="grid gap-4 sm:col-span-2 sm:grid-cols-2 lg:col-span-6">
-          <legend class="mb-2 text-sm font-medium">When (required)</legend>
+          <legend class="mb-2 text-sm font-medium">When</legend>
           <label class="flex items-center gap-2 text-sm sm:col-span-2">
             <input v-model="eventAllDay" type="checkbox" @change="changeEventTiming" /> All day (no
             time)
           </label>
           <template v-if="eventAllDay && !legacyAllDay">
             <label>
-              <span class="field-label">Starts (required)</span>
+              <span class="field-label">Starts</span>
               <input
                 v-model="eventFirstDay"
                 class="field-input"
@@ -1455,7 +1455,7 @@ function monthDays(cursor: Date) {
               />
             </label>
             <label>
-              <span class="field-label">Last day (required)</span>
+              <span class="field-label">Last day</span>
               <input
                 v-model="eventLastDay"
                 class="field-input"
@@ -1478,7 +1478,7 @@ function monthDays(cursor: Date) {
               </button>
             </p>
             <label>
-              <span class="field-label">Starts (required)</span>
+              <span class="field-label">Starts</span>
               <input
                 v-model="eventStart"
                 class="field-input"
@@ -1488,7 +1488,7 @@ function monthDays(cursor: Date) {
               />
             </label>
             <label>
-              <span class="field-label">Ends (required)</span>
+              <span class="field-label">Ends</span>
               <input
                 v-model="eventEnd"
                 class="field-input"
@@ -1515,14 +1515,14 @@ function monthDays(cursor: Date) {
         </fieldset>
         <details class="sm:col-span-2 lg:col-span-6" :open="Boolean(editingEvent)">
           <summary class="cursor-pointer text-sm text-slate-500 dark:text-slate-400">
-            Details (optional) ·
+            Details ·
             {{ eventRecurrence === 'none' ? 'Does not repeat' : `Repeats ${eventRecurrence}` }}
             <template v-if="eventLocation"> · Location set</template>
             <template v-if="eventAttendees"> · Attendees set</template>
           </summary>
           <div class="mt-3 grid gap-4 sm:grid-cols-2">
             <label>
-              <span class="field-label">Repeat (optional)</span>
+              <span class="field-label">Repeat</span>
               <select v-model="eventRecurrence" class="field-input">
                 <option value="none">Does not repeat</option>
                 <option value="daily">Daily</option>
@@ -1532,7 +1532,7 @@ function monthDays(cursor: Date) {
               </select>
             </label>
             <label v-if="eventRecurrence !== 'none'">
-              <span class="field-label">Repeat until (optional)</span>
+              <span class="field-label">Repeat until</span>
               <input
                 v-model="eventRecurrenceUntil"
                 class="field-input"
@@ -1545,11 +1545,11 @@ function monthDays(cursor: Date) {
               >
             </label>
             <label>
-              <span class="field-label">Location (optional)</span>
+              <span class="field-label">Location</span>
               <input v-model="eventLocation" class="field-input" maxlength="500" />
             </label>
             <label>
-              <span class="field-label">Attendees (optional)</span>
+              <span class="field-label">Attendees</span>
               <input
                 v-model="eventAttendees"
                 class="field-input"
@@ -1557,7 +1557,7 @@ function monthDays(cursor: Date) {
               />
             </label>
             <label class="sm:col-span-2">
-              <span class="field-label">Description (optional)</span>
+              <span class="field-label">Description</span>
               <textarea
                 v-model="eventDescription"
                 class="field-input min-h-20 py-2"

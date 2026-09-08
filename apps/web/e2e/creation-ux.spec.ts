@@ -83,7 +83,9 @@ test('creates a title-only task by keyboard with optional fields empty', async (
 }, testInfo) => {
   const { tasks } = await mockWorkspace(page)
   const form = await openTask(page)
-  await expect(form.getByLabel('Task title')).toBeFocused()
+  await expect(form.getByLabel('Task title', { exact: true })).toBeFocused()
+  await expect(form).not.toContainText(/\((?:optional|required[^)]*)\)/)
+  await expect(form.getByRole('button', { name: 'Create task', exact: true })).toBeDisabled()
   await expect(form.getByText('Enter a task title to create it.')).toBeVisible()
   await expect(form.getByLabel('Project')).toHaveValue('')
   await expect(form.getByLabel('Deadline', { exact: false })).toHaveValue('')
@@ -113,18 +115,18 @@ test('keeps conditional task requirements visible and saves optional fields with
   const { tasks } = await mockWorkspace(page)
   const form = await openTask(page)
   await form.getByLabel('Task title').fill('Write report')
-  await form.getByRole('button', { name: 'Details (optional)' }).click()
+  await form.getByRole('button', { name: 'Details' }).click()
   await form.getByLabel('Repeat').selectOption('weekly')
   await form.getByLabel('Description').fill('Bring notes')
   await form.getByLabel('Labels').fill('work, review')
   await form.getByLabel('Reminder').fill('2026-09-01T08:00')
-  await form.getByRole('button', { name: 'Details (optional)' }).click()
+  await form.getByRole('button', { name: 'Details' }).click()
   await expect(form.getByText(/Choose a deadline for repeating tasks/)).toBeVisible()
   await expect(
     form.getByRole('button', { name: 'Create task', exact: true }).filter({ visible: true }),
   ).toBeDisabled()
   await form.getByLabel('Project').selectOption('project-1')
-  await form.getByLabel('Deadline (required for repeat)', { exact: true }).fill('2026-09-02')
+  await form.getByLabel('Deadline', { exact: true }).fill('2026-09-02')
   await form.getByLabel('Deadline time').fill('15:00')
   await form
     .getByRole('button', { name: 'Create task', exact: true })
@@ -229,9 +231,7 @@ test('validates optional event recurrence even when details close and drops a di
   const form = await openEvent(page)
   await form.getByLabel('Title').fill('Team meeting')
   await form.locator('summary').click()
-  await form
-    .getByRole('combobox', { name: 'Repeat (optional)', exact: true })
-    .selectOption('weekly')
+  await form.getByRole('combobox', { name: 'Repeat', exact: true }).selectOption('weekly')
   await form.getByLabel('Repeat until').fill('2026-08-01T09:00')
   await form.locator('summary').click()
   await expect(
@@ -239,7 +239,7 @@ test('validates optional event recurrence even when details close and drops a di
   ).toBeVisible()
   await expect(form.getByRole('button', { name: 'Create event' })).toBeDisabled()
   await form.locator('summary').click()
-  await form.getByRole('combobox', { name: 'Repeat (optional)', exact: true }).selectOption('none')
+  await form.getByRole('combobox', { name: 'Repeat', exact: true }).selectOption('none')
   await form.getByLabel('Location').fill('Office')
   await form.getByLabel('Attendees').fill('alex@example.com, sam@example.com')
   await form.getByLabel('Description').fill('Planning')
