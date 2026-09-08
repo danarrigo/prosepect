@@ -37,11 +37,6 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace
       - run: cargo run --quiet -p prosepect-api --bin export-openapi > /tmp/openapi.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: generated-openapi
-          path: /tmp/openapi.json
-          retention-days: 1
       - run: diff -u openapi/openapi.json /tmp/openapi.json
 
   frontend:

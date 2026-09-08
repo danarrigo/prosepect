@@ -16,6 +16,7 @@ import type {
   GoogleIntegrationStatus,
   LabelList,
   Note,
+  OperationsSnapshot,
   Project,
   ProjectPage,
   Task,
@@ -94,6 +95,33 @@ export async function logout(): Promise<void> {
   unwrap(await client.POST('/api/v1/session/logout'))
   csrfToken = ''
   localStorage.removeItem(USER_ID_KEY)
+}
+
+// Reject before parsing so operational errors cannot expose response payloads.
+const privateOperationsFetch: typeof fetch = async (input, init) => {
+  const response = await fetch(input, init)
+  if (!response.ok) throw new ApiError('Operations request failed.', response.status, 'operations')
+  return response
+}
+
+export async function getOperationsCapability(signal?: AbortSignal): Promise<boolean> {
+  return unwrap(
+    await client.GET('/api/v1/operations/capability', {
+      signal,
+      cache: 'no-store',
+      fetch: privateOperationsFetch,
+    }),
+  )
+}
+
+export async function getOperationsSnapshot(signal?: AbortSignal): Promise<OperationsSnapshot> {
+  return unwrap(
+    await client.GET('/api/v1/operations', {
+      signal,
+      cache: 'no-store',
+      fetch: privateOperationsFetch,
+    }),
+  )
 }
 
 export async function getGoogleIntegration(signal?: AbortSignal): Promise<GoogleIntegrationStatus> {

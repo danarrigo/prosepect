@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
-import type { OperationsSnapshot } from '../src/api/operations'
+import type { OperationsSnapshot } from '../src/api/types'
 
 const snapshot: OperationsSnapshot = {
   as_of: '2026-09-01T09:00:00Z',
@@ -102,7 +102,7 @@ test('slow capability discovery does not delay the workspace', async ({ page }) 
   await mockWorkspace(page)
   await page.route('**/api/v1/operations/capability', () => {})
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Today', exact: true })).toBeVisible({
+  await expect(page.getByRole('heading', { name: 'Make today count.', exact: true })).toBeVisible({
     timeout: 5000,
   })
   await expect(page.getByRole('link', { name: 'Operations', exact: true })).toHaveCount(0)

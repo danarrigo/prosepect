@@ -2128,6 +2128,86 @@
         ]
       }
     },
+    "/api/v1/operations": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "snapshot",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/operations/capability": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "capability",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/projects": {
       "get": {
         "tags": [
@@ -4173,6 +4253,135 @@
             }
           }
         }
+      },
+      "OperationsLimits": {
+        "type": "object",
+        "required": [
+          "max_total_file_storage_bytes",
+          "max_user_file_storage_bytes",
+          "max_file_size_bytes"
+        ],
+        "properties": {
+          "max_file_size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_total_file_storage_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "max_user_accounts": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_user_file_storage_bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "OperationsMetrics": {
+        "type": "object",
+        "required": [
+          "accounts",
+          "file_bytes",
+          "pending",
+          "running",
+          "retryable",
+          "final_failed_all_time",
+          "succeeded_all_time"
+        ],
+        "properties": {
+          "accounts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "file_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Database-recorded attachment bytes, not a live object-storage measurement."
+          },
+          "final_failed_all_time": {
+            "type": "integer",
+            "format": "int64",
+            "description": "All retained final-failed rows, including failures followed by a later success."
+          },
+          "latest_completed_job_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "updated_at is set by complete_sync_job, not by the HTTP worker trigger."
+          },
+          "oldest_waiting_created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "retryable": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "succeeded_all_time": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "OperationsSnapshot": {
+        "type": "object",
+        "required": [
+          "as_of",
+          "api",
+          "database",
+          "limits"
+        ],
+        "properties": {
+          "api": {
+            "$ref": "#/components/schemas/ProbeStatus"
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "database": {
+            "$ref": "#/components/schemas/ProbeStatus"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/OperationsLimits"
+          },
+          "metrics": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OperationsMetrics"
+              }
+            ]
+          }
+        }
+      },
+      "ProbeStatus": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "unavailable"
+        ]
       },
       "Project": {
         "type": "object",

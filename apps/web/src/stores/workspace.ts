@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import * as api from '../api/client'
-import { getOperationsCapability } from '../api/operations'
+import { getOperationsCapability } from '../api/client'
 import { collectCursorPages } from '../api/pagination'
 import { localDateKey } from '../calendar'
 import { fileUploadError } from '../file-usage'

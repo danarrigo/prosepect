@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RotateCw } from '@lucide/vue'
 import { ApiError } from '../api/client'
-import { getOperationsSnapshot, type OperationsSnapshot } from '../api/operations'
+import { getOperationsSnapshot } from '../api/client'
+import type { OperationsSnapshot } from '../api/types'
 import { formatBytes } from '../file-usage'
 import { useWorkspaceStore } from '../stores/workspace'
 
@@ -182,7 +183,7 @@ onBeforeUnmount(() => {
           <p
             v-if="
               metrics &&
-              snapshot.limits.max_user_accounts !== null &&
+              snapshot.limits.max_user_accounts != null &&
               metrics.accounts >= snapshot.limits.max_user_accounts
             "
             class="!text-amber-700 dark:!text-amber-300"
