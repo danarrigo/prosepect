@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { RouterView, useRoute, useRouter } from 'vue-router'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
+  Activity,
   Bell,
   CircleHelp,
   LogOut,
@@ -65,6 +66,7 @@ const pageTitle = computed(() => {
   if (route.name === 'projects') return 'Projects'
   if (route.name === 'notes') return 'Notes'
   if (route.name === 'files') return 'Files'
+  if (route.name === 'operations') return 'Operations'
   if (route.name === 'settings') return 'Settings'
   return 'Today'
 })
@@ -242,6 +244,15 @@ onBeforeUnmount(() => {
           >
             <CircleHelp :size="17" />
           </button>
+          <RouterLink
+            v-if="store.operationsAllowed && !sidebarVisible"
+            class="icon-button"
+            to="/operations"
+            aria-label="Operations"
+            title="Operations"
+          >
+            <Activity :size="17" />
+          </RouterLink>
           <button
             v-if="store.user"
             class="icon-button"
@@ -276,7 +287,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div
-        v-for="task in dueReminders"
+        v-for="task in route.name === 'operations' ? [] : dueReminders"
         :key="reminderKey(task.id, task.remind_at!)"
         class="mx-5 mt-4 flex items-center gap-3 border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100 sm:mx-8"
         role="status"

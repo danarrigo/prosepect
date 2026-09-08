@@ -1,4 +1,6 @@
-use std::{env, net::SocketAddr, str::FromStr};
+use std::{collections::HashSet, env, net::SocketAddr, str::FromStr};
+
+use uuid::Uuid;
 
 use anyhow::{Context, Result, bail};
 
@@ -64,6 +66,7 @@ pub struct Config {
     pub max_user_file_storage_bytes: i64,
     pub max_total_file_storage_bytes: i64,
     pub max_user_accounts: Option<i64>,
+    pub admin_user_ids: HashSet<Uuid>,
     pub worker_trigger_token: Option<String>,
     pub google_calendar_webhook_url: Option<String>,
 }
@@ -204,6 +207,11 @@ impl Config {
         if max_user_accounts.is_some_and(|limit| limit <= 0) {
             bail!("MAX_USER_ACCOUNTS must be greater than zero");
         }
+        let admin_user_ids = parse_admin_user_ids(&match env::var("ADMIN_USER_IDS") {
+            Ok(value) => value,
+            Err(env::VarError::NotPresent) => String::new(),
+            Err(error) => return Err(error).context("ADMIN_USER_IDS must be valid Unicode"),
+        })?;
         let worker_trigger_token = env_nonempty("WORKER_TRIGGER_TOKEN");
         if worker_trigger_token
             .as_ref()
@@ -236,6 +244,7 @@ impl Config {
             max_user_file_storage_bytes,
             max_total_file_storage_bytes,
             max_user_accounts,
+            admin_user_ids,
             worker_trigger_token,
             google_calendar_webhook_url,
         })
@@ -244,4 +253,44 @@ impl Config {
 
 fn env_nonempty(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.trim().is_empty())
+}
+
+// Empty configuration denies everyone; a malformed member must never silently disappear.
+fn parse_admin_user_ids(value: &str) -> Result<HashSet<Uuid>> {
+    if value.trim().is_empty() {
+        return Ok(HashSet::new());
+    }
+    value
+        .split(',')
+        .map(|member| {
+            member
+                .trim()
+                .parse::<Uuid>()
+                .context("ADMIN_USER_IDS must be comma-separated account UUIDs")
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_admin_user_ids;
+
+    #[test]
+    fn admin_allowlist_is_empty_by_default_and_strict() {
+        assert!(parse_admin_user_ids("").unwrap().is_empty());
+        assert!(parse_admin_user_ids("  ").unwrap().is_empty());
+        let id = "00000000-0000-4000-8000-000000000001";
+        let ids = parse_admin_user_ids(&format!(" {id}, {id} ")).unwrap();
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&id.parse::<uuid::Uuid>().unwrap()));
+        for invalid in [
+            "owner@example.com",
+            "not-a-uuid",
+            ",",
+            &format!("{id},"),
+            &format!("{id},broken"),
+        ] {
+            assert!(parse_admin_user_ids(invalid).is_err(), "{invalid}");
+        }
+    }
 }

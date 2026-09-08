@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import * as api from '../api/client'
+import { getOperationsCapability } from '../api/operations'
 import { collectCursorPages } from '../api/pagination'
 import { localDateKey } from '../calendar'
 import { fileUploadError } from '../file-usage'
@@ -42,6 +43,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   let usageRequest: Promise<void> | null = null
   let usageGeneration = 0
   const user = ref<UserProfile | null>(null)
+  const operationsAllowed = ref(false)
+  let capabilityGeneration = 0
   const settings = ref<UserSettings | null>(null)
   const authenticationRequired = ref(false)
   const dailyPlan = ref<DailyPlan | null>(null)
@@ -70,7 +73,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   })
 
   async function bootstrap() {
+    const generation = ++capabilityGeneration
     loading.value = true
+    operationsAllowed.value = false
     error.value = null
     try {
       try {
@@ -88,6 +93,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         }
       }
       authenticationRequired.value = false
+      const accountId = user.value?.id
+      void getOperationsCapability(AbortSignal.timeout(10_000))
+        .catch(() => false)
+        .then((allowed) => {
+          if (generation === capabilityGeneration && user.value?.id === accountId) {
+            operationsAllowed.value = allowed === true
+          }
+        })
       await refresh()
     } catch (cause) {
       error.value = messageFrom(cause)
@@ -460,7 +473,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function deleteAccount() {
     await api.deleteAccount()
+    capabilityGeneration += 1
     user.value = null
+    operationsAllowed.value = false
     projects.value = []
     tasks.value = []
     calendars.value = []
@@ -473,7 +488,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function logout() {
     await api.logout()
+    capabilityGeneration += 1
     user.value = null
+    operationsAllowed.value = false
     projects.value = []
     tasks.value = []
     calendars.value = []
@@ -534,6 +551,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     fileUsageError,
     refreshFileUsage,
     user,
+    operationsAllowed,
     settings,
     authenticationRequired,
     dailyPlan,

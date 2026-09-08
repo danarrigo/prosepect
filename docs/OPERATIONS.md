@@ -145,6 +145,57 @@ Important metrics include:
 
 Alert on sustained readiness failure, API 5xx responses, failed synchronization jobs, and a growing `sync_jobs` pending/failed backlog. PostgreSQL contains job errors, synchronization conflicts, and tenant-scoped activity history.
 
+## Owner Operations dashboard
+
+`/operations` is a read-only service-wide snapshot, not a monitoring platform. It does not change invite-only access, retry jobs, or perform destructive actions.
+
+### Grant access
+
+1. Identify the intended owner's **existing immutable account UUID**. The signed-in account's `user.id` is available in its own authenticated `GET /api/v1/session` response; verify that it belongs to the intended account using your trusted account-management process. Never use an email, the first registered user, a Google subject, or a client-supplied admin flag as the allowlist identity.
+2. Set `ADMIN_USER_IDS` in the API runtime configuration to that UUID. Comma-separated UUIDs are supported if more than one owner must be explicitly authorized. Whitespace is trimmed; duplicates are harmless.
+3. Restart/redeploy the API through your normal reviewed release process. Removing a UUID and restarting revokes access. No migration or production configuration is performed by this implementation.
+
+Unset or whitespace-only `ADMIN_USER_IDS` denies everyone. Malformed members, including a trailing comma, fail configuration/startup instead of being ignored. Do not put this variable in frontend `VITE_*` configuration. Keep `ALLOW_INSECURE_DEV_AUTH=false` in hosted environments: existing development authentication permits impersonation and is only for trusted local development. Production configuration already rejects that mode.
+
+### Security boundary
+
+- `GET /api/v1/operations` uses the existing `CurrentUser` session authentication, then checks the server-side UUID allowlist through `OperationsAdmin` **before** database probing or any cross-tenant aggregate query. Missing authentication returns 401; a valid non-owner session returns 403. Development identity headers are ignored when development authentication is disabled.
+- `GET /api/v1/operations/capability` is authenticated and returns only a JSON boolean for navigation. A hidden link is not authorization; direct API and page access are still checked.
+- Successful responses use `Cache-Control: no-store`. The ordinary session and Google status contracts are not extended with administrative aggregates. No account lists, emails, task titles, raw job errors, provider responses, credentials, or storage keys are returned.
+- Session authentication itself requires PostgreSQL. If it fails, the API fails closed with the existing sanitized error; it cannot safely return an authenticated degraded snapshot. If the database fails **after** authorization, a bounded probe produces an unavailable database status and null metrics. If the probe succeeds but the aggregate query fails/times out, database remains responding while metrics are null/unknown. Neither case becomes a zero count.
+
+### What the snapshot means
+
+- **API response** means this authorized snapshot request was answered, not an uptime percentage or historical error rate. **Database probe** is `SELECT 1`. Probe and aggregate query each have a five-second timeout; there is no external provider probe.
+- **As of** is the response observation time. Account, file, and job counters are read in one PostgreSQL statement/snapshot after the probe.
+- **Accounts** counts all currently registered user rows. A null account cap accurately means unlimited/not configured; it is not zero. Existing accounts may sign in when a configured cap is reached.
+- **File usage** sums database attachment metadata across all tenants, using the same definition as quota enforcement. It is not an R2 bucket inventory, orphan-object count, proof of readable objects, or provider billing measurement. Global, per-account, and per-file limits are the API's actual configured limits.
+- **Current queue**: pending, running, and failed jobs with fewer than 8 attempts (retryable, including future backoff). Running can include a stale lease pending recovery. Oldest waiting uses original creation time among pending/retryable jobs, not time overdue; null means no waiting jobs.
+- **All time** means all retained job rows, not an immutable historical ledger. Final failures have at least 8 attempts; they remain counted even after later successes. Account/calendar deletion can remove job history. Completed counts use `status = 'succeeded'`; the latest completed timestamp is `updated_at`, written by `complete_sync_job`. Null means no retained completed job. Jobs include discovery, watch, synchronization, and credential revocation, so a completion never proves all calendars/providers healthy. A GitHub worker HTTP trigger returning 200 is not provider success.
+- **Unknown/not verified**: live R2 health, backups and restore evidence, external alert delivery, budget, provider billing. The dashboard does not collect those signals or claim they work.
+
+### Use and limitations
+
+The page polls every 60 seconds after a request finishes, only while mounted and visible. Requests do not overlap; hiding/unmounting cancels in-flight requests, and late results are ignored. Requests time out after 15 seconds. Failures retain the previous snapshot with a stale warning and a retry button; authorization denial clears it. A degraded response replaces old numbers with unknowns. Last successful refresh records receipt of a snapshot (which can itself be degraded), not overall service health.
+
+For final failures or persistent waiting work, inspect worker logs through your normal authorized operational workflow and verify Google integration configuration. Do not share raw provider errors or tokens. For capacity issues, review the relevant provider console before changing limits. This page has no job controls and sends no alerts when closed.
+
+Known static links (authentication and provider permissions still apply):
+
+- API hosting and logs: <https://dashboard.render.com/>
+- Hosted database and recovery settings: <https://console.neon.tech/>
+- Cloudflare/R2 storage and billing: <https://dash.cloudflare.com/>
+- Google integration configuration and quotas: <https://console.cloud.google.com/>
+- Worker workflow runs: <https://github.com/danarrigo/prosepect/actions>
+
+No historical metrics pipeline, billing integration, backup verification or custom control plane is included. Aggregate scans may need revisiting if retained job volume grows substantially; this first slice intentionally adds no schema/index migration.
+
+### Validation / generated contract
+
+Backend tests cover allowlist parsing, session authorization, spoofed development-header rejection, empty deny-all, privacy, cross-tenant counts, empty data, and database-down fail-closed/degraded behavior. Run them in the normal remote CI PostgreSQL environment. Do not infer backend validation from frontend mocks.
+
+The new OpenAPI paths/schemas are declared in Rust source. `apps/web/src/api/operations.ts` is a temporary narrow, source-matched contract and credentialed GET adapter pending remote OpenAPI generation. Generated `openapi/openapi.json` and `apps/web/src/api/schema.d.ts` were deliberately not edited manually. Before publication, regenerate them remotely and replace the temporary contract/adapter with generated types and the shared typed client.
+
 ## Worker behavior
 
 The worker:

@@ -688,7 +688,277 @@ fn test_config() -> Config {
         max_user_file_storage_bytes: 5_i64 * 1024 * 1024 * 1024,
         max_total_file_storage_bytes: 5_i64 * 1024 * 1024 * 1024,
         max_user_accounts: None,
+        admin_user_ids: Default::default(),
         worker_trigger_token: None,
         google_calendar_webhook_url: None,
     }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn operations_authorizes_sessions_before_aggregates(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let owner = store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let other = store.ensure_development_user(uuid::Uuid::now_v7()).await?;
+    let owner_session = store.create_session(owner).await?;
+    let other_session = store.create_session(other).await?;
+    let mut config = test_config();
+    config.allow_insecure_dev_auth = false;
+    config.admin_user_ids.insert(DEVELOPMENT_USER_ID);
+    let router = app::build(&config, store.clone())?;
+    for path in ["/api/v1/operations", "/api/v1/operations/capability"] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    let other_cookie = format!("prosepect_session={}", other_session.token);
+    let rejected = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/operations")
+                .header(header::COOKIE, &other_cookie)
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+    for (cookie, allowed) in [
+        (&other_cookie, false),
+        (&format!("prosepect_session={}", owner_session.token), true),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/operations/capability")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body = to_bytes(response.into_body(), 64 * 1024).await?;
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&body)?, allowed);
+    }
+    // Ordinary session responses remain tenant-scoped, with no operations fields.
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/session")
+                .header(header::COOKIE, &other_cookie)
+                .body(Body::empty())?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), 64 * 1024).await?;
+    let body: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(body.as_object().unwrap().len(), 2);
+    assert!(body.get("metrics").is_none());
+
+    config.admin_user_ids.clear();
+    let deny_all = app::build(&config, store)?;
+    let rejected = deny_all
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/operations")
+                .header(
+                    header::COOKIE,
+                    format!("prosepect_session={}", owner_session.token),
+                )
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn operations_counts_all_tenants_without_private_payloads(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let owner = store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let other_id = uuid::Uuid::now_v7();
+    let other = store.ensure_development_user(other_id).await?;
+    let other_session = store.create_session(other).await?;
+    let session = store.create_session(owner).await?;
+    let mut config = test_config();
+    config.allow_insecure_dev_auth = false;
+    config.admin_user_ids.insert(DEVELOPMENT_USER_ID);
+    let router = app::build(&config, store)?;
+    let request = || {
+        Request::builder()
+            .uri("/api/v1/operations")
+            .header(
+                header::COOKIE,
+                format!("prosepect_session={}", session.token),
+            )
+            .body(Body::empty())
+            .unwrap()
+    };
+    let empty = router.clone().oneshot(request()).await?;
+    assert_eq!(empty.status(), StatusCode::OK);
+    let empty: serde_json::Value =
+        serde_json::from_slice(&to_bytes(empty.into_body(), 64 * 1024).await?)?;
+    assert_eq!(empty["metrics"]["pending"], 0);
+    assert_eq!(empty["metrics"]["file_bytes"], 0);
+    assert!(empty["metrics"]["latest_completed_job_at"].is_null());
+    assert!(empty["metrics"]["oldest_waiting_created_at"].is_null());
+    assert!(empty["limits"]["max_user_accounts"].is_null());
+    for (user, bytes) in [(DEVELOPMENT_USER_ID, 11_i64), (other_id, 19_i64)] {
+        sqlx::query("INSERT INTO files (id, user_id, object_key, filename, content_type, byte_size) VALUES ($1, $2, $1::TEXT, 'private-title', 'text/plain', $3)")
+            .bind(uuid::Uuid::now_v7()).bind(user).bind(bytes).execute(&pool).await?;
+    }
+    for (index, (status, attempts)) in [
+        ("pending", 0),
+        ("running", 1),
+        ("failed", 7),
+        ("failed", 8),
+        ("failed", 9),
+        ("succeeded", 1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        sqlx::query("INSERT INTO sync_jobs (id, user_id, kind, idempotency_key, status, attempt_count, last_error, created_at, updated_at) VALUES ($1, $2, CASE WHEN $4 = 'succeeded' THEN 'credential_revoke' ELSE 'calendar_discovery' END, $3, $4, $5, 'secret-provider-payload', '2026-01-01T00:00:00Z'::TIMESTAMPTZ + ($6 * INTERVAL '1 day'), CASE WHEN $4 = 'succeeded' THEN '2026-01-07T00:00:00Z'::TIMESTAMPTZ ELSE '2026-02-01T00:00:00Z'::TIMESTAMPTZ END)")
+            .bind(uuid::Uuid::now_v7()).bind(if index % 2 == 0 { DEVELOPMENT_USER_ID } else { other_id })
+            .bind(index.to_string()).bind(status).bind(attempts).bind(index as i32).execute(&pool).await?;
+    }
+    let ordinary = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/integrations/google")
+                .header(
+                    header::COOKIE,
+                    format!("prosepect_session={}", other_session.token),
+                )
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(ordinary.status(), StatusCode::OK);
+    let ordinary: serde_json::Value =
+        serde_json::from_slice(&to_bytes(ordinary.into_body(), 64 * 1024).await?)?;
+    assert_eq!(ordinary["pending_synchronization_count"], 1);
+    assert_eq!(ordinary["failed_synchronization_count"], 1);
+    assert!(ordinary.get("metrics").is_none());
+    assert!(ordinary.get("limits").is_none());
+
+    config.max_user_accounts = Some(2);
+    let router = app::build(&config, Store::from_pool(pool))?;
+    let response = router.oneshot(request()).await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let raw = to_bytes(response.into_body(), 64 * 1024).await?;
+    let text = std::str::from_utf8(&raw)?;
+    for forbidden in [
+        "secret-provider-payload",
+        "last_error",
+        "private-title",
+        "development.invalid",
+        &other_id.to_string(),
+    ] {
+        assert!(!text.contains(forbidden));
+    }
+    let body: serde_json::Value = serde_json::from_slice(&raw)?;
+    assert_eq!(body["api"], "ok");
+    assert_eq!(body["database"], "ok");
+    let metrics = &body["metrics"];
+    assert_eq!(metrics["accounts"], 2);
+    assert_eq!(metrics["file_bytes"], 30);
+    for key in ["pending", "running", "retryable", "succeeded_all_time"] {
+        assert_eq!(metrics[key], 1, "{key}");
+    }
+    assert_eq!(metrics["final_failed_all_time"], 2); // A newer unrelated success cannot erase failures.
+    assert_eq!(metrics["latest_completed_job_at"], "2026-01-07T00:00:00Z");
+    assert_eq!(body["limits"]["max_user_accounts"], 2);
+    assert_eq!(metrics["oldest_waiting_created_at"], "2026-01-01T00:00:00Z");
+    assert!(body["as_of"].as_str().is_some());
+    assert_eq!(
+        body["limits"]["max_file_size_bytes"],
+        config.max_file_size_bytes
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn operations_degrades_without_failing_open(pool: PgPool) -> anyhow::Result<()> {
+    let mut config = test_config();
+    config.admin_user_ids.insert(DEVELOPMENT_USER_ID);
+    let router = app::build(&config, Store::from_pool(pool.clone()))?;
+    pool.close().await;
+    // Development authentication is DB-independent; real session authentication still fails closed.
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/operations")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await?)?;
+    assert_eq!(body["database"], "unavailable");
+    assert!(body["metrics"].is_null());
+    let denied = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/operations")
+                .header(DEVELOPMENT_USER_HEADER, uuid::Uuid::now_v7().to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let session_failure = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/operations")
+                .header(header::COOKIE, "prosepect_session=unverifiable")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(session_failure.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn operations_aggregate_failure_is_unknown_not_zero(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let owner = store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let session = store.create_session(owner).await?;
+    let mut config = test_config();
+    config.allow_insecure_dev_auth = false;
+    config.admin_user_ids.insert(DEVELOPMENT_USER_ID);
+    let router = app::build(&config, store)?;
+    sqlx::query("DROP TABLE sync_jobs CASCADE")
+        .execute(&pool)
+        .await?;
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/operations")
+                .header(
+                    header::COOKIE,
+                    format!("prosepect_session={}", session.token),
+                )
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await?)?;
+    assert_eq!(body["database"], "ok");
+    assert!(body["metrics"].is_null());
+    assert!(body.get("error").is_none());
+    Ok(())
 }

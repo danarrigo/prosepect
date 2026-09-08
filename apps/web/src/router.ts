@@ -15,6 +15,12 @@ export const router = createRouter({
       component: () => import('./views/ProjectsView.vue'),
     },
     { path: '/notes', name: 'notes', component: () => import('./views/NotesView.vue') },
+    {
+      path: '/operations',
+      name: 'operations',
+      component: () => import('./views/OperationsView.vue'),
+      meta: { title: 'Operations' },
+    },
     { path: '/files', name: 'files', component: () => import('./views/FilesView.vue') },
     {
       path: '/settings',

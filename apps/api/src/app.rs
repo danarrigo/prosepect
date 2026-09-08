@@ -41,7 +41,7 @@ use crate::{
         UpdateNoteRequest, UpdateProjectRequest, UpdateTaskRequest, UpdateUserSettingsRequest,
         UserProfile, UserSettings,
     },
-    note_routes, observability,
+    note_routes, observability, operations,
     rate_limit::LoginRateLimiter,
     routes,
     store::Store,
@@ -66,6 +66,7 @@ pub struct AppState {
     pub max_user_file_storage_bytes: i64,
     pub max_total_file_storage_bytes: i64,
     pub max_user_accounts: Option<i64>,
+    pub admin_user_ids: std::collections::HashSet<uuid::Uuid>,
     pub worker_trigger_token: Option<String>,
     pub sync_service: Option<SyncService>,
     pub sync_dispatcher: SyncDispatcher,
@@ -80,6 +81,8 @@ pub struct AppState {
         description = "Personal productivity API for Prosepect"
     ),
     paths(
+        operations::capability,
+        operations::snapshot,
         routes::health,
         routes::ready,
         routes::metrics,
@@ -140,6 +143,10 @@ pub struct AppState {
         sync_routes::activity
     ),
     components(schemas(
+        operations::OperationsSnapshot,
+        operations::OperationsMetrics,
+        operations::OperationsLimits,
+        operations::ProbeStatus,
         ErrorBody,
         ErrorResponse,
         HealthResponse,
@@ -295,6 +302,7 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         max_user_file_storage_bytes: config.max_user_file_storage_bytes,
         max_total_file_storage_bytes: config.max_total_file_storage_bytes,
         max_user_accounts: config.max_user_accounts,
+        admin_user_ids: config.admin_user_ids.clone(),
         worker_trigger_token: config.worker_trigger_token.clone(),
         sync_service,
         sync_dispatcher,
@@ -302,6 +310,8 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
     };
 
     let api = Router::new()
+        .route("/operations/capability", get(operations::capability))
+        .route("/operations", get(operations::snapshot))
         .route("/development/session", post(routes::development_session))
         .route("/session", get(routes::current_session))
         .route("/session/logout", post(routes::logout))
