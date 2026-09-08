@@ -452,6 +452,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["snapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operations/capability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["capability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -959,6 +991,54 @@ export interface components {
         NoteList: {
             items: components["schemas"]["Note"][];
         };
+        OperationsLimits: {
+            max_file_size_bytes: number;
+            /** Format: int64 */
+            max_total_file_storage_bytes: number;
+            /** Format: int64 */
+            max_user_accounts?: number | null;
+            /** Format: int64 */
+            max_user_file_storage_bytes: number;
+        };
+        OperationsMetrics: {
+            /** Format: int64 */
+            accounts: number;
+            /**
+             * Format: int64
+             * @description Database-recorded attachment bytes, not a live object-storage measurement.
+             */
+            file_bytes: number;
+            /**
+             * Format: int64
+             * @description All retained final-failed rows, including failures followed by a later success.
+             */
+            final_failed_all_time: number;
+            /**
+             * Format: date-time
+             * @description updated_at is set by complete_sync_job, not by the HTTP worker trigger.
+             */
+            latest_completed_job_at?: string | null;
+            /** Format: date-time */
+            oldest_waiting_created_at?: string | null;
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            retryable: number;
+            /** Format: int64 */
+            running: number;
+            /** Format: int64 */
+            succeeded_all_time: number;
+        };
+        OperationsSnapshot: {
+            api: components["schemas"]["ProbeStatus"];
+            /** Format: date-time */
+            as_of: string;
+            database: components["schemas"]["ProbeStatus"];
+            limits: components["schemas"]["OperationsLimits"];
+            metrics?: null | components["schemas"]["OperationsMetrics"];
+        };
+        /** @enum {string} */
+        ProbeStatus: "ok" | "unavailable";
         Project: {
             /** Format: int64 */
             completed_tasks: number;
@@ -2633,6 +2713,68 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    snapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationsSnapshot"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    capability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": boolean;
+                };
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

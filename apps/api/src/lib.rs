@@ -17,6 +17,7 @@ pub mod models;
 pub mod note_routes;
 mod note_store;
 pub mod observability;
+pub mod operations;
 pub mod rate_limit;
 pub mod routes;
 pub mod store;

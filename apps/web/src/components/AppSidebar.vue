@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { CalendarDays, FileText, FolderKanban, LayoutDashboard, Settings, X } from '@lucide/vue'
+import {
+  Activity,
+  CalendarDays,
+  FileText,
+  FolderKanban,
+  LayoutDashboard,
+  Settings,
+  X,
+} from '@lucide/vue'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const props = defineProps<{ open: boolean }>()
@@ -106,6 +114,16 @@ function showAllProjects() {
       </button>
     </div>
 
+    <RouterLink
+      v-if="store.operationsAllowed"
+      class="nav-item mt-3"
+      :class="{ active: route.name === 'operations' }"
+      to="/operations"
+      @click="emit('close')"
+    >
+      <Activity :size="17" />
+      <span>Operations</span>
+    </RouterLink>
     <RouterLink
       class="nav-item mt-3"
       :class="{ active: route.name === 'settings' }"
