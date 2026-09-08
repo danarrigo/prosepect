@@ -179,7 +179,7 @@ function deadlineIsoDate(value: string) {
     <div class="flex items-end gap-3">
       <label class="min-w-0 flex-1" :for="titleInputId">
         <span class="block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-          Task title (required)
+          Task title
         </span>
         <input
           :id="titleInputId"
@@ -233,7 +233,7 @@ function deadlineIsoDate(value: string) {
 
     <div class="mt-1 flex flex-wrap items-center gap-2 pb-1">
       <label class="text-[11px] text-slate-500 dark:text-slate-400">
-        <span class="block">Project (optional)</span>
+        <span class="block">Project</span>
         <select v-model="projectId" class="subtle-select">
           <option value="">No project</option>
           <option
@@ -246,9 +246,7 @@ function deadlineIsoDate(value: string) {
         </select>
       </label>
       <label class="text-[11px] text-slate-500 dark:text-slate-400">
-        <span class="block"
-          >Deadline ({{ recurrence === 'none' ? 'optional' : 'required for repeat' }})</span
-        >
+        <span class="block">Deadline</span>
         <input
           v-model="dueDate"
           class="subtle-control w-[9rem] bg-transparent outline-none"
@@ -259,7 +257,7 @@ function deadlineIsoDate(value: string) {
         />
       </label>
       <label v-if="dueDate" class="text-[11px] text-slate-500 dark:text-slate-400">
-        <span class="block">Deadline time (optional)</span>
+        <span class="block">Deadline time</span>
         <input
           v-model="dueTime"
           class="subtle-control bg-transparent"
@@ -269,7 +267,7 @@ function deadlineIsoDate(value: string) {
         <span v-if="!dueTime" class="block">Default: end of day</span>
       </label>
       <label class="text-[11px] text-slate-500 dark:text-slate-400">
-        <span class="block">Priority (optional)</span>
+        <span class="block">Priority</span>
         <select v-model="priority" class="subtle-select">
           <option value="low">Low priority</option>
           <option value="medium">Medium priority</option>
@@ -285,7 +283,7 @@ function deadlineIsoDate(value: string) {
         @click="detailsOpen = !detailsOpen"
       >
         <SlidersHorizontal :size="13" />
-        Details (optional)
+        Details
       </button>
       <button class="primary-button ml-auto sm:hidden" type="submit" :disabled="!canSubmit">
         Create task
@@ -306,7 +304,7 @@ function deadlineIsoDate(value: string) {
       class="grid gap-3 border-t border-slate-100 py-3 dark:border-slate-900 sm:grid-cols-2"
     >
       <label class="field-label sm:col-span-2">
-        Description (optional)
+        Description
         <textarea
           v-model="description"
           class="field-input min-h-20 resize-y py-3"
@@ -315,7 +313,7 @@ function deadlineIsoDate(value: string) {
         />
       </label>
       <label class="field-label">
-        Repeat (optional)
+        Repeat
         <select v-model="recurrence" class="field-input">
           <option value="none">Does not repeat</option>
           <option value="daily">Daily</option>
@@ -325,11 +323,11 @@ function deadlineIsoDate(value: string) {
         </select>
       </label>
       <label class="field-label">
-        Reminder (optional)
+        Reminder
         <input v-model="remindAt" class="field-input" type="datetime-local" />
       </label>
       <label class="field-label sm:col-span-2">
-        Labels (optional)
+        Labels
         <input
           v-model="labels"
           class="field-input"
