@@ -1,0 +1,77 @@
+name: Dependency security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "43 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  rust-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+          fallback: none
+      # The unfiltered report deliberately includes the accepted advisory. Only
+      # the next step determines acceptance; it must pass without any other ID ignored.
+      - name: Record all Rust advisories (including the exception)
+        continue-on-error: true
+        run: cargo audit --file Cargo.lock --deny warnings --json > cargo-audit-full.json
+      - name: Block every other Rust advisory
+        run: |
+          echo 'Only RUSTSEC-2023-0071 is temporarily accepted. See SECURITY.md.' | tee cargo-audit-gate.txt
+          python3 - <<'PY' 2>&1 | tee -a cargo-audit-gate.txt
+          import tomllib
+          with open('Cargo.lock', 'rb') as lockfile:
+              packages = tomllib.load(lockfile)['package']
+          rsa_versions = [p['version'] for p in packages if p['name'] == 'rsa']
+          rsa_users = [(p['name'], p['version']) for p in packages
+                       if any(d.split()[0] == 'rsa' for d in p.get('dependencies', []))]
+          if rsa_versions != ['0.9.10'] or rsa_users != [('openidconnect', '4.0.1')]:
+              raise SystemExit('RSA dependency scope changed. Reassess SECURITY.md and the exception before release.')
+          print('RSA exception dependency scope matches the reviewed lockfile.')
+          PY
+          cargo audit --file Cargo.lock --deny warnings --ignore RUSTSEC-2023-0071 2>&1 | tee -a cargo-audit-gate.txt
+      - name: Preserve Rust audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-dependency-audit
+          path: |
+            cargo-audit-full.json
+            cargo-audit-gate.txt
+          retention-days: 14
+          if-no-files-found: error
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Audit the complete npm lockfile (including dev dependencies)
+        run: npm audit --package-lock-only --include=dev --audit-level=low --json > npm-audit.json
+      - name: Preserve npm audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-dependency-audit
+          path: npm-audit.json
+          retention-days: 14
+          if-no-files-found: error

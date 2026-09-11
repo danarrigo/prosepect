@@ -41,11 +41,11 @@ The supported hosted-beta topology is:
 - Vercel serves the Vue application at `https://prosepect.com`.
 - Render Free runs the Axum API at `https://api.prosepect.com`.
 - Local mutations wake an in-process synchronization dispatcher and Google webhooks enqueue inbound changes.
-- GitHub Actions calls an authenticated recovery and watch-renewal endpoint every 15 minutes.
+- GitHub Actions is configured to call an authenticated recovery and watch-renewal endpoint every 15 minutes, but execution is best-effort and can be delayed by hours.
 - Neon PostgreSQL stores all canonical and operational state.
 - A private Cloudflare R2 bucket stores attachments through presigned URLs.
 
-This topology does not require a Google Cloud billing account. Render Free is suitable for a personal beta, not a production SLA. The synchronization trigger normally keeps the API awake and consumes most of the service's monthly free-instance allowance. If the trigger is disabled, the API sleeps after 15 idle minutes and can take about one minute to wake. Free services can be suspended when monthly allowances are exhausted. GitHub schedules can be delayed and public-repository schedules are disabled after 60 days without repository activity.
+This topology does not require a Google Cloud billing account. Render Free is suitable for a personal beta, not a production SLA. When executed on time, the synchronization trigger can keep the API awake and consume most of the service's monthly free-instance allowance. It cannot guarantee wakefulness when GitHub delays runs. If the trigger is disabled, the API sleeps after 15 idle minutes and can take about one minute to wake. Free services can be suspended when monthly allowances are exhausted. GitHub schedules can be delayed and public-repository schedules are disabled after 60 days without repository activity.
 
 ### Guided setup
 
@@ -82,7 +82,9 @@ Attach `api.prosepect.com` as a Render custom domain and add the DNS record Rend
 
 `.github/workflows/worker.yml` calls `POST /internal/synchronization/run` at minutes 7, 22, 37, and 52 of each hour to avoid the busiest start-of-hour scheduling window. The API verifies a bearer token, enqueues stale calendar synchronization and expiring webhook watches, and processes at most one claim. This remains the durable recovery path when an immediate dispatch or Google notification is missed. Overlapping runs are serialized. Scheduled runs use `curl` only: they do not compile Rust and do not start a worker container. The job remains skipped until `PROSEPECT_WORKER_ENABLED=true` and `PROSEPECT_WORKER_TRIGGER_TOKEN` is configured.
 
-The same request also acts as an API availability check because network, authentication, or worker failures fail the workflow. The repository is public, so standard GitHub-hosted runners are free. Treat GitHub scheduling as best-effort, enable Actions failure notifications, and manually run the workflow after changing synchronization configuration.
+Network, authentication, enqueue, or worker infrastructure failures fail the workflow. A separate bounded `GET /ready` in the same job also verifies the API's PostgreSQL readiness response, even when the trigger fails. A successful trigger does **not** prove Google synchronization succeeded: `SyncService::run_once` records provider failures for retry and can still return `processed: true` with HTTP 200. Inspect the Operations queue/final-failure snapshot and authorized worker logs separately.
+
+The repository is public, so standard GitHub-hosted runners are free. Actual recovery schedules have been observed delayed by hours despite the configured 15-minute cadence. Neither this job nor Render's health check is independent uptime monitoring, and neither verifies alert delivery. Enable Actions failure notifications and manually run the workflow after changing synchronization configuration. Before public beta, configure an independent free HTTP monitor for the frontend and `/ready`, a missed-recovery-run check, and a tested alert destination. See [the public-beta checklist](PUBLIC-BETA-CHECKLIST.md) for owner-only release gates.
 
 ### Domains and OAuth
 
@@ -194,7 +196,7 @@ No historical metrics pipeline, billing integration, backup verification or cust
 
 Backend tests cover allowlist parsing, session authorization, spoofed development-header rejection, empty deny-all, privacy, cross-tenant counts, empty data, and database-down fail-closed/degraded behavior. Run them in the normal remote CI PostgreSQL environment. Do not infer backend validation from frontend mocks.
 
-The new OpenAPI paths/schemas are declared in Rust source. `apps/web/src/api/operations.ts` is a temporary narrow, source-matched contract and credentialed GET adapter pending remote OpenAPI generation. Generated `openapi/openapi.json` and `apps/web/src/api/schema.d.ts` were deliberately not edited manually. Before publication, regenerate them remotely and replace the temporary contract/adapter with generated types and the shared typed client.
+The Operations OpenAPI paths/schemas are declared in Rust source and reconciled in generated `openapi/openapi.json` and `apps/web/src/api/schema.d.ts`. The frontend uses the shared typed client; no temporary Operations adapter remains. This reconciliation shipped in commit `8efa3fb`, merged in `c54e78b`, with main CI run `34222767710` passing. Continue to check generation consistency remotely for each release candidate; prior main validation does not validate later changes.
 
 ## Worker behavior
 
@@ -243,9 +245,11 @@ aws s3 sync "s3://$S3_BUCKET" prosepect-r2-backup \
   --region auto
 ```
 
-Keep the dump, object copy, and the credentials needed to decrypt them outside the production providers. To migrate to a server, disable the GitHub synchronization workflow, restore the PostgreSQL dump, copy R2 objects into MinIO, configure the same environment contract, deploy Compose, and then switch DNS.
+These examples are not an encrypted backup procedure by themselves. Run them only inside an approved encrypted destination, with authorized credentials supplied securely, and arrange a consistent database/object capture (for example, an owner-approved write pause). Do not put credentials in command history or commit dumps. Retain independently protected recovery keys, including `TOKEN_ENCRYPTION_KEY` if restoring stored integration credentials, with access separate from the encrypted backup.
 
-Test restores in an isolated environment. Restore PostgreSQL first and objects second, then start the synchronization worker.
+Readiness review: the saved `DATABASE_URL` is missing, so no database backup can be made from the available configuration. No independent encrypted destination or isolated restore target has been approved. No secrets were read and no backup was attempted. The [public-beta checklist](PUBLIC-BETA-CHECKLIST.md) records the prerequisites and restore evidence required.
+
+For a migration, disable the GitHub synchronization workflow, restore PostgreSQL and objects to the approved destination, configure the same environment contract, and switch DNS only after reviewed validation. For a restore rehearsal, keep outbound Google access, webhook registration, notifications, and all workers/dispatchers disabled or blocked. A restored production database contains live integration state: never start it with unrestricted production-provider access. Validate attachment contents and tenant isolation without contacting real users or calendars before deciding whether a real migration may enable synchronization.
 
 ## Google integration recovery
 

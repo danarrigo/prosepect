@@ -21,6 +21,10 @@ jobs:
         env:
           WORKER_TRIGGER_TOKEN: ${{ secrets.PROSEPECT_WORKER_TRIGGER_TOKEN }}
         run: |
+          if [ -z "$WORKER_TRIGGER_TOKEN" ]; then
+            echo '::error::Worker trigger token is not configured.'
+            exit 1
+          fi
           curl \
             --fail-with-body \
             --silent \
@@ -32,3 +36,15 @@ jobs:
             --header "Authorization: Bearer ${WORKER_TRIGGER_TOKEN}" \
             --request POST \
             https://api.prosepect.com/internal/synchronization/run
+      - name: Verify API and database readiness (not provider sync success)
+        if: always()
+        run: |
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --output "$RUNNER_TEMP/prosepect-ready.json" \
+            https://api.prosepect.com/ready
+          jq --exit-status '.status == "ready"' "$RUNNER_TEMP/prosepect-ready.json"
