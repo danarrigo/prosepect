@@ -44,5 +44,5 @@ export const router = createRouter({
 })
 
 router.afterEach((to) => {
-  document.title = to.meta.title ? `${String(to.meta.title)} | Prosepect` : 'Prosepect'
+  document.title = to.meta.title ? `${String(to.meta.title)} | prosepect` : 'prosepect'
 })

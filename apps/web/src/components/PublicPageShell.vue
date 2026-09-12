@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
+import BrandLogo from './BrandLogo.vue'
 
 defineProps<{
   title: string
@@ -12,7 +13,12 @@ defineProps<{
   <div class="min-h-dvh bg-white text-slate-950 dark:bg-slate-950 dark:text-slate-50">
     <header class="border-b border-slate-200 dark:border-slate-800">
       <div class="mx-auto flex h-16 max-w-5xl items-center justify-between px-5 sm:px-8">
-        <RouterLink class="text-sm font-semibold tracking-[-0.02em]" to="/">Prosepect</RouterLink>
+        <RouterLink
+          class="shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+          to="/"
+        >
+          <BrandLogo />
+        </RouterLink>
         <nav aria-label="Legal pages" class="flex items-center gap-5 text-xs text-slate-500">
           <RouterLink class="hover:text-slate-950 dark:hover:text-white" to="/privacy">
             Privacy

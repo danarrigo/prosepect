@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   Activity,
@@ -11,14 +11,26 @@ import {
   X,
 } from '@lucide/vue'
 import { useWorkspaceStore } from '../stores/workspace'
+import BrandLogo from './BrandLogo.vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
+const closeButton = ref<HTMLButtonElement | null>(null)
 const store = useWorkspaceStore()
 const route = useRoute()
 const router = useRouter()
 const visibleProjects = computed(() =>
   store.projects.filter((project) => project.status !== 'archived'),
+)
+
+watch(
+  () => props.open,
+  async (open) => {
+    if (open) {
+      await nextTick()
+      closeButton.value?.focus()
+    }
+  },
 )
 
 function openProject(projectId: string) {
@@ -35,15 +47,22 @@ function showAllProjects() {
 
 <template>
   <aside
+    id="primary-navigation"
     class="fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-slate-200 bg-slate-50 px-4 pb-5 pt-4 transition-transform duration-200 dark:border-slate-800 dark:bg-slate-950 lg:static lg:translate-x-0"
-    :class="props.open ? 'translate-x-0' : '-translate-x-full'"
+    :class="props.open ? 'translate-x-0' : 'invisible -translate-x-full lg:visible'"
     aria-label="Primary navigation"
+    @keydown.esc="emit('close')"
   >
     <div class="flex h-10 items-center justify-between px-2">
-      <RouterLink class="text-sm font-semibold tracking-tight" to="/" @click="emit('close')">
-        Prosepect
+      <RouterLink
+        class="shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+        to="/"
+        @click="emit('close')"
+      >
+        <BrandLogo />
       </RouterLink>
       <button
+        ref="closeButton"
         class="icon-button lg:hidden"
         type="button"
         aria-label="Close navigation"

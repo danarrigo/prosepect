@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import * as api from '../api/client'
+import BrandLogo from './BrandLogo.vue'
 
 const route = useRoute()
 const legalAccepted = ref(false)
@@ -32,7 +33,12 @@ function signIn() {
   <div class="min-h-dvh bg-white text-slate-950 dark:bg-slate-950 dark:text-slate-50">
     <header class="border-b border-slate-200 dark:border-slate-800">
       <div class="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:px-8">
-        <span class="text-sm font-semibold tracking-[-0.02em]">Prosepect</span>
+        <RouterLink
+          class="shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+          to="/"
+        >
+          <BrandLogo />
+        </RouterLink>
         <nav aria-label="Public navigation" class="flex items-center gap-5 text-xs text-slate-500">
           <RouterLink class="hover:text-slate-950 dark:hover:text-white" to="/privacy">
             Privacy
@@ -64,7 +70,7 @@ function signIn() {
             Plan what matters without scattering your attention.
           </h1>
           <p class="mt-6 max-w-xl text-base leading-8 text-slate-500 dark:text-slate-400">
-            Prosepect brings tasks, projects, notes, priorities, and calendars into one calm
+            prosepect brings tasks, projects, notes, priorities, and calendars into one calm
             workspace. Schedule work directly on your day and keep optional Google Calendar
             synchronization under your control.
           </p>
