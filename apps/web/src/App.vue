@@ -15,6 +15,7 @@ import {
 } from '@lucide/vue'
 import * as api from './api/client'
 import AppSidebar from './components/AppSidebar.vue'
+import BrandLogo from './components/BrandLogo.vue'
 import CreateTaskDialog from './components/CreateTaskDialog.vue'
 import DailyReviewDialog from './components/DailyReviewDialog.vue'
 import GlobalSearch from './components/GlobalSearch.vue'
@@ -33,6 +34,7 @@ const store = useWorkspaceStore()
 const route = useRoute()
 const router = useRouter()
 const sidebarOpen = ref(false)
+const navigationToggle = ref<HTMLButtonElement | null>(null)
 const dark = ref(false)
 const media = window.matchMedia('(prefers-color-scheme: dark)')
 const now = ref(Date.now())
@@ -70,6 +72,15 @@ const pageTitle = computed(() => {
   if (route.name === 'settings') return 'Settings'
   return 'Today'
 })
+
+async function closeSidebar() {
+  const wasOpen = sidebarOpen.value
+  sidebarOpen.value = false
+  if (wasOpen) {
+    await nextTick()
+    navigationToggle.value?.focus()
+  }
+}
 
 function applyTheme() {
   const preference = localStorage.getItem('prosepect.theme')
@@ -204,25 +215,39 @@ onBeforeUnmount(() => {
       v-if="sidebarVisible && sidebarOpen"
       class="fixed inset-0 z-30 bg-slate-950/35 backdrop-blur-[1px] lg:hidden"
       aria-hidden="true"
-      @click="sidebarOpen = false"
+      @click="closeSidebar"
     />
-    <AppSidebar v-if="sidebarVisible" :open="sidebarOpen" @close="sidebarOpen = false" />
+    <AppSidebar v-if="sidebarVisible" :open="sidebarOpen" @close="closeSidebar" />
 
     <div class="min-w-0 flex-1">
       <header
-        class="sticky top-0 z-20 flex h-14 items-center border-b border-slate-200 bg-white px-5 dark:border-slate-800 dark:bg-slate-950 sm:px-8"
+        class="sticky top-0 z-20 flex h-14 items-center border-b border-slate-200 bg-white px-3 dark:border-slate-800 dark:bg-slate-950 sm:px-5 lg:px-8"
       >
         <button
           v-if="sidebarVisible"
+          ref="navigationToggle"
           class="icon-button mr-3 lg:hidden"
           type="button"
           aria-label="Open navigation"
+          aria-controls="primary-navigation"
+          :aria-expanded="sidebarOpen"
           @click="sidebarOpen = true"
         >
           <Menu :size="19" />
         </button>
-        <span class="text-xs font-medium text-slate-500 dark:text-slate-400">{{ pageTitle }}</span>
-        <div class="ml-auto flex items-center gap-2">
+        <RouterLink
+          class="w-[120px] shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+          :class="{ 'lg:hidden': sidebarVisible }"
+          to="/"
+        >
+          <BrandLogo />
+        </RouterLink>
+        <span
+          class="text-xs font-medium text-slate-500 dark:text-slate-400"
+          :class="sidebarVisible ? 'hidden lg:inline' : 'ml-4 hidden xl:inline'"
+          >{{ pageTitle }}</span
+        >
+        <div class="ml-auto flex items-center gap-1 sm:gap-2">
           <GlobalSearch ref="globalSearch" />
           <CreateTaskDialog ref="createTaskDialog" />
           <button
