@@ -22,12 +22,12 @@ test('publishes a descriptive signed-out homepage and legal policies', async ({ 
   await expect(page.getByRole('alert')).toContainText('registrations are temporarily paused')
 
   await page.goto('/privacy')
-  await expect(page).toHaveTitle('Privacy Policy | Prosepect')
+  await expect(page).toHaveTitle('Privacy Policy | prosepect')
   await expect(page.getByRole('heading', { name: 'Privacy Policy', level: 1 })).toBeVisible()
   await expect(page.getByText('Google API Services User Data Policy')).toBeVisible()
 
   await page.goto('/terms')
-  await expect(page).toHaveTitle('Terms of Service | Prosepect')
+  await expect(page).toHaveTitle('Terms of Service | prosepect')
   await expect(page.getByRole('heading', { name: 'Terms of Service', level: 1 })).toBeVisible()
   await expect(page.getByText('laws of the Republic of Indonesia')).toBeVisible()
 })
@@ -106,7 +106,7 @@ test('navigates and opens actions without a mouse', async ({ page }) => {
   await page.keyboard.press('Escape')
 })
 
-test('hides the sidebar persistently and keeps Settings reachable', async ({ page }) => {
+test('hides the sidebar persistently and keeps Settings reachable', async ({ page, isMobile }) => {
   await page.goto('/settings')
   const settings = page.getByRole('form', { name: 'Workspace settings' })
   const sidebar = page.getByRole('complementary', { name: 'Primary navigation' })
@@ -137,6 +137,10 @@ test('hides the sidebar persistently and keeps Settings reachable', async ({ pag
   await settings.getByRole('checkbox', { name: 'Show sidebar' }).check()
   await settings.getByRole('button', { name: 'Save settings' }).click()
   await restored
+  if (isMobile) {
+    await expect(sidebar).toBeHidden()
+    await page.getByRole('button', { name: 'Open navigation' }).click()
+  }
   await expect(sidebar).toBeVisible()
 })
 
