@@ -151,7 +151,7 @@ function flattenTasks(tasks: Task[]): Array<{ task: Task; depth: number }> {
       :key="row.task.id"
       :data-task-id="row.task.id"
       :draggable="reorderable && !store.saving"
-      class="transition-opacity"
+      class="@container/task transition-opacity"
       :class="{ 'opacity-40': draggedTaskId === row.task.id }"
       :style="{ paddingLeft: `${row.depth * 1.25}rem` }"
       @dragstart="beginDrag(row.task, $event)"
