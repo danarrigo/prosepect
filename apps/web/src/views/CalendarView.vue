@@ -1746,7 +1746,7 @@ function monthDays(cursor: Date) {
       <div
         v-for="date in weekDays"
         :key="dateKey(date)"
-        class="min-h-48 bg-white p-3 dark:bg-slate-950"
+        class="min-h-48 min-w-0 bg-white p-3 dark:bg-slate-950"
         @dragover.prevent
         @drop="dropEvent(date, $event)"
       >

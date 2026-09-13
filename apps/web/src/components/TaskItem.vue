@@ -282,7 +282,7 @@ function submitSubtask() {
 
     <div class="min-w-0 flex-1">
       <p
-        class="truncate text-sm font-medium text-slate-800 dark:text-slate-200"
+        class="break-words text-sm font-medium text-slate-800 dark:text-slate-200 @3xl/task:truncate"
         :class="{ 'text-slate-400 line-through dark:text-slate-600': completed }"
       >
         {{ task.title }}
@@ -351,7 +351,8 @@ function submitSubtask() {
     </div>
 
     <select
-      class="hidden max-w-28 border-0 bg-transparent px-1 py-1 text-xs text-slate-500 outline-none transition focus:opacity-100 focus-visible:ring-2 focus-visible:ring-slate-400 2xl:block 2xl:opacity-0 2xl:group-hover:opacity-100"
+      class="hidden max-w-28 border-0 bg-transparent px-1 py-1 text-xs text-slate-500 outline-none transition focus:opacity-100 focus-visible:ring-2 focus-visible:ring-slate-400 2xl:@3xl/task:block 2xl:@3xl/task:opacity-0 2xl:@3xl/task:group-hover:opacity-100"
+      title="Change task status"
       :value="task.status"
       :disabled="busy"
       :aria-label="`Status for ${task.title}`"
@@ -364,7 +365,7 @@ function submitSubtask() {
     </select>
 
     <div
-      class="hidden items-center 2xl:flex 2xl:invisible 2xl:group-hover:visible 2xl:focus-within:visible"
+      class="hidden items-center 2xl:@3xl/task:flex 2xl:@3xl/task:invisible 2xl:@3xl/task:group-hover:visible 2xl:@3xl/task:focus-within:visible"
     >
       <button
         class="icon-button !size-7"
@@ -419,7 +420,7 @@ function submitSubtask() {
       <Pencil :size="14" />
     </button>
     <button
-      class="icon-button hidden text-slate-400 hover:!text-rose-600 2xl:inline-grid 2xl:invisible 2xl:group-hover:visible 2xl:focus-visible:visible"
+      class="icon-button hidden text-slate-400 hover:!text-rose-600 2xl:@3xl/task:inline-grid 2xl:@3xl/task:invisible 2xl:@3xl/task:group-hover:visible 2xl:@3xl/task:focus-visible:visible"
       type="button"
       :disabled="busy"
       :aria-label="`Delete ${task.title}`"
@@ -435,18 +436,18 @@ function submitSubtask() {
     :aria-label="`Edit ${task.title}`"
     @submit.prevent="submitEdit"
   >
-    <div class="grid gap-4 sm:grid-cols-2">
-      <label class="field-label sm:col-span-2">
+    <div class="grid gap-4 @lg/task:grid-cols-2">
+      <label class="field-label @lg/task:col-span-2">
         Task title
         <input v-model="title" class="field-input" maxlength="240" required autofocus />
       </label>
       <p
         v-if="deadlineSuggestion"
-        class="-mt-2 text-xs text-slate-500 sm:col-span-2 dark:text-slate-400"
+        class="-mt-2 text-xs text-slate-500 @lg/task:col-span-2 dark:text-slate-400"
       >
         Deadline detected: {{ deadlineSuggestion.label }}
       </p>
-      <label class="field-label sm:col-span-2">
+      <label class="field-label @lg/task:col-span-2">
         Description
         <textarea
           v-model="description"

@@ -39,6 +39,40 @@ describe('TaskItem', () => {
     expect(task.status).toBe('todo')
   })
 
+  it('keeps human-readable status choices mapped to API values', async () => {
+    const wrapper = mountTask({ task })
+    const select = wrapper.get('select[aria-label="Status for Write PRD"]')
+    expect(select.attributes('title')).toBe('Change task status')
+    expect(select.get('option[value="todo"]').text()).toBe('To do')
+    await select.setValue('blocked')
+    expect(wrapper.emitted('status')).toEqual([[task, 'blocked']])
+  })
+
+  it('preserves work blocks, exact deadline timestamps, and time text while editing status', async () => {
+    const scheduledTask: Task = {
+      ...task,
+      title: 'Write PRD at 3pm',
+      due_at: '2026-09-01T17:00:34Z',
+      scheduled_start: '2026-09-01T09:00:12Z',
+      scheduled_end: '2026-09-01T10:30:12Z',
+    }
+    const wrapper = mountTask({ task: scheduledTask })
+    await wrapper.get('button[aria-label="Edit Write PRD at 3pm"]').trigger('click')
+    await wrapper.get('select[aria-label="Edit status"]').setValue('in_progress')
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('edit')?.[0]?.[1]).toMatchObject({
+      title: scheduledTask.title,
+      due_at: scheduledTask.due_at,
+      scheduled_start: scheduledTask.scheduled_start,
+      scheduled_end: scheduledTask.scheduled_end,
+      status: 'in_progress',
+    })
+    // A successful version update closes the editor; reopening completion retains its inverse action.
+    await wrapper.setProps({ task: { ...scheduledTask, status: 'completed', version: 2 } })
+    await wrapper.get('button[aria-label="Mark Write PRD at 3pm incomplete"]').trigger('click')
+    expect(wrapper.emitted('status')?.[0]?.[1]).toBe('todo')
+  })
+
   it('renders priority and title', () => {
     const wrapper = mountTask({ task })
 
