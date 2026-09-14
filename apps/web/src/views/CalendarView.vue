@@ -133,15 +133,19 @@ const selectedWeekday = computed(() =>
 const preferredEventCalendarId = computed(() =>
   defaultEventCalendarId(store.calendars, store.user?.email),
 )
-// Minute-resolution inputs must not invalidate or truncate untouched legacy timestamps.
-const unchangedLegacyTimes = computed(() => {
+// Preserve each untouched timestamp; minute-resolution inputs cannot represent saved seconds.
+const unchangedEventTimes = computed(() => {
   const event = editingEvent.value
-  return legacyAllDay.value &&
-    event &&
-    eventStart.value === localDateTimeValue(new Date(event.starts_at)) &&
-    eventEnd.value === localDateTimeValue(new Date(event.ends_at))
-    ? { starts_at: event.starts_at, ends_at: event.ends_at }
-    : null
+  if (!event || event.all_day !== eventAllDay.value || (eventAllDay.value && !legacyAllDay.value))
+    return null
+  return {
+    starts_at:
+      eventStart.value === localDateTimeValue(new Date(event.starts_at))
+        ? event.starts_at
+        : undefined,
+    ends_at:
+      eventEnd.value === localDateTimeValue(new Date(event.ends_at)) ? event.ends_at : undefined,
+  }
 })
 const eventRangeError = computed(() => {
   if (eventAllDay.value && !legacyAllDay.value) {
@@ -150,8 +154,8 @@ const eventRangeError = computed(() => {
       return 'Last day must be on or after the start date.'
   } else {
     if (!eventStart.value || !eventEnd.value) return 'Choose a start and end time.'
-    const start = unchangedLegacyTimes.value?.starts_at ?? eventStart.value
-    const end = unchangedLegacyTimes.value?.ends_at ?? eventEnd.value
+    const start = unchangedEventTimes.value?.starts_at ?? eventStart.value
+    const end = unchangedEventTimes.value?.ends_at ?? eventEnd.value
     if (!(new Date(end) > new Date(start))) return 'End must be after start.'
   }
   return ''
@@ -160,10 +164,9 @@ const eventTimes = computed(() => {
   if (eventRangeError.value) return null
   if (eventAllDay.value && !legacyAllDay.value)
     return allDayEventTimes(eventFirstDay.value, eventLastDay.value)
-  if (unchangedLegacyTimes.value) return unchangedLegacyTimes.value
   return {
-    starts_at: new Date(eventStart.value).toISOString(),
-    ends_at: new Date(eventEnd.value).toISOString(),
+    starts_at: unchangedEventTimes.value?.starts_at ?? new Date(eventStart.value).toISOString(),
+    ends_at: unchangedEventTimes.value?.ends_at ?? new Date(eventEnd.value).toISOString(),
   }
 })
 const eventRecurrenceError = computed(() => {
@@ -472,6 +475,7 @@ function openEventEditor(event: CalendarEvent) {
     ? localDateTimeValue(new Date(event.recurrence_until))
     : ''
   eventFormOpen.value = true
+  void nextTick(() => eventTitleInput.value?.focus())
 }
 
 function changeEventTiming() {
@@ -1391,7 +1395,7 @@ function monthDays(cursor: Date) {
         @click="eventFormOpen = false"
       />
       <form
-        class="relative z-10 my-auto grid w-full max-w-4xl gap-4 border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-950 sm:grid-cols-2 lg:grid-cols-6"
+        class="relative z-10 my-auto grid w-full min-w-0 max-w-4xl grid-cols-1 gap-4 border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-950 sm:grid-cols-2 lg:grid-cols-6"
         :aria-label="editingEvent ? 'Edit event' : 'New event'"
         @submit.prevent="saveEvent"
       >
@@ -1437,7 +1441,7 @@ function monthDays(cursor: Date) {
             </option>
           </select>
         </label>
-        <fieldset class="grid gap-4 sm:col-span-2 sm:grid-cols-2 lg:col-span-6">
+        <fieldset class="grid min-w-0 grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-2 lg:col-span-6">
           <legend class="mb-2 text-sm font-medium">When</legend>
           <label class="flex items-center gap-2 text-sm sm:col-span-2">
             <input v-model="eventAllDay" type="checkbox" @change="changeEventTiming" /> All day (no
@@ -1712,7 +1716,7 @@ function monthDays(cursor: Date) {
               </p>
             </div>
             <button
-              class="icon-button !size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              class="icon-button !size-7 [@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
               type="button"
               :aria-label="`Edit ${event.title}`"
               @click="openEventEditor(event)"
@@ -1720,7 +1724,7 @@ function monthDays(cursor: Date) {
               <Pencil :size="14" />
             </button>
             <button
-              class="icon-button !size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              class="icon-button !size-7 [@media(hover:hover)]:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
               type="button"
               :aria-label="`Delete ${event.title}`"
               @click="store.removeEvent(event)"
@@ -1760,15 +1764,15 @@ function monthDays(cursor: Date) {
           <button
             v-for="event in eventsForDate(date)"
             :key="event.id"
-            class="block w-full cursor-grab truncate border-l-2 px-2 py-1 text-left text-xs"
+            class="block w-full min-w-0 cursor-grab border-l-2 px-2 py-1 text-left text-xs"
             :style="{ borderColor: calendarFor(event)?.color }"
             type="button"
             draggable="true"
             @dragstart="$event.dataTransfer?.setData('text/prosepect-event', event.id)"
             @click="openEventEditor(event)"
           >
-            <span class="mr-1 text-slate-400">{{ eventTime(event) }}</span>
-            <span>{{ event.title }}</span>
+            <span class="block truncate text-[10px] text-slate-400">{{ eventTime(event) }}</span>
+            <span class="block truncate text-xs">{{ event.title }}</span>
           </button>
           <p
             v-for="task in tasksForDate(date)"
@@ -1793,9 +1797,11 @@ function monthDays(cursor: Date) {
             {{ selectedDate.getDate() }}
           </span>
         </div>
-        <div class="flex min-w-0 items-center justify-between gap-4 px-4">
+        <div
+          class="flex min-w-0 flex-col gap-1 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
+        >
           <div class="min-w-0">
-            <h2 class="truncate text-sm font-semibold">{{ selectedLabel }}</h2>
+            <h2 class="text-sm font-semibold">{{ selectedLabel }}</h2>
             <p class="mt-0.5 text-[11px] text-slate-400">
               Click to create · drag to move or delete · drag either edge to resize.
             </p>
