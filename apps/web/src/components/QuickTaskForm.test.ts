@@ -17,7 +17,11 @@ afterEach(() => vi.useRealTimers())
 describe('QuickTaskForm creation', () => {
   it('creates with only a title and no optional values', async () => {
     const { wrapper, addTask } = setup()
-    expect(wrapper.text()).toContain('Enter a task title')
+    expect(wrapper.text()).not.toContain('Enter a task title')
+    expect(wrapper.text()).not.toContain('Only a title is required')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('form').trigger('submit')
+    expect(addTask).not.toHaveBeenCalled()
     await wrapper.get('input[type=text]').setValue('Write report')
     await wrapper.get('form').trigger('submit')
     expect(addTask).toHaveBeenCalledWith({
