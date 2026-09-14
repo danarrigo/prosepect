@@ -59,11 +59,11 @@ const todoistHints = computed(() => {
 })
 const submitHint = computed(() => {
   if (store.saving) return 'Creating task…'
-  if (!submittedTitle.value) return 'Enter a task title to create it.'
+  if (!submittedTitle.value) return ''
   if (recurrence.value !== 'none' && !dueDate.value) return 'Choose a deadline for repeating tasks.'
   return ''
 })
-const canSubmit = computed(() => !submitHint.value)
+const canSubmit = computed(() => Boolean(submittedTitle.value) && !submitHint.value)
 const detectedWorkTime = computed(() => {
   const { scheduledStart, scheduledEnd } = quickCapture.value
   if (!scheduledStart || !scheduledEnd) return ''
@@ -199,9 +199,6 @@ function deadlineIsoDate(value: string) {
       </button>
     </div>
 
-    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-      Only a title is required. A deadline does not reserve work time.
-    </p>
     <p v-if="deadlineSuggestion" class="mt-1 text-xs text-slate-500 dark:text-slate-400">
       Deadline detected: {{ deadlineSuggestion.dueDate }}
       {{ deadlineSuggestion.dueTime ? `at ${deadlineSuggestion.dueTime}` : '(end of day)' }}

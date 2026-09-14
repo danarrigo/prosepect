@@ -86,7 +86,10 @@ test('creates a title-only task by keyboard with optional fields empty', async (
   await expect(form.getByLabel('Task title', { exact: true })).toBeFocused()
   await expect(form).not.toContainText(/\((?:optional|required[^)]*)\)/)
   await expect(form.getByRole('button', { name: 'Create task', exact: true })).toBeDisabled()
-  await expect(form.getByText('Enter a task title to create it.')).toBeVisible()
+  await expect(form.getByText('Enter a task title to create it.')).toHaveCount(0)
+  await expect(
+    form.getByText('Only a title is required. A deadline does not reserve work time.'),
+  ).toHaveCount(0)
   await expect(form.getByLabel('Project')).toHaveValue('')
   await expect(form.getByLabel('Deadline', { exact: false })).toHaveValue('')
   await form.getByLabel('Task title').fill('Write report')
