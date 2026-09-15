@@ -34,6 +34,9 @@ const editingEvent = ref<CalendarEvent | null>(null)
 const eventDeleteArmed = ref(false)
 const eventTitle = ref('')
 const eventTitleInput = ref<HTMLInputElement | null>(null)
+const eventDialog = ref<HTMLElement | null>(null)
+const newEventButton = ref<HTMLButtonElement | null>(null)
+let eventOpener: HTMLElement | null = null
 const eventDescription = ref('')
 const eventCalendarId = ref('')
 const eventStart = ref('')
@@ -384,7 +387,25 @@ function goToToday() {
   selectDate(today.value)
 }
 
+function rememberEventOpener() {
+  eventOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+}
+
+async function closeEventForm() {
+  if (!eventFormOpen.value) return
+  const returnFocus = eventDialog.value?.contains(document.activeElement)
+  const opener = eventOpener
+  eventOpener = null
+  eventFormOpen.value = false
+  await nextTick()
+  // A pending save must not pull focus back from navigation or another editor.
+  if (!returnFocus || eventFormOpen.value || document.activeElement !== document.body) return
+  const target = opener?.isConnected && opener !== document.body ? opener : newEventButton.value
+  if (target?.isConnected) target.focus()
+}
+
 function openEventForm(date = selectedDate.value, startHour = 9) {
+  rememberEventOpener()
   taskFormOpen.value = false
   editingEvent.value = null
   eventDeleteArmed.value = false
@@ -454,6 +475,7 @@ async function saveCalendarTask() {
 }
 
 function openEventEditor(event: CalendarEvent) {
+  rememberEventOpener()
   eventDeleteArmed.value = false
   editingEvent.value = event
   eventTitle.value = event.title
@@ -499,6 +521,9 @@ function useAllDayDates() {
 async function saveEvent() {
   if (eventSubmitHint.value || !eventTimes.value) return
   eventSaveError.value = ''
+  const savingDialog = eventDialog.value
+  const focusedControl = document.activeElement
+  let saved = false
   eventSaving.value = true
   const input = {
     calendar_id: eventCalendarId.value,
@@ -532,12 +557,25 @@ async function saveEvent() {
     } else {
       await store.addEvent(input)
     }
-    eventFormOpen.value = false
+    saved = true
   } catch {
     eventSaveError.value = 'Could not save event. Your draft is kept. Try again.'
   } finally {
     eventSaving.value = false
+    await nextTick()
+    // Disabling the submit button blurs it in Chromium. Restore only that lost focus,
+    // not focus the user moved elsewhere while the request was in flight.
+    if (
+      savingDialog?.isConnected &&
+      eventDialog.value === savingDialog &&
+      document.activeElement === document.body &&
+      focusedControl instanceof HTMLElement &&
+      savingDialog.contains(focusedControl)
+    ) {
+      focusedControl.focus()
+    }
   }
+  if (saved && eventDialog.value === savingDialog) await closeEventForm()
 }
 
 async function deleteEditedEvent() {
@@ -549,7 +587,7 @@ async function deleteEditedEvent() {
   await store.removeEvent(editingEvent.value)
   editingEvent.value = null
   eventDeleteArmed.value = false
-  eventFormOpen.value = false
+  await closeEventForm()
 }
 
 async function moveEvent(event: CalendarEvent, date: Date) {
@@ -1131,7 +1169,7 @@ function monthDays(cursor: Date) {
         <button class="secondary-button" type="button" @click="openTaskForm()">
           <Plus :size="16" /> New task
         </button>
-        <button class="primary-button" type="button" @click="openEventForm()">
+        <button ref="newEventButton" class="primary-button" type="button" @click="openEventForm()">
           <Plus :size="16" /> New event
         </button>
       </div>
@@ -1321,6 +1359,7 @@ function monthDays(cursor: Date) {
           >
             <input
               v-model="editingCalendarName"
+              aria-label="Name"
               class="field-input !h-8 min-w-0"
               required
               maxlength="120"
@@ -1382,17 +1421,18 @@ function monthDays(cursor: Date) {
 
     <div
       v-if="eventFormOpen"
+      ref="eventDialog"
       class="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4"
       role="dialog"
       aria-modal="true"
       :aria-label="editingEvent ? 'Edit event' : 'New event'"
-      @keydown.esc="eventFormOpen = false"
+      @keydown.esc="closeEventForm"
     >
       <button
         class="absolute inset-0 bg-slate-950/30"
         type="button"
         aria-label="Close event form"
-        @click="eventFormOpen = false"
+        @click="closeEventForm"
       />
       <form
         class="relative z-10 my-auto grid w-full min-w-0 max-w-4xl grid-cols-1 gap-4 border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-950 sm:grid-cols-2 lg:grid-cols-6"
@@ -1406,12 +1446,7 @@ function monthDays(cursor: Date) {
               Title, calendar and dates are required. Everything in Details is optional.
             </p>
           </div>
-          <button
-            class="icon-button"
-            type="button"
-            aria-label="Close"
-            @click="eventFormOpen = false"
-          >
+          <button class="icon-button" type="button" aria-label="Close" @click="closeEventForm">
             <X :size="18" />
           </button>
         </div>
@@ -1607,9 +1642,7 @@ function monthDays(cursor: Date) {
             {{ eventDeleteArmed ? 'Confirm delete' : 'Delete event' }}
           </button>
           <div class="ml-auto flex gap-2">
-            <button class="secondary-button" type="button" @click="eventFormOpen = false">
-              Cancel
-            </button>
+            <button class="secondary-button" type="button" @click="closeEventForm">Cancel</button>
             <button class="primary-button" type="submit" :disabled="Boolean(eventSubmitHint)">
               {{ editingEvent ? 'Save event' : 'Create event' }}
             </button>

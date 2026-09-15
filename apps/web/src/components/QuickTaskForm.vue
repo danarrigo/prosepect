@@ -229,9 +229,9 @@ function deadlineIsoDate(value: string) {
     </p>
 
     <div class="mt-1 flex flex-wrap items-center gap-2 pb-1">
-      <label class="text-[11px] text-slate-500 dark:text-slate-400">
+      <label class="min-w-0 max-w-full text-[11px] text-slate-500 dark:text-slate-400">
         <span class="block">Project</span>
-        <select v-model="projectId" class="subtle-select">
+        <select v-model="projectId" class="subtle-select max-w-full">
           <option value="">No project</option>
           <option
             v-for="project in store.projects.filter((item) => item.status !== 'archived')"

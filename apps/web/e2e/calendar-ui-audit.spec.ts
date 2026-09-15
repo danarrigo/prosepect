@@ -305,8 +305,16 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await expect(calendarForm.getByLabel('Name', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Edit Personal calendar', exact: true }).click()
     const calendarEdit = page.getByRole('form', { name: 'Edit Personal calendar', exact: true })
-    await expect(calendarEdit.getByRole('textbox', { name: '', exact: true })).toHaveValue(
+    await expect(calendarEdit.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(
       'Personal',
+    )
+    await page.screenshot({ path: testInfo.outputPath('calendar-name-editor.png'), scale: 'css' })
+    console.log(
+      JSON.stringify({
+        calendarNameWidth: await calendarEdit
+          .getByLabel('Name', { exact: true })
+          .evaluate((el) => el.getBoundingClientRect().width),
+      }),
     )
     await calendarEdit.getByRole('button', { name: 'Cancel', exact: true }).click()
     await page.getByRole('button', { name: 'Close calendar management', exact: true }).click()
@@ -484,11 +492,113 @@ for (const title of [eventTitle, allDayTitle]) {
     await page.screenshot({ path: testInfo.outputPath('editor-initial-focus.png'), scale: 'css' })
     await page.keyboard.press('Escape')
     await expect(form).toBeHidden()
-    console.log(
-      JSON.stringify({
-        title,
-        focusAfterClose: await page.evaluate(() => document.activeElement?.tagName),
-      }),
-    )
+    await expect(edit).toBeFocused()
   })
 }
+
+for (const close of ['Escape', 'Cancel', 'backdrop', 'Close', 'save'] as const) {
+  test(`event editor returns focus after ${close}`, async ({ page }, testInfo) => {
+    await mockCalendar(page)
+    await page.goto('/calendar?date=2026-09-01&view=month')
+    const opener = page.getByRole('button', { name: `Edit ${eventTitle}`, exact: true })
+    if (testInfo.project.use.isMobile) await opener.tap()
+    else {
+      await opener.focus()
+      await page.keyboard.press('Enter')
+    }
+    const form = page.getByRole('form', { name: 'Edit event', exact: true })
+    await expect(form.getByLabel('Title', { exact: true })).toBeFocused()
+    if (close === 'Escape') await page.keyboard.press('Escape')
+    else if (close === 'backdrop')
+      await page
+        .getByRole('button', { name: 'Close event form', exact: true })
+        .click({ position: { x: 2, y: 2 } })
+    else
+      await form
+        .getByRole('button', { name: close === 'save' ? 'Save event' : close, exact: true })
+        .click()
+    await expect(form).toBeHidden()
+    await expect(opener).toBeFocused()
+    await page.screenshot({ path: testInfo.outputPath(`focus-return-${close}.png`), scale: 'css' })
+  })
+}
+
+test('event save failure retains editor focus and retry returns to opener', async ({ page }) => {
+  await mockCalendar(page)
+  let fail = true
+  await page.route('**/api/v1/events/timed', async (route) => {
+    if (fail) {
+      fail = false
+      await route.fulfill({ status: 500, json: { error: 'failed' } })
+    } else await route.fallback()
+  })
+  await page.goto('/calendar?date=2026-09-01&view=month')
+  const opener = page.getByRole('button', { name: `Edit ${eventTitle}`, exact: true })
+  await opener.click()
+  const form = page.getByRole('form', { name: 'Edit event', exact: true })
+  const save = form.getByRole('button', { name: 'Save event', exact: true })
+  await save.click()
+  await expect(form.getByRole('alert')).toContainText('Your draft is kept')
+  await expect(save).toBeFocused()
+  await expect(form.getByLabel('Title', { exact: true })).toHaveValue(eventTitle)
+  await save.click()
+  await expect(form).toBeHidden()
+  await expect(opener).toBeFocused()
+})
+
+test('saving an event outside the selected date uses the reachable New event fallback', async ({
+  page,
+}) => {
+  await mockCalendar(page)
+  await page.goto('/calendar?date=2026-09-01&view=month')
+  await page.getByRole('button', { name: `Edit ${eventTitle}`, exact: true }).click()
+  const form = page.getByRole('form', { name: 'Edit event', exact: true })
+  await form.getByLabel('Ends').fill('2026-09-02T12:30')
+  await form.getByLabel('Starts').fill('2026-09-02T11:00')
+  await form.getByRole('button', { name: 'Save event', exact: true }).click()
+  await expect(form).toBeHidden()
+  await expect(page.getByRole('button', { name: 'New event', exact: true })).toBeFocused()
+})
+
+test('calendar view navigation without an editor does not restore stale opener focus', async ({
+  page,
+}) => {
+  await mockCalendar(page)
+  await page.goto('/calendar?date=2026-09-01&view=month')
+  await page.getByRole('button', { name: `Edit ${eventTitle}`, exact: true }).click()
+  await page.keyboard.press('Escape')
+  const week = page.getByRole('button', { name: 'week', exact: true })
+  await week.click()
+  await expect(week).toHaveAttribute('aria-pressed', 'true')
+  await expect(week).toBeFocused()
+})
+
+test('pending event save does not steal focus after navigation away', async ({ page }) => {
+  await mockCalendar(page)
+  let release!: () => void
+  const response = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/v1/events/timed', async (route) => {
+    await response
+    await route.fallback()
+  })
+  await page.goto('/calendar?date=2026-09-01&view=month')
+  await page.getByRole('button', { name: `Edit ${eventTitle}`, exact: true }).click()
+  const request = page.waitForRequest('**/api/v1/events/timed')
+  await page.getByRole('button', { name: 'Save event', exact: true }).click()
+  await request
+  // Browser history navigation remains possible while a request is pending.
+  await page.evaluate(() => {
+    history.pushState({}, '', '/projects')
+    dispatchEvent(new PopStateEvent('popstate'))
+  })
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible()
+  const newProject = page.getByRole('button', { name: 'New project', exact: true })
+  await newProject.focus()
+  const savedResponse = page.waitForResponse('**/api/v1/events/timed')
+  release()
+  await (await savedResponse).finished()
+  await page.waitForTimeout(100)
+  await expect(newProject).toBeFocused()
+})

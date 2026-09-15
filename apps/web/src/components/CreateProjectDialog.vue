@@ -15,6 +15,7 @@ import { useWorkspaceStore } from '../stores/workspace'
 const store = useWorkspaceStore()
 const open = ref(false)
 const name = ref('')
+const nameInput = ref<HTMLInputElement | null>(null)
 const outcome = ref('')
 const targetDate = ref('')
 
@@ -49,6 +50,7 @@ async function submit() {
       <DialogOverlay class="fixed inset-0 z-50 bg-slate-950/30 data-[state=open]:animate-fade-in" />
       <DialogContent
         class="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto border border-slate-200 bg-white p-6 shadow-xl outline-none dark:border-slate-800 dark:bg-slate-950"
+        @open-auto-focus.prevent="nameInput?.focus()"
       >
         <div class="flex items-start gap-4">
           <div class="min-w-0 flex-1">
@@ -66,6 +68,7 @@ async function submit() {
           <label class="field-label">
             Project name
             <input
+              ref="nameInput"
               v-model="name"
               class="field-input"
               maxlength="120"
