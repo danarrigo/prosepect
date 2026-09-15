@@ -269,7 +269,7 @@ function calendarAriaLabel(date: Date) {
         </div>
       </section>
 
-      <section>
+      <section class="min-w-0">
         <div
           class="flex items-baseline justify-between border-b border-slate-200 pb-3 dark:border-slate-800"
         >

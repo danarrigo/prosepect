@@ -302,9 +302,11 @@ function priorityRank(priority: TaskPriority) {
 
       <div v-else class="mt-9">
         <div class="flex flex-col items-start gap-6 sm:flex-row sm:justify-between">
-          <div class="min-w-0 flex-1">
-            <h1 class="page-title !mt-0">{{ selected.name }}</h1>
-            <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+          <div class="w-full min-w-0 flex-1">
+            <h1 class="page-title !mt-0 [overflow-wrap:anywhere]">{{ selected.name }}</h1>
+            <p
+              class="mt-3 max-w-2xl text-sm leading-6 text-slate-500 [overflow-wrap:anywhere] dark:text-slate-400"
+            >
               {{ selected.outcome || 'No outcome described.' }}
             </p>
             <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-400">
@@ -375,7 +377,7 @@ function priorityRank(priority: TaskPriority) {
       </div>
 
       <div
-        class="grid gap-2 border-b border-slate-100 py-4 dark:border-slate-900 sm:grid-cols-[minmax(12rem,1fr)_repeat(4,auto)]"
+        class="grid grid-cols-1 gap-2 border-b border-slate-100 py-4 dark:border-slate-900 sm:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))] [&>*]:min-w-0"
       >
         <label class="relative">
           <Search :size="14" class="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
@@ -387,7 +389,7 @@ function priorityRank(priority: TaskPriority) {
             placeholder="Search tasks"
           />
         </label>
-        <select v-model="statusFilter" class="filter-control" aria-label="Filter by status">
+        <select v-model="statusFilter" class="filter-control w-full" aria-label="Filter by status">
           <option value="open">Open</option>
           <option value="all">All statuses</option>
           <option value="todo">To do</option>
@@ -395,18 +397,22 @@ function priorityRank(priority: TaskPriority) {
           <option value="blocked">Blocked</option>
           <option value="completed">Completed</option>
         </select>
-        <select v-model="priorityFilter" class="filter-control" aria-label="Filter by priority">
+        <select
+          v-model="priorityFilter"
+          class="filter-control w-full"
+          aria-label="Filter by priority"
+        >
           <option value="all">All priorities</option>
           <option value="low">Low</option>
           <option value="medium">Medium</option>
           <option value="high">High</option>
           <option value="urgent">Urgent</option>
         </select>
-        <select v-model="labelFilter" class="filter-control" aria-label="Filter by label">
+        <select v-model="labelFilter" class="filter-control w-full" aria-label="Filter by label">
           <option value="all">All labels</option>
           <option v-for="label in labels" :key="label" :value="label">{{ label }}</option>
         </select>
-        <select v-model="sortBy" class="filter-control" aria-label="Sort tasks">
+        <select v-model="sortBy" class="filter-control w-full" aria-label="Sort tasks">
           <option value="manual">Manual order</option>
           <option value="due">Deadline</option>
           <option value="priority">Priority</option>
