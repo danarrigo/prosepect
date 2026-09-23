@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 
 test('publishes a descriptive signed-out homepage and legal policies', async ({ page }) => {
@@ -325,7 +326,12 @@ test('uploads, downloads, and deletes a private file', async ({ page }) => {
   await expect(page.getByText(filename, { exact: true })).toBeVisible()
   const download = page.waitForEvent('download')
   await page.getByRole('link', { name: `Download ${filename}` }).click()
-  expect((await download).suggestedFilename()).toBe(filename)
+  const completedDownload = await download
+  expect(completedDownload.suggestedFilename()).toBe(filename)
+  expect(await completedDownload.failure()).toBeNull()
+  const downloadedPath = await completedDownload.path()
+  expect(downloadedPath).not.toBeNull()
+  expect(await readFile(downloadedPath!, 'utf8')).toBe('private file contents')
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByRole('button', { name: `Delete ${filename}` }).click()
   await expect(page.getByText(filename, { exact: true })).toHaveCount(0)
