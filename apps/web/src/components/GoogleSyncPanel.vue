@@ -137,7 +137,9 @@ onBeforeUnmount(() => {
         <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
           {{
             !integration
-              ? 'Loading Google connection…'
+              ? loading
+                ? 'Loading Google connection…'
+                : 'Google connection status unavailable.'
               : integration.connected
                 ? 'Connected with encrypted credentials.'
                 : 'Not connected. Connect Google to synchronize calendars and scheduled tasks.'

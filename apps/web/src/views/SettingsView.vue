@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { Download, Trash2, Upload } from '@lucide/vue'
 import * as api from '../api/client'
 import GoogleSyncPanel from '../components/GoogleSyncPanel.vue'
@@ -12,6 +12,9 @@ const theme = ref<ThemePreference>('system')
 const automaticReview = ref(true)
 const sidebarVisible = ref(true)
 const conflictPolicy = ref<SyncConflictPolicy>('ask')
+const saving = ref(false)
+const saveError = ref('')
+const saveButton = ref<HTMLButtonElement | null>(null)
 const todoistImport = ref<ParsedTodoistImport | null>(null)
 const todoistProject = ref('')
 const todoistImportBusy = ref(false)
@@ -31,20 +34,31 @@ watch(
 )
 
 async function save() {
-  if (!store.settings) return
-  await store.saveSettings({
-    ...store.settings,
-    theme: theme.value,
-    automatic_daily_review: automaticReview.value,
-    sync_conflict_policy: conflictPolicy.value,
-    sidebar_visible: sidebarVisible.value,
-  })
-  if (theme.value === 'system') localStorage.removeItem('prosepect.theme')
-  else localStorage.setItem('prosepect.theme', theme.value)
-  const dark =
-    theme.value === 'dark' ||
-    (theme.value === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-  document.documentElement.classList.toggle('dark', dark)
+  if (!store.settings || saving.value) return
+  saving.value = true
+  saveError.value = ''
+  try {
+    await store.saveSettings({
+      ...store.settings,
+      theme: theme.value,
+      automatic_daily_review: automaticReview.value,
+      sync_conflict_policy: conflictPolicy.value,
+      sidebar_visible: sidebarVisible.value,
+    })
+    if (theme.value === 'system') localStorage.removeItem('prosepect.theme')
+    else localStorage.setItem('prosepect.theme', theme.value)
+    const dark =
+      theme.value === 'dark' ||
+      (theme.value === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    document.documentElement.classList.toggle('dark', dark)
+  } catch (cause) {
+    saveError.value =
+      cause instanceof Error ? cause.message : 'Could not save settings. Please retry.'
+  } finally {
+    saving.value = false
+    await nextTick()
+    saveButton.value?.focus()
+  }
 }
 
 async function selectTodoistCsv(event: Event) {
@@ -109,7 +123,7 @@ async function deleteAccount() {
       <div class="mt-5 grid gap-5 sm:grid-cols-2">
         <label>
           <span class="field-label">Theme</span>
-          <select v-model="theme" class="field-input">
+          <select v-model="theme" :disabled="saving" class="field-input">
             <option value="system">Use system setting</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
@@ -117,7 +131,7 @@ async function deleteAccount() {
         </label>
         <label>
           <span class="field-label">Synchronization conflicts</span>
-          <select v-model="conflictPolicy" class="field-input">
+          <select v-model="conflictPolicy" :disabled="saving" class="field-input">
             <option value="ask">Always ask</option>
             <option value="latest">Keep most recently edited</option>
             <option value="google">Prefer Google</option>
@@ -126,7 +140,7 @@ async function deleteAccount() {
         </label>
       </div>
       <label class="mt-5 flex items-start gap-3 text-sm">
-        <input v-model="automaticReview" class="mt-0.5" type="checkbox" />
+        <input v-model="automaticReview" :disabled="saving" class="mt-0.5" type="checkbox" />
         <span>
           <strong class="font-medium">Start the daily review automatically</strong>
           <span class="mt-1 block text-xs leading-5 text-slate-400">
@@ -135,7 +149,7 @@ async function deleteAccount() {
         </span>
       </label>
       <label class="mt-5 flex items-start gap-3 text-sm">
-        <input v-model="sidebarVisible" class="mt-0.5" type="checkbox" />
+        <input v-model="sidebarVisible" :disabled="saving" class="mt-0.5" type="checkbox" />
         <span>
           <strong class="font-medium">Show sidebar</strong>
           <span class="mt-1 block text-xs leading-5 text-slate-400">
@@ -144,8 +158,16 @@ async function deleteAccount() {
           </span>
         </span>
       </label>
+      <p v-if="saveError" role="alert" class="mt-5 text-sm text-rose-600">{{ saveError }}</p>
       <div class="mt-6 flex justify-end">
-        <button class="primary-button" type="submit">Save settings</button>
+        <button
+          ref="saveButton"
+          class="primary-button"
+          type="submit"
+          :disabled="saving || !store.settings"
+        >
+          {{ saving ? 'Saving…' : 'Save settings' }}
+        </button>
       </div>
     </form>
 
