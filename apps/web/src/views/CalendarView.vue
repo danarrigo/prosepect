@@ -596,20 +596,11 @@ async function moveEvent(event: CalendarEvent, date: Date) {
   const duration = new Date(event.ends_at).getTime() - oldStart.getTime()
   const start = new Date(date)
   start.setHours(oldStart.getHours(), oldStart.getMinutes(), oldStart.getSeconds(), 0)
-  await store.editEvent(event, {
-    calendar_id: event.calendar_id,
-    title: event.title,
-    description: event.description,
-    starts_at: allDayMove?.starts_at ?? start.toISOString(),
-    ends_at: allDayMove?.ends_at ?? new Date(start.getTime() + duration).toISOString(),
-    all_day: event.all_day,
-    timezone: event.timezone,
-    location: event.location,
-    attendees: event.attendees,
-    recurrence: event.recurrence,
-    recurrence_until: event.recurrence_until ?? null,
-    expected_version: event.version,
-  })
+  await store.moveCalendarItem(
+    event,
+    allDayMove?.starts_at ?? start.toISOString(),
+    allDayMove?.ends_at ?? new Date(start.getTime() + duration).toISOString(),
+  )
 }
 
 function dropEvent(date: Date, event: DragEvent) {
@@ -866,7 +857,8 @@ function finishTimelineMove() {
   const start = new Date(preview.startsAt)
   const end = new Date(preview.endsAt)
   void updateTimelineItemTime(state.item, start, end)
-    .then(() => {
+    .then((saved) => {
+      if (!saved) return
       timelineAnnouncement.value = `${state.item.title} moved to ${timelineTimeRange({ ...state.item, startsAt: start.toISOString(), endsAt: end.toISOString() })}`
     })
     .finally(() => {
@@ -976,7 +968,8 @@ function finishTimelineResize() {
   const start = new Date(preview.startsAt)
   const end = new Date(preview.endsAt)
   void updateTimelineItemTime(state.item, start, end)
-    .then(() => {
+    .then((saved) => {
+      if (!saved) return
       timelineAnnouncement.value = `${state.item.title} resized to ${timelineTimeRange({ ...state.item, startsAt: start.toISOString(), endsAt: end.toISOString() })}`
     })
     .finally(() => {
@@ -1031,7 +1024,7 @@ async function nudgeTimelineItem(item: TimelineItem, action: 'move' | 'resize', 
     nextEnd = new Date(start.getTime() + nextDuration * 60_000)
   }
 
-  await updateTimelineItemTime(item, nextStart, nextEnd)
+  if (!(await updateTimelineItemTime(item, nextStart, nextEnd))) return
   const range = timelineTimeRange({
     ...item,
     startsAt: nextStart.toISOString(),
@@ -1041,39 +1034,9 @@ async function nudgeTimelineItem(item: TimelineItem, action: 'move' | 'resize', 
 }
 
 async function updateTimelineItemTime(item: TimelineItem, start: Date, end: Date) {
-  if (item.event) {
-    await store.editEvent(item.event, {
-      calendar_id: item.event.calendar_id,
-      title: item.event.title,
-      description: item.event.description,
-      starts_at: start.toISOString(),
-      ends_at: end.toISOString(),
-      all_day: item.event.all_day,
-      timezone: item.event.timezone,
-      location: item.event.location,
-      attendees: item.event.attendees,
-      recurrence: item.event.recurrence,
-      recurrence_until: item.event.recurrence_until ?? null,
-      expected_version: item.event.version,
-    })
-    return
-  }
-  if (item.task) {
-    await store.editTask(item.task, {
-      project_id: item.task.project_id,
-      parent_task_id: item.task.parent_task_id,
-      title: item.task.title,
-      description: item.task.description,
-      due_at: item.task.due_at,
-      scheduled_start: start.toISOString(),
-      scheduled_end: end.toISOString(),
-      status: item.task.status,
-      priority: item.task.priority,
-      recurrence: item.task.recurrence,
-      labels: item.task.labels,
-      remind_at: item.task.remind_at,
-    })
-  }
+  const target = item.event ?? item.task
+  if (!target) return false
+  return store.moveCalendarItem(target, start.toISOString(), end.toISOString())
 }
 
 function localDateTimeValue(value: Date) {

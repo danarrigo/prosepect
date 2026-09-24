@@ -1480,7 +1480,10 @@ impl Store {
         Ok(())
     }
 
-    async fn lock_task_graph(connection: &mut PgConnection, user_id: Uuid) -> AppResult<()> {
+    pub(crate) async fn lock_task_graph(
+        connection: &mut PgConnection,
+        user_id: Uuid,
+    ) -> AppResult<()> {
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::TEXT, 0))")
             .bind(user_id.to_string())
             .execute(connection)

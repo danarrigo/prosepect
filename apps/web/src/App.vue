@@ -16,6 +16,7 @@ import {
 import * as api from './api/client'
 import AppSidebar from './components/AppSidebar.vue'
 import BrandLogo from './components/BrandLogo.vue'
+import CalendarMoveFeedback from './components/CalendarMoveFeedback.vue'
 import CreateTaskDialog from './components/CreateTaskDialog.vue'
 import DailyReviewDialog from './components/DailyReviewDialog.vue'
 import GlobalSearch from './components/GlobalSearch.vue'
@@ -205,6 +206,7 @@ onBeforeUnmount(() => {
       Skip to content
     </a>
     <DailyReviewDialog />
+    <CalendarMoveFeedback />
     <KeyboardPalette
       :open="paletteMode !== null"
       :mode="paletteMode ?? 'commands'"

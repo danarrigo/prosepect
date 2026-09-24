@@ -962,3 +962,47 @@ async fn operations_aggregate_failure_is_unknown_not_zero(pool: PgPool) -> anyho
     assert!(body.get("error").is_none());
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_move_and_undo_require_cookie_csrf(pool: PgPool) -> anyhow::Result<()> {
+    let router = app::build(&test_config(), Store::from_pool(pool))?;
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .body(Body::empty())?,
+        )
+        .await?;
+    let cookie = response.headers()[header::SET_COOKIE]
+        .to_str()?
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let body = to_bytes(response.into_body(), 64 * 1024).await?;
+    let session: serde_json::Value = serde_json::from_slice(&body)?;
+    for path in [
+        "/api/v1/events/00000000-0000-0000-0000-000000000001/move",
+        "/api/v1/tasks/00000000-0000-0000-0000-000000000001/move",
+        "/api/v1/calendar-move-undos/00000000-0000-0000-0000-000000000001/consume",
+    ] {
+        let response = router.clone().oneshot(Request::builder().method("POST").uri(path)
+            .header(header::COOKIE,&cookie).header(header::CONTENT_TYPE,"application/json")
+            .body(Body::from(r#"{"starts_at":"2026-09-10T10:00:00Z","ends_at":"2026-09-10T11:00:00Z","expected_version":1}"#))?).await?;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+    }
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/calendar-move-undos/00000000-0000-0000-0000-000000000001/consume")
+                .header(header::COOKIE, cookie)
+                .header("x-csrf-token", session["csrf_token"].as_str().unwrap())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    Ok(())
+}

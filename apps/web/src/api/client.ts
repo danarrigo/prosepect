@@ -4,6 +4,8 @@ import type {
   ActivityEntry,
   Calendar,
   CalendarEvent,
+  CalendarMoveUndo,
+  MoveCalendarItemRequest,
   CreateCalendarEventRequest,
   CreateCalendarRequest,
   CreateNoteRequest,
@@ -513,4 +515,27 @@ function unwrap<T>({
 
 function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
   return typeof value === 'object' && value !== null && 'error' in value
+}
+
+
+export async function listCalendarMoveUndos(): Promise<CalendarMoveUndo[]> {
+  return unwrap(await client.GET('/api/v1/calendar-move-undos')).items
+}
+
+export async function moveCalendarEvent(id: string, input: MoveCalendarItemRequest): Promise<CalendarMoveUndo> {
+  return unwrap(await client.POST('/api/v1/events/{event_id}/move', {
+    params: { path: { event_id: id } }, body: input,
+  }))
+}
+
+export async function moveScheduledTask(id: string, input: MoveCalendarItemRequest): Promise<CalendarMoveUndo> {
+  return unwrap(await client.POST('/api/v1/tasks/{task_id}/move', {
+    params: { path: { task_id: id } }, body: input,
+  }))
+}
+
+export async function undoCalendarMove(id: string): Promise<void> {
+  unwrap(await client.POST('/api/v1/calendar-move-undos/{receipt_id}/consume', {
+    params: { path: { receipt_id: id } },
+  }))
 }
