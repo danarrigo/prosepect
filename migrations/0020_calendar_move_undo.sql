@@ -17,3 +17,7 @@ CREATE TABLE calendar_move_undos (
     CHECK (ends_at > starts_at)
 );
 CREATE INDEX calendar_move_undos_owner_expiry_idx ON calendar_move_undos(user_id, expires_at);
+
+-- Expired receipts are logically unusable immediately. Cleanup is bounded per owner
+-- on list/move/consume; physical schedule metadata may remain until that owner's
+-- next operation or account deletion. No content or provider credentials are stored.

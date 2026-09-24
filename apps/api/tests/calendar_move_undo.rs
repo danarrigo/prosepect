@@ -399,3 +399,137 @@ async fn scheduled_task_move_undo_guards_both_versions_and_restores_both_schedul
     }
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_move_undo_expires_while_waiting_for_item_lock(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, event) = fixture(&pool).await?;
+    let receipt = move_once(&store, user, &event).await?;
+    let mut blocker = pool.begin().await?;
+    sqlx::query("SELECT id FROM calendar_events WHERE id=$1 FOR UPDATE")
+        .bind(event.id)
+        .execute(&mut *blocker)
+        .await?;
+    let waiting = tokio::spawn(async move { store.undo_calendar_move(user, receipt.id).await });
+    // Expire while the row is locked. Undo must evaluate DB time after acquiring it.
+    sqlx::query("UPDATE calendar_move_undos SET expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1")
+        .bind(receipt.id).execute(&pool).await?;
+    blocker.commit().await?;
+    assert!(matches!(waiting.await?, Err(AppError::Conflict(_))));
+    let store = Store::from_pool(pool);
+    assert_eq!(
+        current_event(&store, user, &event).await?.version,
+        event.version + 1
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_move_undo_all_day_restores_exact_utc_boundaries(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, event) = fixture(&pool).await?;
+    sqlx::query("UPDATE calendar_events SET all_day=TRUE,starts_at='2026-09-10T00:00:00Z',ends_at='2026-09-12T00:00:00Z',timezone='America/Los_Angeles' WHERE id=$1")
+        .bind(event.id).execute(&pool).await?;
+    let event = current_event(&store, user, &event).await?;
+    let receipt = store
+        .move_calendar_item(
+            user,
+            event.id,
+            false,
+            MoveCalendarItemRequest {
+                starts_at: event.starts_at + Duration::days(1),
+                ends_at: event.ends_at + Duration::days(1),
+                expected_version: event.version,
+            },
+        )
+        .await?;
+    store.undo_calendar_move(user, receipt.id).await?;
+    let restored = current_event(&store, user, &event).await?;
+    assert_eq!(restored.starts_at, event.starts_at);
+    assert_eq!(restored.ends_at, event.ends_at);
+    assert!(restored.all_day);
+    assert_eq!(restored.timezone, event.timezone);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_move_paired_writes_and_receipt_consumption_roll_back_on_failure(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, event) = fixture(&pool).await?;
+    let task = store
+        .create_task(
+            user,
+            serde_json::from_value(serde_json::json!({
+                "title":"Scheduled work", "due_at":event.ends_at + Duration::days(1),
+                "scheduled_start":event.starts_at,"scheduled_end":event.ends_at
+            }))?,
+        )
+        .await?;
+    sqlx::query("CREATE FUNCTION reject_move_receipt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected receipt failure'; END $$")
+        .execute(&pool).await?;
+    sqlx::query("CREATE TRIGGER reject_receipt BEFORE INSERT ON calendar_move_undos FOR EACH ROW EXECUTE FUNCTION reject_move_receipt()")
+        .execute(&pool).await?;
+    let request = || MoveCalendarItemRequest {
+        starts_at: event.starts_at + Duration::hours(2),
+        ends_at: event.ends_at + Duration::hours(2),
+        expected_version: task.version,
+    };
+    assert!(
+        store
+            .move_calendar_item(user, task.id, true, request())
+            .await
+            .is_err()
+    );
+    let (start, version): (Option<chrono::DateTime<Utc>>, i32) =
+        sqlx::query_as("SELECT scheduled_start,version FROM tasks WHERE id=$1")
+            .bind(task.id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!((start, version), (task.scheduled_start, task.version));
+    let (start, version): (chrono::DateTime<Utc>, i32) =
+        sqlx::query_as("SELECT starts_at,version FROM calendar_events WHERE linked_task_id=$1")
+            .bind(task.id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!((start, version), (event.starts_at, 1));
+    sqlx::query("DROP TRIGGER reject_receipt ON calendar_move_undos")
+        .execute(&pool)
+        .await?;
+    let receipt = store
+        .move_calendar_item(user, task.id, true, request())
+        .await?;
+    sqlx::query("CREATE TRIGGER reject_receipt BEFORE DELETE ON calendar_move_undos FOR EACH ROW EXECUTE FUNCTION reject_move_receipt()")
+        .execute(&pool).await?;
+    assert!(store.undo_calendar_move(user, receipt.id).await.is_err());
+    let (start, version, due): (
+        Option<chrono::DateTime<Utc>>,
+        i32,
+        Option<chrono::DateTime<Utc>>,
+    ) = sqlx::query_as("SELECT scheduled_start,version,due_at FROM tasks WHERE id=$1")
+        .bind(task.id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(
+        (start, version, due),
+        (
+            Some(event.starts_at + Duration::hours(2)),
+            task.version + 1,
+            task.due_at
+        )
+    );
+    let (start, version): (chrono::DateTime<Utc>, i32) =
+        sqlx::query_as("SELECT starts_at,version FROM calendar_events WHERE linked_task_id=$1")
+            .bind(task.id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!((start, version), (event.starts_at + Duration::hours(2), 2));
+    assert_eq!(store.list_calendar_move_undos(user).await?.items.len(), 1);
+    sqlx::query("DROP TRIGGER reject_receipt ON calendar_move_undos")
+        .execute(&pool)
+        .await?;
+    store.undo_calendar_move(user, receipt.id).await?;
+    Ok(())
+}

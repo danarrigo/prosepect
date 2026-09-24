@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import * as api from '../api/client'
 import { getOperationsCapability } from '../api/client'
@@ -61,7 +61,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const calendarMoveMessage = ref('')
   const calendarMoveError = ref('')
   let calendarRange: { start: Date; end: Date } | null = null
-
+  let calendarMoveGeneration = 0
+  watch(() => user.value?.id, () => {
+    calendarMoveGeneration += 1
+    calendarMoveUndo.value = null
+    calendarMoveMessage.value = ''
+    calendarMoveError.value = ''
+    if (calendarMovePending.value) saving.value = false
+    calendarMovePending.value = false
+    calendarMoveUndoing.value = false
+    calendarRange = null
+  }, { flush: 'sync' })
 
   const selectedProject = computed(
     () => projects.value.find((project) => project.id === selectedProjectId.value) ?? null,
@@ -375,32 +385,37 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function loadCalendarRange(start: Date, end: Date) {
-    calendarRange = { start, end }
-    events.value = await api.listEvents(end.toISOString(), start.toISOString())
+    const range = { start, end }
+    const account = user.value?.id
+    calendarRange = range
+    const result = await api.listEvents(end.toISOString(), start.toISOString())
+    if (user.value?.id === account && calendarRange === range) events.value = result
   }
 
   async function recoverCalendarMoveUndo() {
     const account = user.value?.id
     if (!account) return
+    const generation = calendarMoveGeneration
     try {
       const receipts = await api.listCalendarMoveUndos()
-      if (user.value?.id !== account) return
+      if (user.value?.id !== account || generation !== calendarMoveGeneration) return
       calendarMoveUndo.value = receipts[0] ?? null
       calendarMoveMessage.value = receipts.length ? 'Calendar move saved.' : ''
     } catch {
       // A receipt-list outage must not hide the rest of the workspace.
-      if (user.value?.id === account) calendarMoveError.value = 'Could not recover calendar Undo. Reload to retry.'
+      if (user.value?.id === account && generation === calendarMoveGeneration) calendarMoveError.value = 'Could not recover calendar Undo. Reload to retry.'
     }
   }
 
-  async function reloadMovedItems() {
+  async function reloadMovedItems(generation: number) {
     const range = calendarRange
     const [updatedTasks, updatedEvents] = await Promise.all([
       loadAllTasks(),
       range ? api.listEvents(range.end.toISOString(), range.start.toISOString()) : Promise.resolve(null),
     ])
+    if (generation !== calendarMoveGeneration) return
     tasks.value = sortTasks(updatedTasks)
-    if (updatedEvents) events.value = updatedEvents
+    if (updatedEvents && calendarRange === range) events.value = updatedEvents
   }
 
   async function moveCalendarItem(item: CalendarEvent | Task, startsAt: string, endsAt: string) {
@@ -412,21 +427,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     calendarMovePending.value = true
     saving.value = true
     calendarMoveError.value = ''
-    const account = user.value?.id
+    const generation = ++calendarMoveGeneration
     try {
       const input = { starts_at: startsAt, ends_at: endsAt, expected_version: item.version }
       const receipt = await (isTask ? api.moveScheduledTask(item.id, input) : api.moveCalendarEvent(item.id, input))
-      if (user.value?.id !== account) return false
+      if (generation !== calendarMoveGeneration) return false
       calendarMoveUndo.value = receipt
       calendarMoveMessage.value = 'Calendar move saved.'
-      try { await reloadMovedItems() } catch { calendarMoveError.value = 'Move saved. Reload to refresh the calendar; Undo is still available.' }
+      try { await reloadMovedItems(generation) } catch { if (generation === calendarMoveGeneration) calendarMoveError.value = 'Move saved. Reload to refresh the calendar; Undo is still available.' }
       return true
     } catch (cause) {
-      if (user.value?.id === account) calendarMoveError.value = messageFrom(cause)
+      if (generation === calendarMoveGeneration) calendarMoveError.value = messageFrom(cause)
       return false
     } finally {
-      calendarMovePending.value = false
-      saving.value = false
+      if (generation === calendarMoveGeneration) {
+        calendarMovePending.value = false
+        saving.value = false
+      }
     }
   }
 
@@ -437,24 +454,27 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     calendarMoveUndoing.value = true
     saving.value = true
     calendarMoveError.value = ''
-    const account = user.value?.id
+    const generation = ++calendarMoveGeneration
     try {
       await api.undoCalendarMove(receipt.id)
-      if (user.value?.id !== account) return
+      if (generation !== calendarMoveGeneration) return
       calendarMoveUndo.value = null
       calendarMoveMessage.value = 'Move undone.'
-      try { await reloadMovedItems() } catch { calendarMoveError.value = 'Move undone. Reload to refresh the calendar.' }
+      try { await reloadMovedItems(generation) } catch { if (generation === calendarMoveGeneration) calendarMoveError.value = 'Move undone. Reload to refresh the calendar.' }
     } catch (cause) {
-      if (user.value?.id === account) calendarMoveError.value = messageFrom(cause)
+      if (generation === calendarMoveGeneration) calendarMoveError.value = messageFrom(cause)
     } finally {
-      calendarMovePending.value = false
-      calendarMoveUndoing.value = false
-      saving.value = false
+      if (generation === calendarMoveGeneration) {
+        calendarMovePending.value = false
+        calendarMoveUndoing.value = false
+        saving.value = false
+      }
     }
   }
 
   function dismissCalendarMoveFeedback() {
     if (calendarMovePending.value) return
+    calendarMoveGeneration += 1
     calendarMoveUndo.value = null
     calendarMoveMessage.value = ''
     calendarMoveError.value = ''
