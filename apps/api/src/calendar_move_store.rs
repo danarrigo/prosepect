@@ -264,13 +264,15 @@ async fn mapping_guard(
     Ok(guard.unwrap_or(Value::Null))
 }
 
+type TaskSchedule = (Uuid, Option<DateTime<Utc>>, Option<DateTime<Utc>>);
+
 async fn write_schedule(
     connection: &mut PgConnection,
     user_id: Uuid,
     event_id: Uuid,
     starts_at: DateTime<Utc>,
     ends_at: DateTime<Utc>,
-    task: Option<(Uuid, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>,
+    task: Option<TaskSchedule>,
 ) -> AppResult<CalendarEvent> {
     if let Some((id, start, end)) = task {
         sqlx::query("UPDATE tasks SET scheduled_start=$3,scheduled_end=$4,updated_at=clock_timestamp(),version=version+1 WHERE user_id=$1 AND id=$2")
