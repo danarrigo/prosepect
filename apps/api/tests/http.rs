@@ -1019,6 +1019,7 @@ async fn calendar_move_http_is_authenticated_owner_scoped_and_one_shot(
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/development/session")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
                 .body(Body::empty())?,
         )
         .await?;
