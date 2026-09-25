@@ -44,3 +44,6 @@ export type EditableTaskFields = Omit<UpdateTaskRequest, 'expected_version'>
 export type TaskPriority = components['schemas']['TaskPriority']
 export type TaskRecurrence = components['schemas']['TaskRecurrence']
 export type TaskStatus = components['schemas']['TaskStatus']
+
+export type CalendarMoveUndo = components['schemas']['CalendarMoveUndo']
+export type MoveCalendarItemRequest = components['schemas']['MoveCalendarItemRequest']

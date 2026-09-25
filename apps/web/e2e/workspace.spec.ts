@@ -1,5 +1,46 @@
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
+import type { CalendarEvent, CalendarMoveUndo, MoveCalendarItemRequest } from '../src/api/types'
+
+async function waitForEventRefresh(page: Page, eventId: string, version: number) {
+  const response = await page.waitForResponse(async (response) => {
+    if (
+      new URL(response.url()).pathname !== '/api/v1/events' ||
+      response.request().method() !== 'GET' ||
+      response.status() !== 200
+    )
+      return false
+    const body: { items: CalendarEvent[] } = await response.json()
+    return body.items.some((event) => event.id === eventId && event.version === version)
+  })
+  const body: { items: CalendarEvent[] } = await response.json()
+  return body.items.find((event) => event.id === eventId)!
+}
+
+async function waitForEventMove(page: Page, previous: CalendarEvent) {
+  const [response, event] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/v1/events/${previous.id}/move` &&
+        response.request().method() === 'POST' &&
+        response.status() === 200,
+    ),
+    waitForEventRefresh(page, previous.id, previous.version + 1),
+  ])
+  const receipt: CalendarMoveUndo = await response.json()
+  const input: MoveCalendarItemRequest = response.request().postDataJSON()
+  expect(receipt.event_id).toBe(previous.id)
+  expect(input.expected_version).toBe(previous.version)
+  expect(Date.parse(event.starts_at)).toBe(Date.parse(input.starts_at))
+  expect(Date.parse(event.ends_at)).toBe(Date.parse(input.ends_at))
+  await expect(
+    page.getByRole('region', { name: 'Calendar move Undo' }).getByRole('button', {
+      name: 'Undo',
+      exact: true,
+    }),
+  ).toBeEnabled()
+  return { receipt, event }
+}
 
 test('publishes a descriptive signed-out homepage and legal policies', async ({ page }) => {
   await page.route('**/api/v1/session', async (route) => {
@@ -156,7 +197,14 @@ test('keeps times visible on compact events and scheduled tasks', async ({ page 
   const eventStart = await eventForm.getByLabel('Starts').inputValue()
   await eventForm.getByLabel('Title').fill(eventName)
   await eventForm.getByLabel('Ends').fill(eventStart.replace(/\d{2}:\d{2}$/, '09:15'))
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/events' &&
+      response.request().method() === 'POST' &&
+      response.status() === 201,
+  )
   await eventForm.getByRole('button', { name: 'Create event' }).click()
+  const event: CalendarEvent = await (await created).json()
 
   const eventBlock = page.getByRole('button', { name: new RegExp(`Edit ${eventName}`) })
   await eventBlock.scrollIntoViewIfNeeded()
@@ -168,15 +216,13 @@ test('keeps times visible on compact events and scheduled tasks', async ({ page 
   expect(eventTimeBox!.y).toBeGreaterThanOrEqual(eventBox!.y)
   expect(eventTimeBox!.y + eventTimeBox!.height).toBeLessThanOrEqual(eventBox!.y + eventBox!.height)
 
-  const resized = page.waitForResponse(
-    (response) =>
-      /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
-      response.request().method() === 'PUT' &&
-      response.status() === 200,
-  )
+  const initialEventLabel = await eventBlock.getAttribute('aria-label')
+  expect(initialEventLabel).not.toBeNull()
+  const resized = waitForEventMove(page, event)
   await eventBlock.focus()
   await page.keyboard.press('Shift+ArrowDown')
   await resized
+  await expect(eventBlock).not.toHaveAttribute('aria-label', initialEventLabel!)
 
   const thirtyMinuteBox = await eventBlock.boundingBox()
   expect(thirtyMinuteBox).not.toBeNull()
@@ -216,7 +262,14 @@ test('creates an event and browses day, week, month, and agenda views', async ({
   await page.getByRole('button', { name: 'New event' }).click()
   const form = page.getByRole('form', { name: 'New event' })
   await form.getByLabel('Title').fill(eventName)
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/events' &&
+      response.request().method() === 'POST' &&
+      response.status() === 201,
+  )
   await form.getByRole('button', { name: 'Create event' }).click()
+  const event: CalendarEvent = await (await created).json()
   await expect(page.getByText(eventName, { exact: true }).last()).toBeVisible()
 
   for (const mode of ['day', 'week', 'month', 'agenda']) {
@@ -232,19 +285,14 @@ test('creates an event and browses day, week, month, and agenda views', async ({
   const initialEventLabel = await eventBlock.getAttribute('aria-label')
   expect(eventBox).not.toBeNull()
   expect(initialEventLabel).not.toBeNull()
-  const moved = page.waitForResponse(
-    (response) =>
-      /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
-      response.request().method() === 'PUT' &&
-      response.status() === 200,
-  )
+  const moved = waitForEventMove(page, event)
   const moveStartX = eventBox!.x + eventBox!.width / 2
   const moveStartY = eventBox!.y + eventBox!.height / 2
   await page.mouse.move(moveStartX, moveStartY)
   await page.mouse.down()
   await page.mouse.move(moveStartX, moveStartY - 48, { steps: 5 })
   await page.mouse.up()
-  await moved
+  const { event: movedEvent } = await moved
   await expect(eventBlock).not.toHaveAttribute('aria-label', initialEventLabel!)
   const movedEventLabel = await eventBlock.getAttribute('aria-label')
   expect(movedEventLabel).not.toBeNull()
@@ -253,12 +301,7 @@ test('creates an event and browses day, week, month, and agenda views', async ({
   await bottomHandle.hover()
   const bottomBox = await bottomHandle.boundingBox()
   expect(bottomBox).not.toBeNull()
-  const resized = page.waitForResponse(
-    (response) =>
-      /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
-      response.request().method() === 'PUT' &&
-      response.status() === 200,
-  )
+  const resized = waitForEventMove(page, movedEvent)
   await page.mouse.down()
   await expect(page.locator('body')).toHaveCSS('cursor', 'ns-resize')
   await page.mouse.move(
@@ -267,7 +310,7 @@ test('creates an event and browses day, week, month, and agenda views', async ({
     { steps: 5 },
   )
   await page.mouse.up()
-  await resized
+  const { event: resizedEvent } = await resized
   await expect(eventBlock).not.toHaveAttribute('aria-label', movedEventLabel!)
   const resizedEventLabel = await eventBlock.getAttribute('aria-label')
   expect(resizedEventLabel).not.toBeNull()
@@ -276,19 +319,49 @@ test('creates an event and browses day, week, month, and agenda views', async ({
   await topHandle.hover()
   const topBox = await topHandle.boundingBox()
   expect(topBox).not.toBeNull()
-  const trimmed = page.waitForResponse(
-    (response) =>
-      /\/api\/v1\/events\/[0-9a-f-]+$/.test(response.url()) &&
-      response.request().method() === 'PUT' &&
-      response.status() === 200,
-  )
+  const trimmed = waitForEventMove(page, resizedEvent)
   await page.mouse.down()
   await page.mouse.move(topBox!.x + topBox!.width / 2, topBox!.y + topBox!.height / 2 + 24, {
     steps: 4,
   })
   await page.mouse.up()
-  await trimmed
+  const { receipt, event: trimmedEvent } = await trimmed
   await expect(eventBlock).not.toHaveAttribute('aria-label', resizedEventLabel!)
+  const trimmedEventLabel = await eventBlock.getAttribute('aria-label')
+  expect(trimmedEventLabel).not.toBeNull()
+
+  const recovered = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/calendar-move-undos' &&
+      response.request().method() === 'GET' &&
+      response.status() === 200,
+  )
+  await page.reload()
+  const activeReceipts: { items: CalendarMoveUndo[] } = await (await recovered).json()
+  expect(activeReceipts.items).toContainEqual(receipt)
+  await expect(eventBlock).toHaveAttribute('aria-label', trimmedEventLabel!)
+  const feedback = page.getByRole('region', { name: 'Calendar move Undo' })
+  const undo = feedback.getByRole('button', { name: 'Undo', exact: true })
+  await expect(undo).toBeEnabled()
+  const consumed = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/calendar-move-undos/${receipt.id}/consume` &&
+      response.request().method() === 'POST' &&
+      response.status() === 204,
+  )
+  const restored = waitForEventRefresh(page, event.id, trimmedEvent.version + 1)
+  await undo.click()
+  await consumed
+  const restoredEvent = await restored
+  expect(restoredEvent).toMatchObject({
+    id: event.id,
+    starts_at: resizedEvent.starts_at,
+    ends_at: resizedEvent.ends_at,
+  })
+  expect(restoredEvent.version).toBeGreaterThan(trimmedEvent.version)
+  await expect(feedback).toContainText('Move undone.')
+  await expect(eventBlock).toHaveAttribute('aria-label', resizedEventLabel!)
+  await eventBlock.scrollIntoViewIfNeeded()
 
   const deleteBox = await eventBlock.boundingBox()
   expect(deleteBox).not.toBeNull()

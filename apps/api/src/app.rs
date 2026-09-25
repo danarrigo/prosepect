@@ -18,7 +18,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
     auth::{CSRF_HEADER, DEVELOPMENT_USER_HEADER, SESSION_COOKIE},
-    calendar_routes,
+    calendar_move_routes, calendar_routes,
     config::{Config, Environment},
     error::{ErrorBody, ErrorResponse},
     export_routes, file_routes,
@@ -81,6 +81,10 @@ pub struct AppState {
         description = "Personal productivity API for Prosepect"
     ),
     paths(
+        calendar_move_routes::list_calendar_move_undos,
+        calendar_move_routes::move_event,
+        calendar_move_routes::move_task,
+        calendar_move_routes::undo_calendar_move,
         operations::capability,
         operations::snapshot,
         routes::health,
@@ -143,6 +147,9 @@ pub struct AppState {
         sync_routes::activity
     ),
     components(schemas(
+        crate::models::MoveCalendarItemRequest,
+        crate::models::CalendarMoveUndo,
+        crate::models::CalendarMoveUndoList,
         operations::OperationsSnapshot,
         operations::OperationsMetrics,
         operations::OperationsLimits,
@@ -422,6 +429,22 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         )
         .route("/tasks", get(routes::list_tasks).post(routes::create_task))
         .route("/tasks/order", put(routes::reorder_tasks))
+        .route(
+            "/calendar-move-undos",
+            get(calendar_move_routes::list_calendar_move_undos),
+        )
+        .route(
+            "/calendar-move-undos/{receipt_id}/consume",
+            post(calendar_move_routes::undo_calendar_move),
+        )
+        .route(
+            "/events/{event_id}/move",
+            post(calendar_move_routes::move_event),
+        )
+        .route(
+            "/tasks/{task_id}/move",
+            post(calendar_move_routes::move_task),
+        )
         .route(
             "/tasks/{task_id}",
             put(routes::update_task).delete(routes::delete_task),

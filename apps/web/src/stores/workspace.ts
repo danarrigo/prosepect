@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import * as api from '../api/client'
 import { getOperationsCapability } from '../api/client'
@@ -8,6 +8,7 @@ import { fileUploadError } from '../file-usage'
 import type {
   Calendar,
   CalendarEvent,
+  CalendarMoveUndo,
   CreateCalendarEventRequest,
   CreateCalendarRequest,
   CreateNoteRequest,
@@ -54,6 +55,27 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const loading = ref(false)
   const saving = ref(false)
   const error = ref<string | null>(null)
+  const calendarMoveUndo = ref<CalendarMoveUndo | null>(null)
+  const calendarMovePending = ref(false)
+  const calendarMoveUndoing = ref(false)
+  const calendarMoveMessage = ref('')
+  const calendarMoveError = ref('')
+  let calendarRange: { start: Date; end: Date } | null = null
+  let calendarMoveGeneration = 0
+  watch(
+    () => user.value?.id,
+    () => {
+      calendarMoveGeneration += 1
+      calendarMoveUndo.value = null
+      calendarMoveMessage.value = ''
+      calendarMoveError.value = ''
+      if (calendarMovePending.value) saving.value = false
+      calendarMovePending.value = false
+      calendarMoveUndoing.value = false
+      calendarRange = null
+    },
+    { flush: 'sync' },
+  )
 
   const selectedProject = computed(
     () => projects.value.find((project) => project.id === selectedProjectId.value) ?? null,
@@ -102,6 +124,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           }
         })
       await refresh()
+      await recoverCalendarMoveUndo()
     } catch (cause) {
       error.value = messageFrom(cause)
     } finally {
@@ -366,7 +389,121 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function loadCalendarRange(start: Date, end: Date) {
-    events.value = await api.listEvents(end.toISOString(), start.toISOString())
+    const range = { start, end }
+    const account = user.value?.id
+    calendarRange = range
+    const result = await api.listEvents(end.toISOString(), start.toISOString())
+    if (user.value?.id === account && calendarRange === range) events.value = result
+  }
+
+  async function recoverCalendarMoveUndo() {
+    const account = user.value?.id
+    if (!account) return
+    const generation = calendarMoveGeneration
+    try {
+      const receipts = await api.listCalendarMoveUndos()
+      if (user.value?.id !== account || generation !== calendarMoveGeneration) return
+      calendarMoveUndo.value = receipts[0] ?? null
+      calendarMoveMessage.value = receipts.length ? 'Calendar move saved.' : ''
+    } catch {
+      // A receipt-list outage must not hide the rest of the workspace.
+      if (user.value?.id === account && generation === calendarMoveGeneration)
+        calendarMoveError.value = 'Could not recover calendar Undo. Reload to retry.'
+    }
+  }
+
+  async function reloadMovedItems(generation: number) {
+    const range = calendarRange
+    const [updatedTasks, updatedEvents] = await Promise.all([
+      loadAllTasks(),
+      range
+        ? api.listEvents(range.end.toISOString(), range.start.toISOString())
+        : Promise.resolve(null),
+    ])
+    if (generation !== calendarMoveGeneration) return
+    tasks.value = sortTasks(updatedTasks)
+    if (updatedEvents && calendarRange === range) events.value = updatedEvents
+  }
+
+  async function moveCalendarItem(item: CalendarEvent | Task, startsAt: string, endsAt: string) {
+    if (calendarMovePending.value || saving.value) return false
+    const isTask = !('starts_at' in item)
+    const oldStart = isTask ? item.scheduled_start : item.starts_at
+    const oldEnd = isTask ? item.scheduled_end : item.ends_at
+    if (
+      oldStart &&
+      oldEnd &&
+      Date.parse(oldStart) === Date.parse(startsAt) &&
+      Date.parse(oldEnd) === Date.parse(endsAt)
+    )
+      return false
+    calendarMovePending.value = true
+    saving.value = true
+    calendarMoveError.value = ''
+    const generation = ++calendarMoveGeneration
+    try {
+      const input = { starts_at: startsAt, ends_at: endsAt, expected_version: item.version }
+      const receipt = await (isTask
+        ? api.moveScheduledTask(item.id, input)
+        : api.moveCalendarEvent(item.id, input))
+      if (generation !== calendarMoveGeneration) return false
+      calendarMoveUndo.value = receipt
+      calendarMoveMessage.value = 'Calendar move saved.'
+      try {
+        await reloadMovedItems(generation)
+      } catch {
+        if (generation === calendarMoveGeneration)
+          calendarMoveError.value =
+            'Move saved. Reload to refresh the calendar; Undo is still available.'
+      }
+      return true
+    } catch (cause) {
+      if (generation === calendarMoveGeneration) calendarMoveError.value = messageFrom(cause)
+      return false
+    } finally {
+      if (generation === calendarMoveGeneration) {
+        calendarMovePending.value = false
+        saving.value = false
+      }
+    }
+  }
+
+  async function undoCalendarMove() {
+    const receipt = calendarMoveUndo.value
+    if (!receipt || calendarMovePending.value || saving.value) return
+    calendarMovePending.value = true
+    calendarMoveUndoing.value = true
+    saving.value = true
+    calendarMoveError.value = ''
+    const generation = ++calendarMoveGeneration
+    try {
+      await api.undoCalendarMove(receipt.id)
+      if (generation !== calendarMoveGeneration) return
+      calendarMoveUndo.value = null
+      calendarMoveMessage.value = 'Move undone.'
+      try {
+        await reloadMovedItems(generation)
+      } catch {
+        if (generation === calendarMoveGeneration)
+          calendarMoveError.value = 'Move undone. Reload to refresh the calendar.'
+      }
+    } catch (cause) {
+      if (generation === calendarMoveGeneration) calendarMoveError.value = messageFrom(cause)
+    } finally {
+      if (generation === calendarMoveGeneration) {
+        calendarMovePending.value = false
+        calendarMoveUndoing.value = false
+        saving.value = false
+      }
+    }
+  }
+
+  function dismissCalendarMoveFeedback() {
+    if (calendarMovePending.value) return
+    calendarMoveGeneration += 1
+    calendarMoveUndo.value = null
+    calendarMoveMessage.value = ''
+    calendarMoveError.value = ''
   }
 
   async function addCalendar(input: CreateCalendarRequest) {
@@ -474,6 +611,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function deleteAccount() {
     await api.deleteAccount()
     capabilityGeneration += 1
+    calendarMoveUndo.value = null
+    calendarMoveMessage.value = ''
+    calendarMoveError.value = ''
     user.value = null
     operationsAllowed.value = false
     projects.value = []
@@ -489,6 +629,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function logout() {
     await api.logout()
     capabilityGeneration += 1
+    calendarMoveUndo.value = null
+    calendarMoveMessage.value = ''
+    calendarMoveError.value = ''
     user.value = null
     operationsAllowed.value = false
     projects.value = []
@@ -585,6 +728,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     addEvent,
     editEvent,
     removeEvent,
+    calendarMoveUndo,
+    calendarMovePending,
+    calendarMoveUndoing,
+    calendarMoveMessage,
+    calendarMoveError,
+    moveCalendarItem,
+    undoCalendarMove,
+    dismissCalendarMoveFeedback,
     startDailyReview,
     completeDailyReview,
     setDailyFocus,

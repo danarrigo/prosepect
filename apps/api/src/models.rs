@@ -688,3 +688,25 @@ pub struct TodoistImportResult {
 pub struct DeleteAccountRequest {
     pub confirmation: String,
 }
+
+/// Schedule-only gesture; form edits intentionally do not issue Undo receipts.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveCalendarItemRequest {
+    pub starts_at: DateTime<Utc>,
+    pub ends_at: DateTime<Utc>,
+    pub expected_version: i32,
+}
+
+#[derive(Debug, Serialize, FromRow, ToSchema)]
+pub struct CalendarMoveUndo {
+    pub id: Uuid,
+    pub event_id: Uuid,
+    pub task_id: Option<Uuid>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CalendarMoveUndoList {
+    pub items: Vec<CalendarMoveUndo>,
+}

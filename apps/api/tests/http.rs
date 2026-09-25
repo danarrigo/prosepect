@@ -962,3 +962,135 @@ async fn operations_aggregate_failure_is_unknown_not_zero(pool: PgPool) -> anyho
     assert!(body.get("error").is_none());
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_move_and_undo_require_cookie_csrf(pool: PgPool) -> anyhow::Result<()> {
+    let router = app::build(&test_config(), Store::from_pool(pool))?;
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .body(Body::empty())?,
+        )
+        .await?;
+    let cookie = response.headers()[header::SET_COOKIE]
+        .to_str()?
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let body = to_bytes(response.into_body(), 64 * 1024).await?;
+    let session: serde_json::Value = serde_json::from_slice(&body)?;
+    for path in [
+        "/api/v1/events/00000000-0000-0000-0000-000000000001/move",
+        "/api/v1/tasks/00000000-0000-0000-0000-000000000001/move",
+        "/api/v1/calendar-move-undos/00000000-0000-0000-0000-000000000001/consume",
+    ] {
+        let response = router.clone().oneshot(Request::builder().method("POST").uri(path)
+            .header(header::COOKIE,&cookie).header(header::CONTENT_TYPE,"application/json")
+            .body(Body::from(r#"{"starts_at":"2026-09-10T10:00:00Z","ends_at":"2026-09-10T11:00:00Z","expected_version":1}"#))?).await?;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+    }
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/calendar-move-undos/00000000-0000-0000-0000-000000000001/consume")
+                .header(header::COOKIE, cookie)
+                .header("x-csrf-token", session["csrf_token"].as_str().unwrap())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_move_http_is_authenticated_owner_scoped_and_one_shot(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let router = app::build(&test_config(), store.clone())?;
+    let session = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(session.status(), StatusCode::OK);
+    let calendars = store.list_calendars(DEVELOPMENT_USER_ID).await?;
+    let event = store
+        .create_calendar_event(
+            DEVELOPMENT_USER_ID,
+            serde_json::from_value(serde_json::json!({
+                "calendar_id":calendars.items[0].id,"title":"Move HTTP","description":"",
+                "starts_at":"2026-09-10T10:00:00Z","ends_at":"2026-09-10T11:00:00Z",
+                "all_day":false,"timezone":"UTC","location":"","attendees":[],"recurrence":"none"
+            }))?,
+        )
+        .await?;
+    let other = uuid::Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO users (id,email,display_name) VALUES ($1,'other@example.test','Other')",
+    )
+    .bind(other)
+    .execute(&pool)
+    .await?;
+    let moved = router.clone().oneshot(Request::builder().method("POST")
+        .uri(format!("/api/v1/events/{}/move",event.id)).header(DEVELOPMENT_USER_HEADER,DEVELOPMENT_USER_ID.to_string())
+        .header(header::CONTENT_TYPE,"application/json")
+        .body(Body::from(r#"{"starts_at":"2026-09-10T12:00:00Z","ends_at":"2026-09-10T13:00:00Z","expected_version":1}"#))?).await?;
+    assert_eq!(moved.status(), StatusCode::OK);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(moved.into_body(), 64 * 1024).await?)?;
+    let consume = format!(
+        "/api/v1/calendar-move-undos/{}/consume",
+        body["id"].as_str().unwrap()
+    );
+    let unauthenticated = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar-move-undos")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    let other_list = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar-move-undos")
+                .header(DEVELOPMENT_USER_HEADER, other.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(other_list.status(), StatusCode::OK);
+    let other_body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(other_list.into_body(), 64 * 1024).await?)?;
+    assert_eq!(other_body["items"], serde_json::json!([]));
+    for (user, expected) in [
+        (other, StatusCode::NOT_FOUND),
+        (DEVELOPMENT_USER_ID, StatusCode::NO_CONTENT),
+        (DEVELOPMENT_USER_ID, StatusCode::NOT_FOUND),
+    ] {
+        let result = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&consume)
+                    .header(DEVELOPMENT_USER_HEADER, user.to_string())
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(result.status(), expected);
+    }
+    Ok(())
+}

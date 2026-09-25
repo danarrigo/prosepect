@@ -428,7 +428,7 @@ impl Store {
         Ok(())
     }
 
-    async fn mark_event_for_sync(
+    pub(crate) async fn mark_event_for_sync(
         connection: &mut PgConnection,
         user_id: Uuid,
         event: &CalendarEvent,
@@ -633,7 +633,7 @@ impl Store {
         Self::ensure_default_calendar(connection, user_id).await
     }
 
-    async fn ensure_calendar_writable(
+    pub(crate) async fn ensure_calendar_writable(
         connection: &mut PgConnection,
         user_id: Uuid,
         calendar_id: Uuid,

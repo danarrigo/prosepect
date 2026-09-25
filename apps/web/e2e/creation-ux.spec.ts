@@ -1,10 +1,13 @@
+import { randomUUID } from 'node:crypto'
 import { expect, test, type Page } from '@playwright/test'
+import type { CalendarMoveUndo, MoveCalendarItemRequest } from '../src/api/types'
 
 const now = '2026-09-01T09:00:00Z'
 
 async function mockWorkspace(page: Page, initialEvents: Record<string, unknown>[] = []) {
   const tasks: Record<string, unknown>[] = []
   const events: Record<string, unknown>[] = [...initialEvents]
+  const receipts: CalendarMoveUndo[] = []
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname.replace('/api/v1', '')
     let body: unknown = { items: [] }
@@ -41,7 +44,40 @@ async function mockWorkspace(page: Page, initialEvents: Record<string, unknown>[
       body = {
         items: [{ id: 'project-1', name: 'Work', status: 'active', color: '#64748b', version: 1 }],
       }
-    else if (path.startsWith('/events/') && route.request().method() === 'PUT') {
+    else if (path === '/calendar-move-undos' && route.request().method() === 'GET')
+      body = {
+        items: receipts
+          .filter((receipt) => Date.parse(receipt.expires_at) > Date.now())
+          .toReversed(),
+      }
+    else if (/^\/events\/[^/]+\/move$/.test(path) && route.request().method() === 'POST') {
+      const event = events.find((event) => event.id === path.split('/')[2])
+      if (!event) {
+        await route.fulfill({ status: 404, json: { error: { code: 'not_found' } } })
+        return
+      }
+      const input: MoveCalendarItemRequest = route.request().postDataJSON()
+      if (input.expected_version !== event.version) {
+        await route.fulfill({
+          status: 409,
+          json: { error: { code: 'conflict', message: 'Calendar item changed.' } },
+        })
+        return
+      }
+      Object.assign(event, {
+        starts_at: input.starts_at,
+        ends_at: input.ends_at,
+        version: input.expected_version + 1,
+      })
+      const receipt: CalendarMoveUndo = {
+        id: randomUUID(),
+        event_id: String(event.id),
+        task_id: null,
+        expires_at: new Date(Date.now() + 60000).toISOString(),
+      }
+      receipts.push(receipt)
+      body = receipt
+    } else if (path.startsWith('/events/') && route.request().method() === 'PUT') {
       const index = events.findIndex((event) => event.id === path.split('/').at(-1))
       body = { ...events[index], ...route.request().postDataJSON(), version: 2 }
       events[index] = body as Record<string, unknown>
