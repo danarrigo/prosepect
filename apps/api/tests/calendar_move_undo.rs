@@ -355,10 +355,12 @@ async fn scheduled_task_move_undo_guards_both_versions_and_restores_both_schedul
             } else {
                 receipt.event_id
             };
-            sqlx::query(&format!("UPDATE {table} SET version=version+1 WHERE id=$1"))
-                .bind(id)
-                .execute(&pool)
-                .await?;
+            let query = if table == "tasks" {
+                sqlx::query("UPDATE tasks SET version=version+1 WHERE id=$1")
+            } else {
+                sqlx::query("UPDATE calendar_events SET version=version+1 WHERE id=$1")
+            };
+            query.bind(id).execute(&pool).await?;
             assert!(matches!(
                 store.undo_calendar_move(user, receipt.id).await,
                 Err(AppError::Conflict(_))
@@ -401,18 +403,37 @@ async fn scheduled_task_move_undo_guards_both_versions_and_restores_both_schedul
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn calendar_move_undo_expires_while_waiting_for_item_lock(
+async fn calendar_move_undo_expires_while_waiting_for_graph_lock(
     pool: PgPool,
 ) -> anyhow::Result<()> {
     let (store, user, event) = fixture(&pool).await?;
     let receipt = move_once(&store, user, &event).await?;
     let mut blocker = pool.begin().await?;
-    sqlx::query("SELECT id FROM calendar_events WHERE id=$1 FOR UPDATE")
-        .bind(event.id)
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::TEXT,0))")
+        .bind(user.to_string())
         .execute(&mut *blocker)
         .await?;
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *blocker)
+        .await?;
     let waiting = tokio::spawn(async move { store.undo_calendar_move(user, receipt.id).await });
-    // Expire while the row is locked. Undo must evaluate DB time after acquiring it.
+    // Observe the actual graph-lock wait before expiring, not a scheduling delay.
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
+            )
+            .bind(blocker_pid)
+            .fetch_one(&pool)
+            .await?;
+            if blocked {
+                break Ok::<_, sqlx::Error>(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    // Item locks now fail fast; the graph lock can still wait. Check DB time afterwards.
     sqlx::query("UPDATE calendar_move_undos SET expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1")
         .bind(receipt.id).execute(&pool).await?;
     blocker.commit().await?;
@@ -503,7 +524,10 @@ async fn calendar_move_paired_writes_and_receipt_consumption_roll_back_on_failur
         .await?;
     sqlx::query("CREATE TRIGGER reject_receipt BEFORE DELETE ON calendar_move_undos FOR EACH ROW EXECUTE FUNCTION reject_move_receipt()")
         .execute(&pool).await?;
-    assert!(store.undo_calendar_move(user, receipt.id).await.is_err());
+    assert!(matches!(
+        store.undo_calendar_move(user, receipt.id).await,
+        Err(AppError::Database(_))
+    ));
     let (start, version, due): (
         Option<chrono::DateTime<Utc>>,
         i32,
@@ -530,6 +554,216 @@ async fn calendar_move_paired_writes_and_receipt_consumption_roll_back_on_failur
     sqlx::query("DROP TRIGGER reject_receipt ON calendar_move_undos")
         .execute(&pool)
         .await?;
+    store.undo_calendar_move(user, receipt.id).await?;
+    Ok(())
+}
+
+// Lock schedules below reproduce the first half of ordinary event edit/delete
+// transactions directly so the interleaving does not depend on task scheduling.
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_move_and_undo_do_not_wait_on_event_first_writer(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, event) = fixture(&pool).await?;
+    let task = store.create_task(user, serde_json::from_value(serde_json::json!({
+        "title":"Paired work", "scheduled_start":event.starts_at,"scheduled_end":event.ends_at
+    }))?).await?;
+    let receipt = store
+        .move_calendar_item(
+            user,
+            task.id,
+            true,
+            MoveCalendarItemRequest {
+                starts_at: event.starts_at + Duration::hours(2),
+                ends_at: event.ends_at + Duration::hours(2),
+                expected_version: task.version,
+            },
+        )
+        .await?;
+    for undo in [false, true] {
+        let mut writer = pool.begin().await?;
+        // update_calendar_event locks the event before updating its linked task.
+        sqlx::query("SELECT id FROM calendar_events WHERE id=$1 FOR UPDATE")
+            .bind(receipt.event_id)
+            .execute(&mut *writer)
+            .await?;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            if undo {
+                store.undo_calendar_move(user, receipt.id).await
+            } else {
+                store
+                    .move_calendar_item(
+                        user,
+                        task.id,
+                        true,
+                        MoveCalendarItemRequest {
+                            starts_at: event.starts_at + Duration::hours(3),
+                            ends_at: event.ends_at + Duration::hours(3),
+                            expected_version: task.version + 1,
+                        },
+                    )
+                    .await
+                    .map(|_| ())
+            }
+        })
+        .await?;
+        assert!(matches!(result, Err(AppError::Conflict(message)) if message.contains("busy")));
+        // The failed inverse/move must release its earlier task lock, allowing the
+        // event-first writer to continue rather than completing a wait cycle.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            sqlx::query("SELECT id FROM tasks WHERE id=$1 FOR UPDATE")
+                .bind(task.id)
+                .execute(&mut *writer),
+        )
+        .await??;
+        writer.rollback().await?;
+        let schedule: (chrono::DateTime<Utc>, chrono::DateTime<Utc>, i32, i32) = sqlx::query_as(
+            "SELECT t.scheduled_start,e.starts_at,t.version,e.version FROM tasks t JOIN calendar_events e ON e.linked_task_id=t.id WHERE t.id=$1",
+        ).bind(task.id).fetch_one(&pool).await?;
+        assert_eq!(
+            schedule,
+            (
+                event.starts_at + Duration::hours(2),
+                event.starts_at + Duration::hours(2),
+                task.version + 1,
+                2
+            )
+        );
+        assert_eq!(
+            store.list_calendar_move_undos(user).await?.items[0].id,
+            receipt.id
+        );
+    }
+    // A lock-busy result did not consume the still-usable inverse.
+    store.undo_calendar_move(user, receipt.id).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_move_cleanup_does_not_deadlock_event_delete_cascade(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, event) = fixture(&pool).await?;
+    let receipt = move_once(&store, user, &event).await?;
+    sqlx::query("UPDATE calendar_move_undos SET expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1")
+        .bind(receipt.id).execute(&pool).await?;
+    let mut deletion = pool.begin().await?;
+    sqlx::query("SELECT id FROM calendar_events WHERE id=$1 FOR UPDATE")
+        .bind(event.id)
+        .execute(&mut *deletion)
+        .await?;
+    // Move first cleans the expired receipt, then attempts the already-held event.
+    // It must roll back cleanup immediately, not wait for a cascade needing that receipt.
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        store.move_calendar_item(
+            user,
+            event.id,
+            false,
+            MoveCalendarItemRequest {
+                starts_at: event.starts_at,
+                ends_at: event.ends_at,
+                expected_version: 2,
+            },
+        ),
+    )
+    .await?;
+    assert!(matches!(result, Err(AppError::Conflict(message)) if message.contains("busy")));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        sqlx::query("DELETE FROM calendar_events WHERE id=$1")
+            .bind(event.id)
+            .execute(&mut *deletion),
+    )
+    .await??;
+    deletion.rollback().await?;
+    assert_eq!(current_event(&store, user, &event).await?.version, 2);
+    let retained: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM calendar_move_undos WHERE id=$1)")
+            .bind(receipt.id)
+            .fetch_one(&pool)
+            .await?;
+    assert!(retained, "failed move must roll back receipt cleanup too");
+
+    // Reverse overlap: the cascade already owns the expired receipt. List/move/
+    // consume cleanup must skip it rather than wait on the deleting transaction.
+    let mut deletion = pool.begin().await?;
+    sqlx::query("DELETE FROM calendar_events WHERE id=$1")
+        .bind(event.id)
+        .execute(&mut *deletion)
+        .await?;
+    let other = store
+        .create_calendar_event(
+            user,
+            CreateCalendarEventRequest {
+                calendar_id: event.calendar_id,
+                title: "Other".into(),
+                description: "".into(),
+                starts_at: event.starts_at,
+                ends_at: event.ends_at,
+                all_day: false,
+                timezone: "UTC".into(),
+                location: "".into(),
+                attendees: vec![],
+                recurrence: EventRecurrence::None,
+                recurrence_until: None,
+            },
+        )
+        .await?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        store.list_calendar_move_undos(user),
+    )
+    .await??;
+    let other_receipt = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        move_once(&store, user, &other),
+    )
+    .await??;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        store.undo_calendar_move(user, other_receipt.id),
+    )
+    .await??;
+    deletion.rollback().await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn calendar_move_undo_busy_receipt_mapping_and_fk_parents_leave_inverse_intact(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, event) = fixture(&pool).await?;
+    let mapping = add_mapping(&pool, user, &event).await?;
+    let receipt = move_once(&store, user, &event).await?;
+    for locked_row in ["receipt", "mapping", "owner", "calendar"] {
+        let mut blocker = pool.begin().await?;
+        let query = match locked_row {
+            "mapping" => {
+                sqlx::query("SELECT id FROM external_event_mappings WHERE id=$1 FOR UPDATE")
+                    .bind(mapping)
+            }
+            "owner" => sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE").bind(user),
+            "calendar" => sqlx::query("SELECT id FROM calendars WHERE id=$1 FOR UPDATE")
+                .bind(event.calendar_id),
+            _ => sqlx::query("SELECT id FROM calendar_move_undos WHERE id=$1 FOR UPDATE")
+                .bind(receipt.id),
+        };
+        query.execute(&mut *blocker).await?;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            store.undo_calendar_move(user, receipt.id),
+        )
+        .await?;
+        assert!(matches!(result, Err(AppError::Conflict(message)) if message.contains("busy")));
+        blocker.rollback().await?;
+        assert_eq!(current_event(&store, user, &event).await?.version, 2);
+        assert_eq!(
+            store.list_calendar_move_undos(user).await?.items[0].id,
+            receipt.id
+        );
+    }
     store.undo_calendar_move(user, receipt.id).await?;
     Ok(())
 }

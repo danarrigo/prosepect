@@ -62,16 +62,20 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const calendarMoveError = ref('')
   let calendarRange: { start: Date; end: Date } | null = null
   let calendarMoveGeneration = 0
-  watch(() => user.value?.id, () => {
-    calendarMoveGeneration += 1
-    calendarMoveUndo.value = null
-    calendarMoveMessage.value = ''
-    calendarMoveError.value = ''
-    if (calendarMovePending.value) saving.value = false
-    calendarMovePending.value = false
-    calendarMoveUndoing.value = false
-    calendarRange = null
-  }, { flush: 'sync' })
+  watch(
+    () => user.value?.id,
+    () => {
+      calendarMoveGeneration += 1
+      calendarMoveUndo.value = null
+      calendarMoveMessage.value = ''
+      calendarMoveError.value = ''
+      if (calendarMovePending.value) saving.value = false
+      calendarMovePending.value = false
+      calendarMoveUndoing.value = false
+      calendarRange = null
+    },
+    { flush: 'sync' },
+  )
 
   const selectedProject = computed(
     () => projects.value.find((project) => project.id === selectedProjectId.value) ?? null,
@@ -403,7 +407,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       calendarMoveMessage.value = receipts.length ? 'Calendar move saved.' : ''
     } catch {
       // A receipt-list outage must not hide the rest of the workspace.
-      if (user.value?.id === account && generation === calendarMoveGeneration) calendarMoveError.value = 'Could not recover calendar Undo. Reload to retry.'
+      if (user.value?.id === account && generation === calendarMoveGeneration)
+        calendarMoveError.value = 'Could not recover calendar Undo. Reload to retry.'
     }
   }
 
@@ -411,7 +416,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const range = calendarRange
     const [updatedTasks, updatedEvents] = await Promise.all([
       loadAllTasks(),
-      range ? api.listEvents(range.end.toISOString(), range.start.toISOString()) : Promise.resolve(null),
+      range
+        ? api.listEvents(range.end.toISOString(), range.start.toISOString())
+        : Promise.resolve(null),
     ])
     if (generation !== calendarMoveGeneration) return
     tasks.value = sortTasks(updatedTasks)
@@ -420,21 +427,35 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function moveCalendarItem(item: CalendarEvent | Task, startsAt: string, endsAt: string) {
     if (calendarMovePending.value || saving.value) return false
-    const isTask = 'scheduled_start' in item
+    const isTask = !('starts_at' in item)
     const oldStart = isTask ? item.scheduled_start : item.starts_at
     const oldEnd = isTask ? item.scheduled_end : item.ends_at
-    if (oldStart && oldEnd && Date.parse(oldStart) === Date.parse(startsAt) && Date.parse(oldEnd) === Date.parse(endsAt)) return false
+    if (
+      oldStart &&
+      oldEnd &&
+      Date.parse(oldStart) === Date.parse(startsAt) &&
+      Date.parse(oldEnd) === Date.parse(endsAt)
+    )
+      return false
     calendarMovePending.value = true
     saving.value = true
     calendarMoveError.value = ''
     const generation = ++calendarMoveGeneration
     try {
       const input = { starts_at: startsAt, ends_at: endsAt, expected_version: item.version }
-      const receipt = await (isTask ? api.moveScheduledTask(item.id, input) : api.moveCalendarEvent(item.id, input))
+      const receipt = await (isTask
+        ? api.moveScheduledTask(item.id, input)
+        : api.moveCalendarEvent(item.id, input))
       if (generation !== calendarMoveGeneration) return false
       calendarMoveUndo.value = receipt
       calendarMoveMessage.value = 'Calendar move saved.'
-      try { await reloadMovedItems(generation) } catch { if (generation === calendarMoveGeneration) calendarMoveError.value = 'Move saved. Reload to refresh the calendar; Undo is still available.' }
+      try {
+        await reloadMovedItems(generation)
+      } catch {
+        if (generation === calendarMoveGeneration)
+          calendarMoveError.value =
+            'Move saved. Reload to refresh the calendar; Undo is still available.'
+      }
       return true
     } catch (cause) {
       if (generation === calendarMoveGeneration) calendarMoveError.value = messageFrom(cause)
@@ -460,7 +481,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (generation !== calendarMoveGeneration) return
       calendarMoveUndo.value = null
       calendarMoveMessage.value = 'Move undone.'
-      try { await reloadMovedItems(generation) } catch { if (generation === calendarMoveGeneration) calendarMoveError.value = 'Move undone. Reload to refresh the calendar.' }
+      try {
+        await reloadMovedItems(generation)
+      } catch {
+        if (generation === calendarMoveGeneration)
+          calendarMoveError.value = 'Move undone. Reload to refresh the calendar.'
+      }
     } catch (cause) {
       if (generation === calendarMoveGeneration) calendarMoveError.value = messageFrom(cause)
     } finally {

@@ -63,7 +63,26 @@ async function mockWorkspace(page: Page) {
     else if (path === '/files/usage')
       body = { used_bytes: 0, max_user_storage_bytes: 1073741824, max_file_size_bytes: 10485760 }
     else if (path === '/tasks') body = { items: tasks }
-    else if (path.startsWith('/tasks/') && route.request().method() === 'PUT') {
+    else if (path === '/tasks/scheduled/move' && route.request().method() === 'POST') {
+      const task = tasks.find((task) => task.id === 'scheduled')!
+      const input = route.request().postDataJSON()
+      expect(input).toEqual({
+        starts_at: '2026-09-01T09:15:00.000Z',
+        ends_at: '2026-09-01T10:45:00.000Z',
+        expected_version: task.version,
+      })
+      Object.assign(task, {
+        scheduled_start: input.starts_at,
+        scheduled_end: input.ends_at,
+        version: task.version + 1,
+      })
+      body = {
+        id: 'move-receipt',
+        event_id: 'scheduled-mirror',
+        task_id: task.id,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }
+    } else if (path.startsWith('/tasks/') && route.request().method() === 'PUT') {
       const task = tasks.find((task) => task.id === path.split('/').at(-1))!
       Object.assign(task, route.request().postDataJSON(), { version: task.version + 1 })
       body = task

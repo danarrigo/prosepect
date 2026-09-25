@@ -795,7 +795,7 @@ function openScheduledTaskAtHour(hour: number) {
 }
 
 function startTimelineMove(item: TimelineItemLayout, event: PointerEvent) {
-  if (event.button !== 0) return
+  if (event.button !== 0 || store.saving) return
   const start = new Date(item.startsAt)
   timelineMoveState = {
     item,
@@ -807,6 +807,8 @@ function startTimelineMove(item: TimelineItemLayout, event: PointerEvent) {
     ),
     moved: false,
   }
+  window.addEventListener('pointercancel', cancelTimelineGesture)
+  window.addEventListener('keydown', cancelTimelineGestureOnEscape)
   window.addEventListener('pointermove', previewTimelineMove)
   window.addEventListener('pointerup', finishTimelineMove, { once: true })
 }
@@ -897,6 +899,8 @@ function cancelTimelineMove(clearPreview = true) {
   if (clearPreview) timelineMovePreview.value = null
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
+  window.removeEventListener('pointercancel', cancelTimelineGesture)
+  window.removeEventListener('keydown', cancelTimelineGestureOnEscape)
   window.removeEventListener('pointermove', previewTimelineMove)
   window.removeEventListener('pointerup', finishTimelineMove)
 }
@@ -907,6 +911,7 @@ function openTimelineEvent(item: TimelineItemLayout) {
 }
 
 function startTimelineResize(item: TimelineItemLayout, event: PointerEvent, edge: 'start' | 'end') {
+  if (event.button !== 0 || store.saving) return
   event.preventDefault()
   event.stopPropagation()
   timelineResizeState = {
@@ -918,6 +923,8 @@ function startTimelineResize(item: TimelineItemLayout, event: PointerEvent, edge
   }
   document.body.style.cursor = 'ns-resize'
   document.body.style.userSelect = 'none'
+  window.addEventListener('pointercancel', cancelTimelineGesture)
+  window.addEventListener('keydown', cancelTimelineGestureOnEscape)
   window.addEventListener('pointermove', previewTimelineResize)
   window.addEventListener('pointerup', finishTimelineResize, { once: true })
 }
@@ -987,8 +994,21 @@ function cancelTimelineResize(clearPreview = true) {
   if (clearPreview) timelineResizePreview.value = null
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
+  window.removeEventListener('pointercancel', cancelTimelineGesture)
+  window.removeEventListener('keydown', cancelTimelineGestureOnEscape)
   window.removeEventListener('pointermove', previewTimelineResize)
   window.removeEventListener('pointerup', finishTimelineResize)
+}
+
+function cancelTimelineGesture() {
+  cancelTimelineMove()
+  cancelTimelineResize()
+}
+
+function cancelTimelineGestureOnEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  cancelTimelineGesture()
 }
 
 function handleTimelineItemKeydown(item: TimelineItem, event: KeyboardEvent) {

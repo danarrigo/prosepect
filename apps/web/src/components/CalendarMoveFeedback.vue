@@ -4,6 +4,21 @@ import { X } from '@lucide/vue'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const store = useWorkspaceStore()
+const feedback = ref<HTMLElement | null>(null)
+
+function undo(event: MouseEvent) {
+  // The button is disabled while pending and removed on success. Move keyboard
+  // focus to the surviving status region now, never after an async response.
+  if (document.activeElement === event.currentTarget) feedback.value?.focus()
+  void store.undoCalendarMove()
+}
+
+function dismiss(event: MouseEvent) {
+  if (document.activeElement === event.currentTarget)
+    document.getElementById('workspace-content')?.focus()
+  store.dismissCalendarMoveFeedback()
+}
+
 const now = ref(Date.now())
 const timer = window.setInterval(() => (now.value = Date.now()), 1_000)
 onBeforeUnmount(() => window.clearInterval(timer))
@@ -21,13 +36,18 @@ const message = computed(() => {
 <template>
   <section
     v-if="store.calendarMoveUndo || message || store.calendarMoveError"
+    ref="feedback"
+    tabindex="-1"
     aria-label="Calendar move Undo"
     :aria-busy="store.calendarMovePending"
     class="fixed bottom-4 left-4 right-4 z-40 mx-auto flex max-w-xl items-center gap-3 rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-950 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
   >
     <div class="min-w-0 flex-1">
       <p role="status" aria-live="polite" aria-atomic="true">{{ message }}</p>
-      <p v-if="store.calendarMoveUndo && !expired" class="text-xs text-slate-500 dark:text-slate-400">
+      <p
+        v-if="store.calendarMoveUndo && !expired"
+        class="text-xs text-slate-500 dark:text-slate-400"
+      >
         Undo available for 60 seconds after the move.
       </p>
       <p v-if="store.calendarMoveError" role="alert" class="mt-1 text-rose-700 dark:text-rose-300">
@@ -39,7 +59,7 @@ const message = computed(() => {
       type="button"
       class="button-secondary min-h-11 shrink-0"
       :disabled="expired || store.calendarMovePending || store.saving"
-      @click="store.undoCalendarMove()"
+      @click="undo"
     >
       {{ store.calendarMoveUndoing ? 'Undoing…' : 'Undo' }}
     </button>
@@ -48,7 +68,7 @@ const message = computed(() => {
       class="icon-button min-h-11 min-w-11 shrink-0"
       aria-label="Dismiss calendar move feedback"
       :disabled="store.calendarMovePending"
-      @click="store.dismissCalendarMoveFeedback()"
+      @click="dismiss"
     >
       <X :size="16" aria-hidden="true" />
     </button>

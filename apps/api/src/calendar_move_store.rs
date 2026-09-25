@@ -57,7 +57,7 @@ impl Store {
         lock_move(&mut transaction, user_id).await?;
         cleanup(&mut transaction, user_id).await?;
         let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM calendar_move_undos WHERE user_id=$1")
+            sqlx::query_scalar("SELECT COUNT(*) FROM calendar_move_undos WHERE user_id=$1 AND expires_at > clock_timestamp()")
                 .bind(user_id)
                 .fetch_one(&mut *transaction)
                 .await?;
@@ -140,8 +140,8 @@ impl Store {
         let (event, task) = lock_item(&mut transaction, user_id, inverse.event_id).await?;
         // clock_timestamp(), not transaction NOW(): lock waits must not extend the window.
         let active: Option<bool> = sqlx::query_scalar(
-            "SELECT expires_at > clock_timestamp() FROM calendar_move_undos WHERE id=$1 AND user_id=$2 FOR UPDATE",
-        ).bind(receipt_id).bind(user_id).fetch_optional(&mut *transaction).await?;
+            "SELECT expires_at > clock_timestamp() FROM calendar_move_undos WHERE id=$1 AND user_id=$2 FOR UPDATE NOWAIT",
+        ).bind(receipt_id).bind(user_id).fetch_optional(&mut *transaction).await.map_err(lock_error)?;
         match active {
             Some(true) => {}
             Some(false) => {
@@ -205,11 +205,35 @@ async fn lock_move(connection: &mut PgConnection, user_id: Uuid) -> AppResult<()
             "Calendar synchronization is in progress. Try again shortly.".into(),
         ));
     }
-    Store::lock_task_graph(connection, user_id).await
+    Store::lock_task_graph(connection, user_id).await?;
+    // Receipt insertion references the owner. Do not wait on account deletion
+    // after taking item locks while its cascades wait for those same items.
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR KEY SHARE NOWAIT")
+        .bind(user_id)
+        .execute(connection)
+        .await
+        .map_err(lock_error)?;
+    Ok(())
+}
+
+// Only NOWAIT lock contention is retryable; unrelated database failures remain errors.
+fn lock_error(error: sqlx::Error) -> AppError {
+    if error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .as_deref()
+        == Some("55P03")
+    {
+        AppError::Conflict("Calendar item is busy. Try again shortly.".into())
+    } else {
+        AppError::Database(error)
+    }
 }
 
 async fn cleanup(connection: &mut PgConnection, user_id: Uuid) -> AppResult<()> {
-    sqlx::query("DELETE FROM calendar_move_undos WHERE user_id=$1 AND id IN (SELECT id FROM calendar_move_undos WHERE user_id=$1 AND expires_at <= clock_timestamp() ORDER BY expires_at LIMIT 100)")
+    // Cascades/another cleanup may already own receipt rows. Skip those rather
+    // than waiting while holding item locks; expired metadata is never usable.
+    sqlx::query("DELETE FROM calendar_move_undos WHERE user_id=$1 AND id IN (SELECT id FROM calendar_move_undos WHERE user_id=$1 AND expires_at <= clock_timestamp() ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED)")
         .bind(user_id).execute(connection).await?;
     Ok(())
 }
@@ -226,18 +250,28 @@ async fn lock_item(
             .fetch_optional(&mut *connection)
             .await?
             .ok_or(AppError::NotFound("calendar item"))?;
+    // Ordinary event edits lock event then task, unlike task-graph writers.
+    // Never wait on either row: rollback releases any locks already acquired.
     let task = if let Some(id) = task_id {
-        Some(sqlx::query_as::<_, TaskSchedule>("SELECT id,scheduled_start,scheduled_end,version FROM tasks WHERE user_id=$1 AND id=$2 FOR UPDATE")
-            .bind(user_id).bind(id).fetch_optional(&mut *connection).await?.ok_or(AppError::NotFound("task"))?)
+        Some(sqlx::query_as::<_, TaskSchedule>("SELECT id,scheduled_start,scheduled_end,version FROM tasks WHERE user_id=$1 AND id=$2 FOR UPDATE NOWAIT")
+            .bind(user_id).bind(id).fetch_optional(&mut *connection).await.map_err(lock_error)?.ok_or(AppError::NotFound("task"))?)
     } else {
         None
     };
     let event = sqlx::query_as::<_, CalendarEvent>(
-        "SELECT id,calendar_id,linked_task_id,title,description,starts_at,ends_at,all_day,timezone,location,attendees,recurrence,recurrence_until,created_at,updated_at,version FROM calendar_events WHERE user_id=$1 AND id=$2 FOR UPDATE",
-    ).bind(user_id).bind(event_id).fetch_optional(&mut *connection).await?.ok_or(AppError::NotFound("calendar item"))?;
+        "SELECT id,calendar_id,linked_task_id,title,description,starts_at,ends_at,all_day,timezone,location,attendees,recurrence,recurrence_until,created_at,updated_at,version FROM calendar_events WHERE user_id=$1 AND id=$2 FOR UPDATE NOWAIT",
+    ).bind(user_id).bind(event_id).fetch_optional(&mut *connection).await.map_err(lock_error)?.ok_or(AppError::NotFound("calendar item"))?;
     if event.linked_task_id != task_id {
         return Err(changed());
     }
+    // Sync-job insertion references the calendar. Its deletion cascade may be
+    // waiting on this event, so take the FK parent lock without waiting too.
+    sqlx::query("SELECT id FROM calendars WHERE user_id=$1 AND id=$2 FOR KEY SHARE NOWAIT")
+        .bind(user_id)
+        .bind(event.calendar_id)
+        .execute(connection)
+        .await
+        .map_err(lock_error)?;
     Ok((event, task))
 }
 
@@ -252,8 +286,8 @@ async fn mapping_guard(
         r#"SELECT jsonb_build_object('id',id,'calendar_id',calendar_id,'event_id',canonical_event_id,
             'external_calendar_id',external_calendar_id,'external_event_id',external_event_id,
             'conflict_state',conflict_state,'pending_resolution',pending_resolution,'local_deleted',local_deleted)
-            FROM external_event_mappings WHERE user_id=$1 AND canonical_event_id=$2 FOR UPDATE"#,
-    ).bind(user_id).bind(event_id).fetch_optional(connection).await?;
+            FROM external_event_mappings WHERE user_id=$1 AND canonical_event_id=$2 FOR UPDATE NOWAIT"#,
+    ).bind(user_id).bind(event_id).fetch_optional(connection).await.map_err(lock_error)?;
     if let Some(value) = &guard
         && (value["conflict_state"] != "none"
             || !value["pending_resolution"].is_null()
