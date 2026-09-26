@@ -37,6 +37,7 @@ base=(docker compose --env-file "$work/installation.env" -p "$project" -f deploy
 stack=("${base[@]}" -f deploy/personal/tests/compose.yaml)
 cleanup() {
   # No general-purpose cleanup helper: only randomly named test-owned projects.
+  docker rm -f "${project}-http-client" >/dev/null 2>&1 || true
   "${stack[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
   if [[ -f "$work/restored/compose.yaml" ]]; then
     docker compose --env-file "$work/restored/installation.env" -p "$recovery" -f "$work/restored/compose.yaml" down --volumes >/dev/null 2>&1 || true
@@ -79,7 +80,16 @@ for attempt in {1..60}; do
   sleep 1
 done
 [[ -s "$work/root.crt" ]]
-https=(curl --silent --show-error --max-time 10 --noproxy '*' --cacert "$work/root.crt" --resolve app.prosepect.test:443:127.0.0.1)
+# Internal-only Docker networks need an in-network client; published host ports
+# are not reachable on all Docker versions. Keep application egress blocked.
+web_address=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$("${stack[@]}" ps -q web)")
+client_image=$(docker inspect --format '{{.Image}}' "$("${stack[@]}" ps -q api)")
+# One persistent client also keeps the real source IP stable for rate-limit tests.
+docker run -d --name "${project}-http-client" --network "${project}_default" \
+  --user "$(id -u):$(id -g)" --volume "$work:$work" \
+  --entrypoint sleep "$client_image" infinity >/dev/null
+http_client=(docker exec "${project}-http-client" curl)
+https=("${http_client[@]}" --silent --show-error --max-time 10 --noproxy '*' --cacert "$work/root.crt" --resolve "app.prosepect.test:443:$web_address")
 status() {
   local expected=$1; shift
   local actual
@@ -90,7 +100,7 @@ status 200 https://app.prosepect.test/ready
 status 200 https://app.prosepect.test/health
 status 200 https://app.prosepect.test/api-doc/openapi.json
 status 200 https://app.prosepect.test/settings
-[[ $(curl --silent --max-time 10 --noproxy '*' --resolve app.prosepect.test:80:127.0.0.1 -o /dev/null -w '%{http_code}' http://app.prosepect.test/ready) == 308 ]]
+[[ $("${http_client[@]}" --silent --max-time 10 --noproxy '*' --resolve "app.prosepect.test:80:$web_address" -o /dev/null -w '%{http_code}' http://app.prosepect.test/ready) == 308 ]]
 status 401 https://app.prosepect.test/api/v1/session
 status 401 https://app.prosepect.test/api/v1/operations
 status 401 -X POST https://app.prosepect.test/api/v1/development/session
