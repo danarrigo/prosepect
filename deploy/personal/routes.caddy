@@ -1,0 +1,22 @@
+(app_routes) {
+    encode zstd gzip
+    @backend path /api/* /api-doc/* /docs* /health /ready /webhooks/google/calendar
+    handle @backend {
+        reverse_proxy api:3000 {
+            # Backend uses the FIRST XFF value. Never accept a caller's chain.
+            header_up X-Forwarded-For {remote_host}
+            header_up -X-Real-IP
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+:8081 {
+    bind 0.0.0.0
+    respond /health 200
+}

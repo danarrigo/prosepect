@@ -136,45 +136,7 @@ impl Config {
             bail!("Google OAuth configuration is required in production");
         }
 
-        let s3_values = [
-            env_nonempty("S3_BUCKET"),
-            env_nonempty("S3_REGION"),
-            env_nonempty("S3_ACCESS_KEY_ID"),
-            env_nonempty("S3_SECRET_ACCESS_KEY"),
-        ];
-        let object_storage = match s3_values {
-            [
-                Some(bucket),
-                Some(region),
-                Some(access_key_id),
-                Some(secret_access_key),
-            ] => ObjectStorageConfig::S3 {
-                bucket,
-                region,
-                endpoint: env_nonempty("S3_ENDPOINT"),
-                public_endpoint: env_nonempty("S3_PUBLIC_ENDPOINT"),
-                access_key_id,
-                secret_access_key,
-                allow_http: env::var("S3_ALLOW_HTTP")
-                    .unwrap_or_else(|_| "false".to_owned())
-                    .parse()
-                    .context("S3_ALLOW_HTTP must be true or false")?,
-                virtual_hosted_style: env::var("S3_VIRTUAL_HOSTED_STYLE")
-                    .unwrap_or_else(|_| "false".to_owned())
-                    .parse()
-                    .context("S3_VIRTUAL_HOSTED_STYLE must be true or false")?,
-            },
-            [None, None, None, None] if environment != Environment::Production => {
-                ObjectStorageConfig::Local {
-                    root: env::var("FILE_STORAGE_PATH")
-                        .unwrap_or_else(|_| "./data/files".to_owned()),
-                }
-            }
-            [None, None, None, None] => bail!("S3 object storage is required in production"),
-            _ => bail!(
-                "S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY must be configured together"
-            ),
-        };
+        let object_storage = object_storage_from(environment, |name| env::var(name).ok())?;
 
         let max_file_size_bytes = env::var("MAX_FILE_SIZE_BYTES")
             .unwrap_or_else(|_| (25 * 1024 * 1024).to_string())
@@ -251,6 +213,104 @@ impl Config {
     }
 }
 
+// Explicit local storage is for operators who provide a persistent absolute path.
+// The injected lookup keeps configuration tests independent of process-global env.
+fn object_storage_from(
+    environment: Environment,
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<ObjectStorageConfig> {
+    let backend = get("FILE_STORAGE_BACKEND");
+    if !matches!(backend.as_deref(), None | Some("local") | Some("s3")) {
+        bail!("FILE_STORAGE_BACKEND must be local or s3");
+    }
+    let local_path = get("FILE_STORAGE_PATH");
+    let s3_keys = [
+        "S3_BUCKET",
+        "S3_REGION",
+        "S3_ACCESS_KEY_ID",
+        "S3_SECRET_ACCESS_KEY",
+        "S3_ENDPOINT",
+        "S3_PUBLIC_ENDPOINT",
+        "S3_ALLOW_HTTP",
+        "S3_VIRTUAL_HOSTED_STYLE",
+    ];
+    let has_s3 = s3_keys
+        .iter()
+        .any(|key| get(key).is_some_and(|value| !value.trim().is_empty()));
+    if backend.as_deref() == Some("local") {
+        if has_s3 {
+            bail!("local file storage cannot be combined with S3 configuration");
+        }
+        let root =
+            local_path.context("FILE_STORAGE_PATH is required for explicit local storage")?;
+        let path = std::path::Path::new(&root);
+        if !path.is_absolute()
+            || root.trim() != root
+            || root.contains('\0')
+            || !path
+                .components()
+                .any(|part| matches!(part, std::path::Component::Normal(_)))
+            || path
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            bail!(
+                "FILE_STORAGE_PATH must be an absolute directory below root without parent traversal"
+            );
+        }
+        return Ok(ObjectStorageConfig::Local { root });
+    }
+    if local_path
+        .as_ref()
+        .is_some_and(|path| !path.trim().is_empty())
+        && backend.as_deref() == Some("s3")
+    {
+        bail!("FILE_STORAGE_PATH cannot be combined with S3 configuration");
+    }
+    let nonempty = |name| get(name).filter(|value| !value.trim().is_empty());
+    match [
+        nonempty("S3_BUCKET"),
+        nonempty("S3_REGION"),
+        nonempty("S3_ACCESS_KEY_ID"),
+        nonempty("S3_SECRET_ACCESS_KEY"),
+    ] {
+        [
+            Some(bucket),
+            Some(region),
+            Some(access_key_id),
+            Some(secret_access_key),
+        ] => Ok(ObjectStorageConfig::S3 {
+            bucket,
+            region,
+            endpoint: nonempty("S3_ENDPOINT"),
+            public_endpoint: nonempty("S3_PUBLIC_ENDPOINT"),
+            access_key_id,
+            secret_access_key,
+            allow_http: get("S3_ALLOW_HTTP")
+                .unwrap_or_else(|| "false".to_owned())
+                .parse()
+                .context("S3_ALLOW_HTTP must be true or false")?,
+            virtual_hosted_style: get("S3_VIRTUAL_HOSTED_STYLE")
+                .unwrap_or_else(|| "false".to_owned())
+                .parse()
+                .context("S3_VIRTUAL_HOSTED_STYLE must be true or false")?,
+        }),
+        [None, None, None, None] if backend.is_none() && environment != Environment::Production => {
+            Ok(ObjectStorageConfig::Local {
+                root: local_path.unwrap_or_else(|| "./data/files".to_owned()),
+            })
+        }
+        [None, None, None, None] if environment == Environment::Production && backend.is_none() => {
+            bail!(
+                "S3 object storage is required in production unless FILE_STORAGE_BACKEND=local is explicitly configured"
+            )
+        }
+        _ => bail!(
+            "S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY must be configured together"
+        ),
+    }
+}
+
 fn env_nonempty(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.trim().is_empty())
 }
@@ -273,7 +333,182 @@ fn parse_admin_user_ids(value: &str) -> Result<HashSet<Uuid>> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_admin_user_ids;
+    use super::{Environment, ObjectStorageConfig, object_storage_from, parse_admin_user_ids};
+
+    fn storage(
+        environment: Environment,
+        values: &[(&str, &str)],
+    ) -> anyhow::Result<ObjectStorageConfig> {
+        object_storage_from(environment, |name| {
+            values
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+        })
+    }
+
+    #[test]
+    fn production_local_storage_requires_explicit_opt_in_and_absolute_path() {
+        assert!(matches!(storage(Environment::Production, &[
+            ("FILE_STORAGE_BACKEND", "local"), ("FILE_STORAGE_PATH", "/data/files"),
+        ]).unwrap(), ObjectStorageConfig::Local { root } if root == "/data/files"));
+        for path in [
+            "",
+            "data/files",
+            "/",
+            "/data/../files",
+            " /data/files",
+            "/data/\0files",
+        ] {
+            assert!(
+                storage(
+                    Environment::Production,
+                    &[
+                        ("FILE_STORAGE_BACKEND", "local"),
+                        ("FILE_STORAGE_PATH", path),
+                    ]
+                )
+                .is_err(),
+                "{path:?}"
+            );
+        }
+        assert!(
+            storage(
+                Environment::Production,
+                &[("FILE_STORAGE_BACKEND", "local")]
+            )
+            .is_err()
+        );
+        assert!(
+            storage(
+                Environment::Production,
+                &[("FILE_STORAGE_PATH", "/data/files")]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn storage_rejects_unknown_incomplete_and_mixed_backends() {
+        for backend in ["", "LOCAL", "filesystem", "s3"] {
+            assert!(
+                storage(
+                    Environment::Production,
+                    &[("FILE_STORAGE_BACKEND", backend)]
+                )
+                .is_err()
+            );
+        }
+        for key in [
+            "S3_BUCKET",
+            "S3_REGION",
+            "S3_ACCESS_KEY_ID",
+            "S3_SECRET_ACCESS_KEY",
+            "S3_ENDPOINT",
+            "S3_PUBLIC_ENDPOINT",
+            "S3_ALLOW_HTTP",
+            "S3_VIRTUAL_HOSTED_STYLE",
+        ] {
+            assert!(
+                storage(
+                    Environment::Production,
+                    &[
+                        ("FILE_STORAGE_BACKEND", "local"),
+                        ("FILE_STORAGE_PATH", "/data/files"),
+                        (key, "configured"),
+                    ]
+                )
+                .is_err()
+            );
+            for placeholder in ["", " "] {
+                assert!(matches!(
+                    storage(
+                        Environment::Production,
+                        &[
+                            ("FILE_STORAGE_BACKEND", "local"),
+                            ("FILE_STORAGE_PATH", "/data/files"),
+                            (key, placeholder),
+                        ]
+                    )
+                    .unwrap(),
+                    ObjectStorageConfig::Local { .. }
+                ));
+            }
+        }
+        assert!(storage(Environment::Development, &[("S3_BUCKET", "partial")]).is_err());
+        assert!(
+            storage(
+                Environment::Production,
+                &[
+                    ("FILE_STORAGE_BACKEND", "s3"),
+                    ("FILE_STORAGE_PATH", "/data/files"),
+                ]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn storage_defaults_keep_production_s3_and_development_local() {
+        assert!(storage(Environment::Production, &[]).is_err());
+        for environment in [Environment::Development, Environment::Test] {
+            assert!(
+                matches!(storage(environment, &[]).unwrap(), ObjectStorageConfig::Local { root } if root == "./data/files")
+            );
+            assert!(
+                matches!(storage(environment, &[("FILE_STORAGE_PATH", "relative/files")]).unwrap(), ObjectStorageConfig::Local { root } if root == "relative/files")
+            );
+        }
+        assert!(matches!(
+            storage(
+                Environment::Development,
+                &[
+                    ("S3_BUCKET", ""),
+                    ("S3_REGION", ""),
+                    ("S3_ACCESS_KEY_ID", ""),
+                    ("S3_SECRET_ACCESS_KEY", ""),
+                    ("S3_ALLOW_HTTP", "true"),
+                ]
+            )
+            .unwrap(),
+            ObjectStorageConfig::Local { .. }
+        ));
+        let mut s3 = vec![
+            ("S3_BUCKET", "private"),
+            ("S3_REGION", "us-east-1"),
+            ("S3_ACCESS_KEY_ID", "synthetic"),
+            ("S3_SECRET_ACCESS_KEY", "synthetic"),
+        ];
+        assert!(matches!(
+            storage(Environment::Production, &s3).unwrap(),
+            ObjectStorageConfig::S3 {
+                allow_http: false,
+                ..
+            }
+        ));
+        // Legacy implicit S3 selection ignores FILE_STORAGE_PATH (as .env.example does).
+        s3.push(("FILE_STORAGE_PATH", "./data/files"));
+        for environment in [Environment::Development, Environment::Production] {
+            assert!(matches!(
+                storage(environment, &s3).unwrap(),
+                ObjectStorageConfig::S3 { .. }
+            ));
+        }
+        s3.pop();
+        s3.push(("FILE_STORAGE_BACKEND", "s3"));
+        assert!(matches!(
+            storage(Environment::Production, &s3).unwrap(),
+            ObjectStorageConfig::S3 { .. }
+        ));
+        s3.push(("FILE_STORAGE_PATH", " "));
+        assert!(matches!(
+            storage(Environment::Production, &s3).unwrap(),
+            ObjectStorageConfig::S3 { .. }
+        ));
+        s3.pop();
+        s3.push(("FILE_STORAGE_PATH", "/data/files"));
+        assert!(storage(Environment::Production, &s3).is_err());
+    }
 
     #[test]
     fn admin_allowlist_is_empty_by_default_and_strict() {

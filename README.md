@@ -29,7 +29,7 @@ See [PRD.md](PRD.md) for the product contract.
 - **Files:** local filesystem in development or S3-compatible object storage
 - **Background work:** portable long-running or one-shot worker, plus an authenticated API trigger for hosted cron
 - **Hosted deployment:** Vercel SPA, Render Free API, GitHub Actions synchronization trigger, Neon PostgreSQL, and Cloudflare R2
-- **Self-hosting:** Docker Compose with PostgreSQL, MinIO, API, worker, and web services
+- **Personal self-hosting:** Docker Compose with PostgreSQL, private persistent files, API, worker, and one HTTPS web hostname
 
 ## Repository layout
 
@@ -43,7 +43,11 @@ openapi/           Generated OpenAPI contract
 PRD.md             Authoritative product requirements
 ```
 
-## Run with Docker Compose
+## Private personal server (HTTPS)
+
+For **one person on one Linux VPS**, with one HTTPS hostname, Google login and a private persistent files volume, use [Personal self-hosting](docs/PERSONAL-SELF-HOSTING.md) for phone access, backups, isolated restore and upgrades. It uses a separate production Compose package; the development defaults below are not safe for public exposure.
+
+## Run with Docker Compose (development)
 
 Prerequisites: Docker with Compose support.
 
@@ -56,7 +60,7 @@ Open:
 - Application: <http://localhost:8080>
 - OpenAPI documentation: <http://localhost:8080/docs/>
 
-Compose binds the web service and development MinIO endpoint to `127.0.0.1`, bootstraps PostgreSQL and a private object bucket, and starts the portable worker. Signed attachment URLs use `S3_PUBLIC_ENDPOINT`, which defaults to `http://localhost:9000` for Compose. The default development login is intentionally insecure and cannot be enabled with `APP_ENV=production`.
+Compose binds the web service and development MinIO endpoint to `127.0.0.1`, bootstraps PostgreSQL and a private object bucket, and starts the portable worker. Signed attachment URLs use `S3_PUBLIC_ENDPOINT`, which defaults to `http://localhost:9000` for Compose. The default development login is intentionally insecure and cannot be enabled with `APP_ENV=production`. The existing development MinIO/mc image tags have returned registry authorization errors and their upstream repositories are archived; that development dependency issue is not changed by the personal package, which does not use MinIO.
 
 To exercise real Google login and Calendar synchronization, copy `.env.example`, configure the four Google credential variables, and use the callback URL shown there. Each self-hosted installation supplies its own Google OAuth client.
 
@@ -95,7 +99,7 @@ The frontend runs at <http://localhost:5173>. Swagger UI runs at <http://localho
 5. In production, set `GOOGLE_CALENDAR_WEBHOOK_URL` to a public HTTPS endpoint ending in `/webhooks/google/calendar`. Omit it locally when no public HTTPS callback is available.
 6. Restart the API and worker.
 
-Production requires Google configuration, S3-compatible storage, secure cookies, and development authentication disabled. Set `INVITE_ONLY=true` for private access and insert lowercase emails into `account_invites` before first sign-in. For open registration, set a hard `MAX_USER_ACCOUNTS` capacity; existing accounts can still sign in after capacity is reached. `MAX_USER_FILE_STORAGE_BYTES` limits each account independently, while `MAX_TOTAL_FILE_STORAGE_BYTES` remains the deployment-wide ceiling. Hosted deployments should set a random `WORKER_TRIGGER_TOKEN`; the scheduled GitHub workflow renews watches and recovers missed synchronization without compiling Rust on every run.
+Production requires Google configuration, secure cookies, and development authentication disabled. S3-compatible storage remains the default production requirement for hosted deployments; the personal-server package explicitly opts into local storage with `FILE_STORAGE_BACKEND=local` and an absolute persistent `FILE_STORAGE_PATH`. Set `INVITE_ONLY=true` for private access and insert lowercase emails into `account_invites` before first sign-in. For open registration, set a hard `MAX_USER_ACCOUNTS` capacity; existing accounts can still sign in after capacity is reached. `MAX_USER_FILE_STORAGE_BYTES` limits each account independently, while `MAX_TOTAL_FILE_STORAGE_BYTES` remains the deployment-wide ceiling. Hosted deployments should set a random `WORKER_TRIGGER_TOKEN`; the scheduled GitHub workflow renews watches and recovers missed synchronization without compiling Rust on every run.
 
 ## Keyboard shortcuts
 

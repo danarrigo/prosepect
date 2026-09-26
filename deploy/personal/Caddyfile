@@ -1,0 +1,5 @@
+import /etc/caddy/routes.caddy
+
+{$APP_HOST} {
+    import app_routes
+}

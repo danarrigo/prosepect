@@ -1,6 +1,8 @@
 # Prosepect operations
 
-This guide covers the supported Docker Compose deployment and the hosted Vercel/Render deployment. TLS must terminate at the hosting platform or a trusted reverse proxy.
+For one owner on one private Linux VPS, follow [Personal self-hosting](PERSONAL-SELF-HOSTING.md): its separate production Compose package includes one HTTPS hostname, a private persistent local files volume, owner invite bootstrap and matched backup/isolated restore procedures. The root `compose.yaml` remains development-only.
+
+This guide also covers development Docker Compose and the hosted Vercel/Render deployment. TLS must terminate at the hosting platform or a trusted reverse proxy.
 
 ## Production configuration
 
@@ -10,7 +12,7 @@ Production startup intentionally fails unless these invariants hold:
 - `ALLOW_INSECURE_DEV_AUTH=false`
 - all Google OAuth variables are present
 - `TOKEN_ENCRYPTION_KEY` decodes to exactly 32 bytes
-- all required S3 variables are present
+- all required S3 variables are present by default; the personal-server package instead explicitly sets `FILE_STORAGE_BACKEND=local` with an absolute persistent `FILE_STORAGE_PATH` and no S3 variables
 - `MAX_USER_FILE_STORAGE_BYTES` is positive and does not exceed `MAX_TOTAL_FILE_STORAGE_BYTES`
 - `MAX_TOTAL_FILE_STORAGE_BYTES` is set below the provider's free storage allowance
 - `MAX_USER_ACCOUNTS` is a positive hard capacity when configured
@@ -111,9 +113,9 @@ Authorized domain        prosepect.com
 
 Verify domain ownership using a Google Cloud project owner or editor in Google Search Console. Submit brand and sensitive-scope verification with an English-language video showing the full OAuth consent screen, the exact requested Calendar scopes, and the user-facing synchronization workflow. Keep production in Testing and `INVITE_ONLY=true` until Google approves it.
 
-## Docker Compose
+## Docker Compose (development)
 
-Validate and start the self-hosted stack:
+For an Internet-accessible personal server, use the [separate production package](PERSONAL-SELF-HOSTING.md), not these development defaults. Validate and start the local development stack:
 
 ```bash
 docker compose config --quiet
@@ -126,7 +128,7 @@ The stack includes PostgreSQL, MinIO, API, worker, and web services. Caddy proxi
 
 `S3_ENDPOINT` is the API-to-object-storage address. `S3_PUBLIC_ENDPOINT` is placed into signed browser download URLs. Compose uses `http://minio:9000` internally and publishes MinIO on loopback as `http://localhost:9000`. MinIO and R2 use path-style requests in the supplied configuration, so `S3_VIRTUAL_HOSTED_STYLE=false`.
 
-Do not publish PostgreSQL directly. A production reverse proxy should expose only the web application, API paths, and the configured object-storage hostname.
+Do not publish PostgreSQL directly. For S3 deployments a production reverse proxy should expose only the web application, API paths, and the configured object-storage hostname. The separate personal-server package has no object-storage hostname or MinIO service: files are served only through authenticated, tenant-checked API downloads. Existing development MinIO/mc image availability is a separate unresolved dependency issue.
 
 ## Health, metrics, and logs
 

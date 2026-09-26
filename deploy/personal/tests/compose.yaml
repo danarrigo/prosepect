@@ -1,0 +1,8 @@
+# Disposable CI only. Block provider egress; replace only the TLS issuer.
+services:
+  web:
+    volumes:
+      - ./tests/Caddyfile:/etc/caddy/Caddyfile:ro
+networks:
+  default:
+    internal: true

@@ -14,7 +14,8 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system prosepect \
-    && useradd --system --gid prosepect --home-dir /nonexistent prosepect
+    && useradd --system --gid prosepect --home-dir /nonexistent prosepect \
+    && install -d -m 0700 -o prosepect -g prosepect /data/files
 
 COPY --from=builder /workspace/target/release/prosepect-api /usr/local/bin/prosepect-api
 COPY --from=builder /workspace/target/release/worker /usr/local/bin/prosepect-worker
