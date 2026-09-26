@@ -18,13 +18,18 @@ from test_personal import synthetic
 p = Path(sys.argv[1])
 write_env(p / 'installation.env', synthetic())
 token, csrf = secrets.token_hex(32), secrets.token_hex(32)
+other_token = secrets.token_hex(32)
+(p / 'other.curl').write_text(f'header = "Cookie: prosepect_session={other_token}"\n')
 (p / 'auth.curl').write_text(f'header = "Cookie: prosepect_session={token}"\nheader = "x-csrf-token: {csrf}"\n')
 (p / 'fixture.sql').write_text(f"""
 INSERT INTO users (id,email,display_name) VALUES
-('00000000-0000-4000-8000-000000000001','owner@example.test','Synthetic recovery marker');
+('00000000-0000-4000-8000-000000000001','owner@example.test','Synthetic recovery marker'),
+('00000000-0000-4000-8000-000000000003','other@example.test','CI-only tenant isolation fixture');
 INSERT INTO sessions (token_hash,user_id,csrf_token,expires_at) VALUES
 (decode('{hashlib.sha256(token.encode()).hexdigest()}','hex'),
-'00000000-0000-4000-8000-000000000001','{csrf}',NOW()+INTERVAL '1 hour');
+'00000000-0000-4000-8000-000000000001','{csrf}',NOW()+INTERVAL '1 hour'),
+(decode('{hashlib.sha256(other_token.encode()).hexdigest()}','hex'),
+'00000000-0000-4000-8000-000000000003','{csrf}',NOW()+INTERVAL '1 hour');
 """)
 (p / 'payload.bin').write_bytes(b'prosepect synthetic recovery bytes\x00\x01\xff\n')
 PY
@@ -36,7 +41,7 @@ cleanup() {
   if [[ -f "$work/restored/compose.yaml" ]]; then
     docker compose --env-file "$work/restored/installation.env" -p "$recovery" -f "$work/restored/compose.yaml" down --volumes >/dev/null 2>&1 || true
   fi
-  for name in caddy-data caddy-config; do docker volume rm "${recovery}_${name}" >/dev/null 2>&1 || true; done
+  for name in files-data caddy-data caddy-config; do docker volume rm "${recovery}_${name}" >/dev/null 2>&1 || true; done
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -45,14 +50,17 @@ trap cleanup EXIT
 python3 - "$work/config.json" <<'PY'
 import json, sys
 c = json.load(open(sys.argv[1]))
+assert set(c['services']) == {'postgres','api','worker','web'}
+assert not any(v['target'] == '/data/files' for v in c['services']['web']['volumes'])
 for name, service in c['services'].items():
     if name != 'web': assert not service.get('ports'), name
 assert {int(p['published']) for p in c['services']['web']['ports']} == {80,443}
 for name in ('api','worker'):
     e = c['services'][name]['environment']
-    for key,value in {'APP_ENV':'production','ALLOW_INSECURE_DEV_AUTH':'false','INVITE_ONLY':'true','MAX_USER_ACCOUNTS':'1','S3_PUBLIC_ENDPOINT':'https://storage.prosepect.test'}.items():
+    for key,value in {'APP_ENV':'production','ALLOW_INSECURE_DEV_AUTH':'false','INVITE_ONLY':'true','MAX_USER_ACCOUNTS':'1','FILE_STORAGE_BACKEND':'local','FILE_STORAGE_PATH':'/data/files'}.items():
         assert e[key] == value, (name,key)
-    for key in ('GOOGLE_CLIENT_ID','TOKEN_ENCRYPTION_KEY','S3_BUCKET','S3_ACCESS_KEY_ID','S3_SECRET_ACCESS_KEY'):
+    assert not any(key.startswith('S3_') for key in e)
+    for key in ('GOOGLE_CLIENT_ID','TOKEN_ENCRYPTION_KEY'):
         assert e[key], (name,key)
 assert c['networks']['default']['internal'] is True
 PY
@@ -71,7 +79,7 @@ for attempt in {1..60}; do
   sleep 1
 done
 [[ -s "$work/root.crt" ]]
-https=(curl --silent --show-error --max-time 10 --noproxy '*' --cacert "$work/root.crt" --resolve app.prosepect.test:443:127.0.0.1 --resolve storage.prosepect.test:443:127.0.0.1)
+https=(curl --silent --show-error --max-time 10 --noproxy '*' --cacert "$work/root.crt" --resolve app.prosepect.test:443:127.0.0.1)
 status() {
   local expected=$1; shift
   local actual
@@ -98,25 +106,25 @@ for attempt in {1..11}; do
 done
 status 201 --config "$work/auth.curl" -F "file=@$work/payload.bin" https://app.prosepect.test/api/v1/files
 file_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$work/body")
-status 307 --config "$work/auth.curl" -D "$work/download.headers" "https://app.prosepect.test/api/v1/files/$file_id/download"
-python3 - "$work" <<'PY'
-from pathlib import Path
-from urllib.parse import urlsplit, parse_qs
-import sys
-p = Path(sys.argv[1])
-url = next(line.split(':',1)[1].strip() for line in (p/'download.headers').read_text().splitlines() if line.lower().startswith('location:'))
-u = urlsplit(url)
-assert u.scheme == 'https' and u.netloc == 'storage.prosepect.test'
-assert u.path.startswith('/prosepect/') and 'X-Amz-Signature' in parse_qs(u.query)
-assert 'host' in parse_qs(u.query)['X-Amz-SignedHeaders'][0]
-assert '"' not in url and '\\' not in url
-(p/'download.curl').write_text(f'url = "{url}"\n')
-(p/'object-key').write_text(u.path.removeprefix('/prosepect/'))
-PY
-status 200 --config "$work/download.curl"
+status 200 --config "$work/auth.curl" "https://app.prosepect.test/api/v1/files/$file_id/download"
 cmp "$work/payload.bin" "$work/body"
-status 403 "https://storage.prosepect.test/prosepect/$(cat "$work/object-key")"
-status 403 https://storage.prosepect.test/prosepect/
+status 401 "https://app.prosepect.test/api/v1/files/$file_id/download"
+status 200 --config "$work/other.curl" https://app.prosepect.test/api/v1/session
+status 404 --config "$work/other.curl" "https://app.prosepect.test/api/v1/files/$file_id/download"
+printf "SELECT object_key FROM files WHERE id='%s';" "$file_id" | sql > "$work/object-key"
+# No public static route may serve private volume bytes, even by known object key.
+status 200 "https://app.prosepect.test/data/files/$(cat "$work/object-key")"
+! cmp -s "$work/payload.bin" "$work/body"
+# Delete the direct DB-only second tenant fixture; normal registration still has cap=1.
+printf "DELETE FROM users WHERE id='00000000-0000-4000-8000-000000000003';" | sql
+file_uid=$("${stack[@]}" exec -T api id -u)
+file_gid=$("${stack[@]}" exec -T api id -g)
+[[ "$file_uid" != 0 ]]
+[[ $("${stack[@]}" exec -T api stat -c '%u:%g:%a' /data/files) == "$file_uid:$file_gid:700" ]]
+# Recreate the container, not just the process: bytes must live in the volume.
+"${stack[@]}" up -d --force-recreate --no-deps --wait --wait-timeout 180 api
+status 200 --config "$work/auth.curl" "https://app.prosepect.test/api/v1/files/$file_id/download"
+cmp "$work/payload.bin" "$work/body"
 # Prove a long-lived production worker persists a deterministic LOCAL failure.
 # With API stopped there is no dispatcher race; missing calendar fails before Google.
 "${stack[@]}" stop api
@@ -142,12 +150,17 @@ python3 scripts/personal/snapshot.py restore "$work/snapshot" "$work/restored" -
 restored=(docker compose --env-file "$work/restored/installation.env" -p "$recovery" -f "$work/restored/compose.yaml")
 [[ $(printf "SELECT display_name FROM users WHERE id='00000000-0000-4000-8000-000000000001';" | "${restored[@]}" exec -T postgres psql -X -Atq -U prosepect -d prosepect) == 'Synthetic recovery marker' ]]
 [[ $(printf "SELECT status FROM sync_jobs WHERE idempotency_key='synthetic-worker';" | "${restored[@]}" exec -T postgres psql -X -Atq -U prosepect -d prosepect) == failed ]]
-# Read the actual restored bytes through MinIO's authenticated S3 interface.
+# Read restored bytes as the original API UID/GID, no network or production Compose.
 [[ $(docker network inspect "${recovery}_default" --format '{{.Internal}}') == true ]]
-docker compose --env-file "$work/installation.env" -p "$recovery" -f deploy/personal/compose.yaml \
-  run --rm --no-deps -T --entrypoint /bin/sh minio-init -ec \
-  'export MC_HOST_local="http://${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}@minio:9000"; read -r key; mc cat "local/prosepect/$key"' \
-  <<< "$(cat "$work/object-key")" > "$work/restored.bin"
+restore_image=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["images"]["postgres"]["restore"])' "$work/snapshot/manifest.json")
+docker volume inspect "${recovery}_files-data" >/dev/null
+[[ $(docker run --rm --network none --user "$file_uid:$file_gid" --entrypoint stat \
+  --mount "type=volume,src=${recovery}_files-data,dst=/files,readonly" \
+  "$restore_image" -c '%u:%g:%a' /files) == "$file_uid:$file_gid:700" ]]
+docker run --rm -i --network none --user "$file_uid:$file_gid" --entrypoint /bin/sh \
+  --mount "type=volume,src=${recovery}_files-data,dst=/files,readonly" "$restore_image" -ec \
+  'read -r key; case "$key" in *[!0-9a-f-]*|"") exit 1;; esac; cat "/files/$key"' \
+  < "$work/object-key" > "$work/restored.bin"
 cmp "$work/payload.bin" "$work/restored.bin"
 [[ $(docker network inspect "${recovery}_default" --format '{{.Internal}}') == true ]]
 # Existing resource/config reuse must fail closed, without modifying the restore.

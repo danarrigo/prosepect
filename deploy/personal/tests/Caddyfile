@@ -9,8 +9,3 @@ import /etc/caddy/routes.caddy
     tls internal
     import app_routes
 }
-
-{$STORAGE_HOST} {
-    tls internal
-    import storage_routes
-}

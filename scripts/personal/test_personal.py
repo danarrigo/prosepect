@@ -8,6 +8,7 @@ import secrets
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import configure
@@ -16,12 +17,11 @@ import snapshot
 
 def synthetic():
     return {
-        "APP_HOST": "app.prosepect.test", "STORAGE_HOST": "storage.prosepect.test",
+        "APP_HOST": "app.prosepect.test",
         "OWNER_EMAIL": "owner@example.test",
         "GOOGLE_CLIENT_ID": "synthetic.apps.googleusercontent.com",
         "GOOGLE_CLIENT_SECRET": "synthetic-never-google-secret",
-        "POSTGRES_PASSWORD": secrets.token_hex(32), "S3_ACCESS_KEY_ID": secrets.token_hex(16),
-        "S3_SECRET_ACCESS_KEY": secrets.token_hex(32),
+        "POSTGRES_PASSWORD": secrets.token_hex(32),
         "TOKEN_ENCRYPTION_KEY": base64.b64encode(secrets.token_bytes(32)).decode(), "ADMIN_USER_IDS": "",
     }
 
@@ -51,7 +51,7 @@ class PersonalSafetyTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 configure.validate(config)
         config = synthetic()
-        config["STORAGE_HOST"] = config["APP_HOST"]
+        config["UNEXPECTED_SETTING"] = "rejected"
         with self.assertRaises(ValueError):
             configure.validate(config)
 
@@ -86,6 +86,30 @@ class PersonalSafetyTests(unittest.TestCase):
                 with self.subTest(name=name), self.assertRaises(ValueError):
                     snapshot.check_tar(path)
 
+    def test_stopped_container_collision_fails_before_restore_resources(self):
+        project = "prosepect-rehearsal-stopped"
+        for labeled in (True, False):
+            with self.subTest(labeled=labeled), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "restored"
+                args = SimpleNamespace(directory=Path(directory) / "snapshot", project=project, output=output)
+
+                def listed(command):
+                    if command[:3] != ["docker", "container", "ls"] or "--all" not in command:
+                        return ""
+                    if labeled and "--filter" in command:
+                        return "stopped-container-id"
+                    if not labeled and "--format" in command:
+                        return project + "-postgres-1"
+                    return ""
+
+                with patch.object(snapshot, "verify", return_value={}), \
+                     patch.object(snapshot, "text", side_effect=listed), \
+                     patch.object(snapshot, "run") as run:
+                    with self.assertRaisesRegex(ValueError, "already exists|name collision"):
+                        snapshot.restore(args)
+                    self.assertFalse(output.exists())
+                    run.assert_not_called()
+
     def test_incomplete_and_corrupt_snapshots_fail_before_docker(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(snapshot, "run") as run:
             path = Path(directory)
@@ -98,11 +122,17 @@ class PersonalSafetyTests(unittest.TestCase):
                     entry = tarfile.TarInfo("./object")
                     entry.size = 3
                     archive.addfile(entry, io.BytesIO(b"abc"))
-            manifest = {"format": 1, "sha256": {name: snapshot.digest(path / name) for name in snapshot.ARTIFACTS},
-                        "images": {"postgres": {"restore": "postgres@sha256:" + "a" * 64},
-                                   "minio": {"restore": "quay.io/minio/minio@sha256:" + "b" * 64}}}
+            manifest = {"format": 2, "sha256": {name: snapshot.digest(path / name) for name in snapshot.ARTIFACTS},
+                        "images": {"postgres": {"restore": "postgres@sha256:" + "a" * 64}}}
             (path / "manifest.json").write_text(json.dumps(manifest))
             snapshot.verify(path)
+            # Old object-storage snapshots must never be mistaken for local files.
+            manifest["format"] = 1
+            (path / "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaises(ValueError):
+                snapshot.verify(path)
+            manifest["format"] = 2
+            (path / "manifest.json").write_text(json.dumps(manifest))
             (path / "database.dump").write_bytes(b"corrupt")
             with self.assertRaises(ValueError):
                 snapshot.verify(path)

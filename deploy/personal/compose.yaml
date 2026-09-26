@@ -14,15 +14,8 @@ x-runtime: &runtime
   GOOGLE_REDIRECT_URI: https://${APP_HOST}/api/v1/auth/google/callback
   GOOGLE_CALENDAR_WEBHOOK_URL: https://${APP_HOST}/webhooks/google/calendar
   TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?configure first}
-  S3_BUCKET: prosepect
-  S3_REGION: us-east-1
-  S3_ENDPOINT: http://minio:9000
-  S3_PUBLIC_ENDPOINT: https://${STORAGE_HOST:?configure first}
-  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?configure first}
-  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?configure first}
-  # HTTP is permitted only for the unpublished, container-network endpoint.
-  S3_ALLOW_HTTP: "true"
-  S3_VIRTUAL_HOSTED_STYLE: "false"
+  FILE_STORAGE_BACKEND: local
+  FILE_STORAGE_PATH: /data/files
   MAX_FILE_SIZE_BYTES: "26214400"
   MAX_USER_FILE_STORAGE_BYTES: "1073741824"
   MAX_TOTAL_FILE_STORAGE_BYTES: "1073741824"
@@ -44,38 +37,6 @@ services:
       timeout: 3s
       retries: 30
 
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: server /data --console-address ':9001'
-    restart: unless-stopped
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?configure first}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?configure first}
-      MINIO_BROWSER: "off"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: [CMD, curl, --fail, --silent, http://localhost:9000/minio/health/live]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-
-  minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
-    restart: "no"
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?configure first}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?configure first}
-    entrypoint: [/bin/sh, -ec]
-    command:
-      - |
-        export MC_HOST_local="http://$${S3_ACCESS_KEY_ID}:$${S3_SECRET_ACCESS_KEY}@minio:9000"
-        mc mb --ignore-existing local/prosepect
-        mc anonymous set none local/prosepect
-
   api:
     build:
       context: ../..
@@ -86,11 +47,12 @@ services:
       BIND_ADDRESS: 0.0.0.0:3000
       DATABASE_MAX_CONNECTIONS: "10"
       ADMIN_USER_IDS: ${ADMIN_USER_IDS:-}
+    # Docker copies the image's non-root-owned 0700 directory into a NEW volume.
+    volumes:
+      - files-data:/data/files
     depends_on:
       postgres:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
     healthcheck:
       test: [CMD, curl, --fail, --silent, http://localhost:3000/ready]
       interval: 5s
@@ -123,7 +85,6 @@ services:
     restart: unless-stopped
     environment:
       APP_HOST: ${APP_HOST:?configure first}
-      STORAGE_HOST: ${STORAGE_HOST:?configure first}
     ports:
       - "80:80"
       - "443:443"
@@ -143,6 +104,6 @@ services:
 
 volumes:
   postgres-data:
-  minio-data:
+  files-data:
   caddy-data:
   caddy-config:

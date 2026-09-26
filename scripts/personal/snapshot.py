@@ -12,9 +12,9 @@ import sys
 import tarfile
 import uuid
 
-from configure import COMPOSE, DEFAULT_ENV, PROJECT, ROOT, compose, docker_env, load_env
+from configure import DEFAULT_ENV, PROJECT, ROOT, compose, docker_env, load_env
 
-VOLUMES = ("minio-data", "caddy-data", "caddy-config")
+VOLUMES = ("files-data", "caddy-data", "caddy-config")
 ARTIFACTS = ("database.dump", "installation.env", *(name + ".tar" for name in VOLUMES))
 
 
@@ -51,7 +51,7 @@ def verify(directory):
         if path.is_symlink() or not path.is_file():
             raise ValueError("snapshot contains non-regular files")
     manifest = json.loads((directory / "manifest.json").read_text())
-    if manifest["format"] != 1 or set(manifest["sha256"]) != set(ARTIFACTS):
+    if manifest["format"] != 2 or set(manifest["sha256"]) != set(ARTIFACTS):
         raise ValueError("unsupported snapshot format")
     for name in ARTIFACTS:
         if digest(directory / name) != manifest["sha256"][name]:
@@ -59,11 +59,8 @@ def verify(directory):
     load_env(directory / "installation.env")
     for name in VOLUMES:
         check_tar(directory / (name + ".tar"))
-    for service in ("postgres", "minio"):
-        # Only digest-pinned images from this package's known repositories.
-        repository = "postgres" if service == "postgres" else "quay.io/minio/minio"
-        if not re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", manifest["images"][service]["restore"]):
-            raise ValueError("missing/unsupported pinned restore image")
+    if not re.fullmatch(r"postgres@sha256:[0-9a-f]{64}", manifest["images"]["postgres"]["restore"]):
+        raise ValueError("missing/unsupported pinned PostgreSQL restore image")
     return manifest
 
 
@@ -72,12 +69,12 @@ def snapshot(args):
     values = load_env(args.env)
     # This is a fail-closed bootstrap/backup tool, not a Compose override engine.
     running = text(command + ["ps", "--status", "running", "--services"]).split()
-    if not {"postgres", "minio", "api", "worker", "web"}.issubset(running):
+    if not {"postgres", "api", "worker", "web"}.issubset(running):
         raise ValueError("snapshot requires the installed stack running first")
     # A file edited without redeployment could lose the *active* encryption key.
     # Compare privately in memory; never print the resolved Compose environment.
     desired = json.loads(text(command + ["config", "--format", "json"]))
-    for service in ("postgres", "minio", "api", "worker"):
+    for service in ("postgres", "api", "worker"):
         container = text(command + ["ps", "-q", service])
         info = json.loads(text(["docker", "inspect", container]))[0]
         actual = dict(item.split("=", 1) for item in info["Config"]["Env"])
@@ -86,21 +83,21 @@ def snapshot(args):
     if args.directory.resolve().is_relative_to(ROOT):
         raise ValueError("sensitive snapshot staging must be outside the source checkout")
     images = {}
-    for service in ("postgres", "minio", "web"):
+    for service in ("postgres", "api", "worker", "web"):
         container = text(command + ["ps", "-q", service])
         info = json.loads(text(["docker", "inspect", container]))[0]
         image_id = info["Image"]
         image = json.loads(text(["docker", "image", "inspect", image_id]))[0]
         images[service] = {"id": image_id, "configured": info["Config"]["Image"], "digests": image["RepoDigests"]}
-        if service != "web":
-            repository = "postgres" if service == "postgres" else "quay.io/minio/minio"
-            matches = [d for d in image["RepoDigests"] if d.startswith(repository + "@sha256:")]
+        if service == "postgres":
+            matches = [d for d in image["RepoDigests"] if d.startswith("postgres@sha256:")]
             if not matches:
-                raise ValueError("pull the packaged postgres/minio images before snapshotting")
+                raise ValueError("pull the packaged PostgreSQL image before snapshotting")
             images[service]["restore"] = matches[0]
     # Validate every source volume exists before Docker can auto-create one.
     for name in VOLUMES:
         run(["docker", "volume", "inspect", f"{args.project}_{name}"], stdout=subprocess.DEVNULL)
+    file_owner = text(command + ["exec", "-T", "api", "stat", "-c", "%u:%g", "/data/files"])
     args.directory.mkdir(mode=0o700)  # Never overwrite/reuse an old snapshot.
     os.chmod(args.directory, 0o700)
     print("Pausing ingress, API and worker. Failure leaves writers stopped; see recovery instructions.", flush=True)
@@ -108,7 +105,6 @@ def snapshot(args):
     # No writers remain. PostgreSQL stays up for the portable logical dump.
     with (args.directory / "database.dump").open("xb") as output:
         run(command + ["exec", "-T", "postgres", "pg_dump", "-U", "prosepect", "-d", "prosepect", "--format=custom", "--no-owner", "--no-acl"], stdout=output)
-    run(command + ["stop", "-t", "60", "minio"], stdout=subprocess.DEVNULL)
     for name in VOLUMES:
         with (args.directory / (name + ".tar")).open("xb") as output:
             run(["docker", "run", "--rm", "--network", "none", "--user", "0", "--entrypoint", "tar",
@@ -119,7 +115,8 @@ def snapshot(args):
     os.chmod(args.directory / "installation.env", 0o600)
     if load_env(args.directory / "installation.env") != values:
         raise ValueError("configuration changed during snapshot")
-    manifest = {"format": 1, "source_revision": text(["git", "-C", str(ROOT), "rev-parse", "HEAD"]),
+    manifest = {"format": 2, "file_owner": file_owner,
+                "source_revision": text(["git", "-C", str(ROOT), "rev-parse", "HEAD"]),
                 "project": args.project, "previously_running": running, "images": images,
                 "postgres_version": text(command + ["exec", "-T", "postgres", "postgres", "--version"]),
                 "sha256": {name: digest(args.directory / name) for name in ARTIFACTS}}
@@ -136,12 +133,14 @@ def restore(args):
     if not re.fullmatch(r"prosepect-rehearsal-[a-z0-9-]{1,30}", project):
         raise ValueError("restore project must start prosepect-rehearsal-")
     for kind in ("container", "volume", "network"):
-        ids = text(["docker", kind, "ls", "-q", "--filter", f"label=com.docker.compose.project={project}"])
+        ids = text(["docker", kind, "ls", *(["--all"] if kind == "container" else []),
+                    "-q", "--filter", f"label=com.docker.compose.project={project}"])
         if ids:
             raise ValueError("restore project already exists; choose a fresh name")
     # Name collisions without Compose labels must also fail, never be adopted.
     for kind in ("container", "volume", "network"):
-        names = text(["docker", kind, "ls", "--format", "{{.Names}}" if kind == "container" else "{{.Name}}"])
+        names = text(["docker", kind, "ls", *(["--all"] if kind == "container" else []),
+                      "--format", "{{.Names}}" if kind == "container" else "{{.Name}}"])
         if any(name.startswith(project) for name in names.splitlines()):
             raise ValueError("restore resource name collision")
     args.output.mkdir(mode=0o700)
@@ -150,13 +149,11 @@ def restore(args):
     shutil.copyfile(ROOT / "deploy/personal/restore.compose.yaml", args.output / "compose.yaml")
     # Compose settings stored privately; no secrets appear on command lines.
     with (args.output / "installation.env").open("a") as output:
-        for service in ("postgres", "minio"):
-            output.write(f"RESTORE_{service.upper()}_IMAGE={manifest['images'][service]['restore']}\n")
+        output.write(f"RESTORE_POSTGRES_IMAGE={manifest['images']['postgres']['restore']}\n")
     command = ["docker", "compose", "--env-file", str((args.output / "installation.env").resolve()),
                "-p", project, "-f", str((args.output / "compose.yaml").resolve())]
     # Remove inherited restore overrides too; this command is intentionally isolated.
-    for key in ("RESTORE_POSTGRES_IMAGE", "RESTORE_MINIO_IMAGE"):
-        os.environ.pop(key, None)
+    os.environ.pop("RESTORE_POSTGRES_IMAGE", None)
     run(command + ["pull"], stdout=subprocess.DEVNULL)
     image = manifest["images"]["postgres"]["restore"]
     with (args.directory / "database.dump").open("rb") as source:
@@ -174,7 +171,7 @@ def restore(args):
         run(command + ["exec", "-T", "postgres", "pg_restore", "--exit-on-error", "--no-owner", "--no-acl",
                        "-U", "prosepect", "-d", "prosepect"], stdin=source, stdout=subprocess.DEVNULL)
     (args.output / "project.txt").write_text(project + "\n")
-    print(f"Restored into isolated project {project}. NO API/worker/ingress. Verify database AND object bytes before promotion.")
+    print(f"Restored into isolated project {project}. NO API/worker/ingress. Verify database AND private file bytes/ownership before promotion.")
 
 
 def main():

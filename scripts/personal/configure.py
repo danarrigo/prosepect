@@ -17,9 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ENV = ROOT / ".env.personal"
 COMPOSE = ROOT / "deploy/personal/compose.yaml"
 PROJECT = "prosepect-personal"
-KEYS = {"APP_HOST", "STORAGE_HOST", "OWNER_EMAIL", "GOOGLE_CLIENT_ID",
-        "GOOGLE_CLIENT_SECRET", "POSTGRES_PASSWORD", "S3_ACCESS_KEY_ID",
-        "S3_SECRET_ACCESS_KEY", "TOKEN_ENCRYPTION_KEY", "ADMIN_USER_IDS"}
+KEYS = {"APP_HOST", "OWNER_EMAIL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+        "POSTGRES_PASSWORD", "TOKEN_ENCRYPTION_KEY", "ADMIN_USER_IDS"}
 
 
 def validate(values):
@@ -28,26 +27,21 @@ def validate(values):
     for name, value in values.items():
         if not re.fullmatch(r"[a-zA-Z0-9_@.+/=,:\-]*", value):
             raise ValueError(f"unsupported characters in {name}")
-    for name in ("APP_HOST", "STORAGE_HOST"):
+    for name in ("APP_HOST",):
         host = values[name]
         if len(host) > 253 or "." not in host or not all(
             re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
             for label in host.split(".")
         ) or re.fullmatch(r"[0-9.]+", host):
             raise ValueError(f"{name} must be a lowercase DNS hostname, without scheme/port/path")
-    if values["APP_HOST"] == values["STORAGE_HOST"]:
-        raise ValueError("two distinct hostnames are required")
     if not re.fullmatch(r"[a-z0-9._+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", values["OWNER_EMAIL"]):
         raise ValueError("OWNER_EMAIL must be one lowercase Google account email")
     if not re.fullmatch(r"[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com", values["GOOGLE_CLIENT_ID"]):
         raise ValueError("expected a Google web OAuth client ID")
     if not re.fullmatch(r"[a-zA-Z0-9_-]{16,}", values["GOOGLE_CLIENT_SECRET"]):
         raise ValueError("invalid Google client secret format")
-    for name in ("POSTGRES_PASSWORD", "S3_SECRET_ACCESS_KEY"):
-        if not re.fullmatch(r"[0-9a-f]{64}", values[name]):
-            raise ValueError(f"{name} must retain its generated 32-byte hex value")
-    if not re.fullmatch(r"[0-9a-f]{32}", values["S3_ACCESS_KEY_ID"]):
-        raise ValueError("invalid generated S3 access key")
+    if not re.fullmatch(r"[0-9a-f]{64}", values["POSTGRES_PASSWORD"]):
+        raise ValueError("POSTGRES_PASSWORD must retain its generated 32-byte hex value")
     if len(base64.b64decode(values["TOKEN_ENCRYPTION_KEY"], validate=True)) != 32:
         raise ValueError("encryption key must decode to 32 bytes")
     if values["ADMIN_USER_IDS"]:
@@ -119,16 +113,13 @@ def main():
     preflight()
     if not sys.stdin.isatty():
         raise ValueError("configuration requires a terminal; do not pipe secrets")
-    print("Requires TWO DNS names pointing to this server, public TCP 80/443, and your own Google web OAuth client.")
+    print("Requires one DNS hostname pointing to this server, public TCP 80/443, and your own Google web OAuth client.")
     values = {
         "APP_HOST": input("App hostname: ").strip().lower(),
-        "STORAGE_HOST": input("Storage hostname: ").strip().lower(),
         "OWNER_EMAIL": input("Only invited Google email: ").strip().lower(),
         "GOOGLE_CLIENT_ID": input("Google web client ID: ").strip(),
         "GOOGLE_CLIENT_SECRET": getpass.getpass("Google client secret (hidden): ").strip(),
         "POSTGRES_PASSWORD": secrets.token_hex(32),
-        "S3_ACCESS_KEY_ID": secrets.token_hex(16),
-        "S3_SECRET_ACCESS_KEY": secrets.token_hex(32),
         "TOKEN_ENCRYPTION_KEY": base64.b64encode(secrets.token_bytes(32)).decode(),
         "ADMIN_USER_IDS": "",
     }
