@@ -43,7 +43,11 @@ openapi/           Generated OpenAPI contract
 PRD.md             Authoritative product requirements
 ```
 
-## Run with Docker Compose
+## Private personal server (HTTPS)
+
+For **one person on one Linux VPS**, including phone access, Google setup, private storage, backups, isolated restore and upgrades, use [Personal self-hosting](docs/PERSONAL-SELF-HOSTING.md). It uses a separate production Compose package; the development defaults below are not safe for public exposure.
+
+## Run with Docker Compose (development)
 
 Prerequisites: Docker with Compose support.
 

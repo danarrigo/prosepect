@@ -1,0 +1,9 @@
+import /etc/caddy/routes.caddy
+
+{$APP_HOST} {
+    import app_routes
+}
+
+{$STORAGE_HOST} {
+    import storage_routes
+}

@@ -63,6 +63,20 @@ jobs:
       - run: docker compose config --quiet
       - run: docker compose build
 
+  personal-self-hosting:
+    # Backend includes the actual lock-backed one-account registration cap test.
+    needs: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Personal packaging safety tests (no Docker)
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/personal -p 'test_*.py' -v
+      - name: Disposable production lifecycle smoke (no Google or ACME)
+        env:
+          PROSEPECT_DISPOSABLE_CI: "yes"
+        run: timeout 40m bash scripts/personal/smoke.sh
+
   end-to-end:
     runs-on: ubuntu-latest
     services:

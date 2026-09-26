@@ -1,0 +1,29 @@
+(app_routes) {
+    encode zstd gzip
+    @backend path /api/* /api-doc/* /docs* /health /ready /webhooks/google/calendar
+    handle @backend {
+        reverse_proxy api:3000 {
+            # Backend uses the FIRST XFF value. Never accept a caller's chain.
+            header_up X-Forwarded-For {remote_host}
+            header_up -X-Real-IP
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+(storage_routes) {
+    # No rewrite/handle_path: SigV4 signs the original Host, path and query.
+    reverse_proxy minio:9000 {
+        header_up Host {host}
+    }
+}
+
+:8081 {
+    bind 0.0.0.0
+    respond /health 200
+}

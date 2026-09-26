@@ -1,6 +1,8 @@
 # Prosepect operations
 
-This guide covers the supported Docker Compose deployment and the hosted Vercel/Render deployment. TLS must terminate at the hosting platform or a trusted reverse proxy.
+For one owner on one private Linux VPS, follow [Personal self-hosting](PERSONAL-SELF-HOSTING.md): its separate production Compose package includes automatic HTTPS, owner invite bootstrap and matched backup/isolated restore procedures. The root `compose.yaml` remains development-only.
+
+This guide also covers development Docker Compose and the hosted Vercel/Render deployment. TLS must terminate at the hosting platform or a trusted reverse proxy.
 
 ## Production configuration
 
@@ -111,9 +113,9 @@ Authorized domain        prosepect.com
 
 Verify domain ownership using a Google Cloud project owner or editor in Google Search Console. Submit brand and sensitive-scope verification with an English-language video showing the full OAuth consent screen, the exact requested Calendar scopes, and the user-facing synchronization workflow. Keep production in Testing and `INVITE_ONLY=true` until Google approves it.
 
-## Docker Compose
+## Docker Compose (development)
 
-Validate and start the self-hosted stack:
+For an Internet-accessible personal server, use the [separate production package](PERSONAL-SELF-HOSTING.md), not these development defaults. Validate and start the local development stack:
 
 ```bash
 docker compose config --quiet

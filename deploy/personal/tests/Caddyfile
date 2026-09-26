@@ -1,0 +1,16 @@
+# Test-only issuer; handlers are imported unchanged from production.
+{
+    local_certs
+    skip_install_trust
+}
+import /etc/caddy/routes.caddy
+
+{$APP_HOST} {
+    tls internal
+    import app_routes
+}
+
+{$STORAGE_HOST} {
+    tls internal
+    import storage_routes
+}
