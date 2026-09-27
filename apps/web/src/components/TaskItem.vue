@@ -330,7 +330,12 @@ function submitSubtask() {
         </span>
       </div>
 
-      <form v-if="addingSubtask" class="mt-3 flex gap-2" @submit.prevent="submitSubtask">
+      <form
+        v-if="addingSubtask"
+        data-task-editor
+        class="mt-3 flex gap-2"
+        @submit.prevent="submitSubtask"
+      >
         <input
           v-model="subtaskTitle"
           class="h-8 min-w-0 flex-1 border-b border-slate-200 bg-transparent text-xs outline-none focus:border-slate-400 dark:border-slate-800"
@@ -432,6 +437,7 @@ function submitSubtask() {
 
   <form
     v-else
+    data-task-editor
     class="border-b border-slate-200 py-4 dark:border-slate-800"
     :aria-label="`Edit ${task.title}`"
     @submit.prevent="submitEdit"

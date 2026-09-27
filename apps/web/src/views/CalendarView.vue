@@ -78,6 +78,12 @@ const editingCalendarId = ref<string | null>(null)
 const editingCalendarName = ref('')
 const editingCalendarColor = ref('#64748b')
 let dateRefreshTimer: ReturnType<typeof setInterval> | undefined
+let calendarMounted = false
+let liveRefreshRequest: AbortController | null = null
+let rangeRequest: AbortController | null = null
+const calendarRoot = ref<HTMLElement | null>(null)
+const calendarDragging = ref(false)
+const calendarRefreshError = ref('')
 const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const timelineHours = Array.from({ length: 25 }, (_, hour) => hour)
 const timelineHalfHours = Array.from({ length: 47 }, (_, index) => index + 1)
@@ -306,10 +312,18 @@ watch(
 )
 
 watch(
-  [monthCursor, viewMode],
+  [monthCursor, selectedDate, viewMode, () => store.user?.id],
   () => {
+    liveRefreshRequest?.abort()
+    rangeRequest?.abort()
+    const request = new AbortController()
+    rangeRequest = request
+    calendarRefreshError.value = ''
     const { start, end } = visibleRange()
-    void store.loadCalendarRange(start, end)
+    void store.loadCalendarRange(start, end, request.signal).catch(() => {
+      if (!request.signal.aborted)
+        calendarRefreshError.value = 'Calendar could not refresh. Showing the last loaded data.'
+    })
   },
   { immediate: true },
 )
@@ -1064,7 +1078,49 @@ function localDateTimeValue(value: Date) {
   return new Date(value.getTime() - offset).toISOString().slice(0, 16)
 }
 
+function canRefreshCalendar() {
+  return (
+    calendarMounted &&
+    !document.hidden &&
+    !store.loading &&
+    !store.saving &&
+    !eventFormOpen.value &&
+    !taskFormOpen.value &&
+    !calendarManagerOpen.value &&
+    !timelineMoveState &&
+    !timelineResizeState &&
+    !draggedTimelineItemKey.value &&
+    !calendarDragging.value &&
+    !document.querySelector('[role="dialog"]') &&
+    !calendarRoot.value?.querySelector('[data-task-editor]')
+  )
+}
+
+async function refreshVisibleCalendar() {
+  if (liveRefreshRequest || !canRefreshCalendar()) return
+  const request = new AbortController()
+  liveRefreshRequest = request
+  try {
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10_000)])
+    if (await store.refreshCalendarRange(signal, canRefreshCalendar))
+      calendarRefreshError.value = ''
+  } catch {
+    if (!request.signal.aborted && canRefreshCalendar())
+      calendarRefreshError.value = 'Calendar could not refresh. Showing the last loaded data.'
+  } finally {
+    request.abort()
+    if (liveRefreshRequest === request) liveRefreshRequest = null
+  }
+}
+
+function calendarVisibilityChanged() {
+  refreshToday()
+  if (document.hidden) liveRefreshRequest?.abort()
+  else void refreshVisibleCalendar()
+}
+
 onMounted(() => {
+  calendarMounted = true
   const queryView = route.query.view
   if (
     queryView === 'day' ||
@@ -1074,15 +1130,21 @@ onMounted(() => {
   ) {
     viewMode.value = queryView
   }
-  dateRefreshTimer = setInterval(refreshToday, 30_000)
-  document.addEventListener('visibilitychange', refreshToday)
+  dateRefreshTimer = setInterval(() => {
+    refreshToday()
+    void refreshVisibleCalendar()
+  }, 30_000)
+  document.addEventListener('visibilitychange', calendarVisibilityChanged)
 })
 
 onBeforeUnmount(() => {
+  calendarMounted = false
+  liveRefreshRequest?.abort()
+  rangeRequest?.abort()
   cancelTimelineMove()
   cancelTimelineResize()
   if (dateRefreshTimer) clearInterval(dateRefreshTimer)
-  document.removeEventListener('visibilitychange', refreshToday)
+  document.removeEventListener('visibilitychange', calendarVisibilityChanged)
 })
 
 function monthDays(cursor: Date) {
@@ -1098,7 +1160,20 @@ function monthDays(cursor: Date) {
 </script>
 
 <template>
-  <div class="mx-auto max-w-7xl px-5 py-10 sm:px-8 lg:px-12 lg:py-14">
+  <div
+    ref="calendarRoot"
+    class="mx-auto max-w-7xl px-5 py-10 sm:px-8 lg:px-12 lg:py-14"
+    @dragstart.capture="calendarDragging = true"
+    @dragend.capture="calendarDragging = false"
+    @drop.capture="calendarDragging = false"
+  >
+    <p
+      v-if="calendarRefreshError"
+      role="status"
+      class="mb-4 text-sm text-amber-700 dark:text-amber-400"
+    >
+      {{ calendarRefreshError }}
+    </p>
     <div class="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <h1 class="page-title !mt-0">Calendar</h1>

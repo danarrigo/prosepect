@@ -62,10 +62,21 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const calendarMoveError = ref('')
   let calendarRange: { start: Date; end: Date } | null = null
   let calendarMoveGeneration = 0
+  let calendarReadGeneration = 0
+  let calendarDataGeneration = 0
+  // Never apply a background snapshot over local writes or another completed read.
+  watch(
+    [tasks, events, calendars, saving],
+    () => {
+      calendarDataGeneration += 1
+    },
+    { deep: true, flush: 'sync' },
+  )
   watch(
     () => user.value?.id,
     () => {
       calendarMoveGeneration += 1
+      calendarReadGeneration += 1
       calendarMoveUndo.value = null
       calendarMoveMessage.value = ''
       calendarMoveError.value = ''
@@ -388,12 +399,49 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     notes.value = notes.value.filter((candidate) => candidate.id !== note.id)
   }
 
-  async function loadCalendarRange(start: Date, end: Date) {
+  async function loadCalendarRange(start: Date, end: Date, signal?: AbortSignal) {
     const range = { start, end }
     const account = user.value?.id
+    const generation = ++calendarReadGeneration
     calendarRange = range
-    const result = await api.listEvents(end.toISOString(), start.toISOString())
-    if (user.value?.id === account && calendarRange === range) events.value = result
+    const result = await api.listEvents(end.toISOString(), start.toISOString(), signal)
+    if (
+      !signal?.aborted &&
+      generation === calendarReadGeneration &&
+      user.value?.id === account &&
+      calendarRange === range
+    )
+      events.value = result
+  }
+
+  async function refreshCalendarRange(signal: AbortSignal, canApply: () => boolean) {
+    const range = calendarRange
+    const account = user.value?.id
+    if (!range || !account || loading.value || saving.value || signal.aborted || !canApply())
+      return false
+    const generation = ++calendarReadGeneration
+    const dataGeneration = calendarDataGeneration
+    const [updatedEvents, updatedTasks, updatedCalendars] = await Promise.all([
+      api.listEvents(range.end.toISOString(), range.start.toISOString(), signal),
+      loadAllTasks(signal),
+      api.listCalendars(signal),
+    ])
+    if (
+      signal.aborted ||
+      generation !== calendarReadGeneration ||
+      dataGeneration !== calendarDataGeneration ||
+      user.value?.id !== account ||
+      calendarRange !== range ||
+      loading.value ||
+      saving.value ||
+      !canApply()
+    )
+      return false
+    // Refresh only calendar data, not bootstrap/settings/daily-review state or drafts.
+    events.value = updatedEvents
+    tasks.value = sortTasks(updatedTasks)
+    calendars.value = updatedCalendars
+    return true
   }
 
   async function recoverCalendarMoveUndo() {
@@ -722,6 +770,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     editNote,
     removeNote,
     loadCalendarRange,
+    refreshCalendarRange,
     addCalendar,
     editCalendar,
     removeCalendar,
@@ -753,8 +802,8 @@ function loadAllProjects(): Promise<Project[]> {
   return collectCursorPages((cursor) => api.listProjects(cursor))
 }
 
-function loadAllTasks(): Promise<Task[]> {
-  return collectCursorPages((cursor) => api.listTasks(undefined, cursor))
+function loadAllTasks(signal?: AbortSignal): Promise<Task[]> {
+  return collectCursorPages((cursor) => api.listTasks(undefined, cursor, signal))
 }
 
 function sortTasks(tasks: Task[]): Task[] {
