@@ -1,6 +1,11 @@
+use std::time::Duration;
+
 use tokio::sync::mpsc;
 
 use crate::sync_service::SyncService;
+
+const RETRY_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const MAX_JOBS_PER_DRAIN: usize = 32;
 
 #[derive(Clone, Default)]
 pub struct SyncDispatcher {
@@ -14,8 +19,22 @@ impl SyncDispatcher {
             if let Err(error) = service.enqueue_periodic_work().await {
                 tracing::error!(error = ?error, "startup synchronization enqueue failed");
             }
-            while receiver.recv().await.is_some() {
-                loop {
+            loop {
+                // Retry timestamps live in PostgreSQL. Recheck while this process is awake;
+                // sleeping hosts still rely on the next startup or external worker trigger.
+                tokio::select! {
+                    message = receiver.recv() => {
+                        if message.is_none() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(RETRY_POLL_INTERVAL) => {}
+                }
+                for _ in 0..MAX_JOBS_PER_DRAIN {
+                    // Finish an in-flight job, but do not start another after shutdown.
+                    if receiver.is_closed() {
+                        return;
+                    }
                     match service.run_once().await {
                         Ok(true) => {}
                         Ok(false) => break,
