@@ -24,6 +24,7 @@ use prosepect_api::{
     google_auth::GoogleOAuth,
     models::{CreateTaskRequest, TaskPriority, TaskRecurrence, TaskStatus, UpdateTaskRequest},
     store::Store,
+    sync_dispatcher::SyncDispatcher,
     sync_service::SyncService,
 };
 use serde_json::json;
@@ -609,4 +610,200 @@ async fn create_user(pool: &PgPool, email: &str) -> anyhow::Result<Uuid> {
         .execute(pool)
         .await?;
     Ok(id)
+}
+
+struct DispatcherFixture {
+    service: SyncService,
+    store: Store,
+    user_id: Uuid,
+    calendar_id: Uuid,
+    requests: Arc<AtomicUsize>,
+    server: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for DispatcherFixture {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+
+async fn dispatcher_fixture(pool: &PgPool, failures: usize) -> anyhow::Result<DispatcherFixture> {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let calls = requests.clone();
+    let app = Router::new().route(
+        "/calendars/{calendar_id}/events",
+        get(move || {
+            let calls = calls.clone();
+            async move {
+                if calls.fetch_add(1, Ordering::SeqCst) < failures {
+                    // Non-5xx failure: test the durable job retry, not HTTP-level retries.
+                    StatusCode::BAD_REQUEST.into_response()
+                } else {
+                    Json(json!({ "items": [], "nextSyncToken": "dispatcher-token" }))
+                        .into_response()
+                }
+            }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let user_id = create_user(pool, "dispatcher@example.com").await?;
+    let calendar_id = Uuid::now_v7();
+    // Keep startup periodic enqueue out of the scenario: only the seeded jobs should run.
+    sqlx::query(
+        "INSERT INTO calendars (id, user_id, name, color, source, external_id, selected, last_synced_at) VALUES ($1, $2, 'Google', '#4285f4', 'google', 'dispatcher-calendar', TRUE, NOW())",
+    )
+    .bind(calendar_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    let encryption_key = [43_u8; 32];
+    sqlx::query(
+        "INSERT INTO google_accounts (user_id, encrypted_access_token, access_token_expires_at, scopes) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(user_id)
+    .bind(encrypt_token(&encryption_key, b"provider-access-token")?)
+    .bind(Utc::now() + Duration::hours(1))
+    .bind(vec!["https://www.googleapis.com/auth/calendar.events"])
+    .execute(pool)
+    .await?;
+    let store = Store::from_pool(pool.clone());
+    let google = GoogleOAuth::new(GoogleOAuthConfig {
+        client_id: "test-client".to_owned(),
+        client_secret: "test-secret".to_owned(),
+        redirect_uri: "http://localhost/callback".to_owned(),
+        token_encryption_key: STANDARD.encode(encryption_key),
+    })?;
+    let service =
+        SyncService::new(store.clone(), google, None)?.with_api_base(format!("http://{address}"));
+    Ok(DispatcherFixture {
+        service,
+        store,
+        user_id,
+        calendar_id,
+        requests,
+        server,
+    })
+}
+
+async fn dispatcher_job(fixture: &DispatcherFixture, key: &str) -> anyhow::Result<Uuid> {
+    Ok(fixture
+        .store
+        .enqueue_sync(
+            fixture.user_id,
+            Some(fixture.calendar_id),
+            "calendar_sync",
+            key,
+        )
+        .await?
+        .id)
+}
+
+async fn wait_for_dispatcher_job(pool: &PgPool, id: Uuid, status: &str) -> anyhow::Result<i32> {
+    // PostgreSQL uses wall time. Do not pause Tokio time or advance it independently of SQL.
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        let mut poll = tokio::time::interval(std::time::Duration::from_millis(25));
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            poll.tick().await;
+            let row: (String, i32) =
+                sqlx::query_as("SELECT status, attempt_count FROM sync_jobs WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await?;
+            if row.0 == status {
+                return Ok::<_, anyhow::Error>(row.1);
+            }
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("dispatcher did not reach {status} for {id} without a wake"))?
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dispatcher_retries_future_failure_without_manual_wake(pool: PgPool) -> anyhow::Result<()> {
+    let fixture = dispatcher_fixture(&pool, 1).await?;
+    let job = dispatcher_job(&fixture, "fail-once").await?;
+    let dispatcher = SyncDispatcher::start(fixture.service.clone());
+    assert_eq!(wait_for_dispatcher_job(&pool, job, "failed").await?, 1);
+    let future: bool =
+        sqlx::query_scalar("SELECT available_at > NOW() FROM sync_jobs WHERE id = $1")
+            .bind(job)
+            .fetch_one(&pool)
+            .await?;
+    assert!(future, "the first failure must schedule a future retry");
+    // No dispatcher.wake(), run_once(), frontend request, or SQL retry-time rewrite.
+    assert_eq!(wait_for_dispatcher_job(&pool, job, "succeeded").await?, 2);
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 2);
+    drop(dispatcher);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dispatcher_startup_drains_due_retries_but_never_resurrects_terminal_jobs(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let fixture = dispatcher_fixture(&pool, 0).await?;
+    let due = dispatcher_job(&fixture, "due-on-restart").await?;
+    let terminal = dispatcher_job(&fixture, "exhausted").await?;
+    let succeeded = dispatcher_job(&fixture, "already-succeeded").await?;
+    let later = dispatcher_job(&fixture, "later-without-wake").await?;
+    sqlx::query("UPDATE sync_jobs SET status = 'failed', attempt_count = 7 WHERE id = $1")
+        .bind(due)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE sync_jobs SET status = 'failed', attempt_count = 8 WHERE id = $1")
+        .bind(terminal)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE sync_jobs SET status = 'succeeded', attempt_count = 1 WHERE id = $1")
+        .bind(succeeded)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE sync_jobs SET available_at = NOW() + INTERVAL '2 seconds' WHERE id = $1")
+        .bind(later)
+        .execute(&pool)
+        .await?;
+    let dispatcher = SyncDispatcher::start(fixture.service.clone());
+    assert_eq!(wait_for_dispatcher_job(&pool, due, "succeeded").await?, 8);
+    // A later timer cycle must neither replay the successful eighth attempt nor revive failures.
+    assert_eq!(wait_for_dispatcher_job(&pool, later, "succeeded").await?, 1);
+    assert_eq!(wait_for_dispatcher_job(&pool, terminal, "failed").await?, 8);
+    assert_eq!(
+        wait_for_dispatcher_job(&pool, succeeded, "succeeded").await?,
+        1
+    );
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 2);
+    drop(dispatcher);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dispatcher_final_failure_does_not_promise_another_retry(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let fixture = dispatcher_fixture(&pool, usize::MAX).await?;
+    let job = dispatcher_job(&fixture, "final-failure").await?;
+    sqlx::query("UPDATE sync_jobs SET status = 'failed', attempt_count = 7 WHERE id = $1")
+        .bind(job)
+        .execute(&pool)
+        .await?;
+    let dispatcher = SyncDispatcher::start(fixture.service.clone());
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        let mut poll = tokio::time::interval(std::time::Duration::from_millis(25));
+        loop {
+            poll.tick().await;
+            let message: Option<String> = sqlx::query_scalar("SELECT message FROM activity_entries WHERE user_id = $1 AND kind = 'synchronization_failed'")
+                .bind(fixture.user_id).fetch_optional(&pool).await?;
+            if let Some(message) = message {
+                assert!(!message.contains("will be retried"), "terminal failure must not promise an automatic retry");
+                return Ok::<_, anyhow::Error>(());
+            }
+        }
+    }).await??;
+    assert_eq!(wait_for_dispatcher_job(&pool, job, "failed").await?, 8);
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 1);
+    drop(dispatcher);
+    Ok(())
 }
