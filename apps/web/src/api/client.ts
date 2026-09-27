@@ -304,8 +304,8 @@ export async function search(query: string): Promise<SearchResult[]> {
   ).items
 }
 
-export async function listCalendars(): Promise<Calendar[]> {
-  return unwrap(await client.GET('/api/v1/calendars')).items
+export async function listCalendars(signal?: AbortSignal): Promise<Calendar[]> {
+  return unwrap(await client.GET('/api/v1/calendars', { signal })).items
 }
 
 export async function createCalendar(input: CreateCalendarRequest): Promise<Calendar> {
@@ -338,9 +338,11 @@ export async function deleteCalendar(calendarId: string, expectedVersion: number
 export async function listEvents(
   startsBefore: string,
   endsAfter: string,
+  signal?: AbortSignal,
 ): Promise<CalendarEvent[]> {
   return unwrap(
     await client.GET('/api/v1/events', {
+      signal,
       params: { query: { starts_before: startsBefore, ends_after: endsAfter } },
     }),
   ).items
@@ -452,8 +454,13 @@ export async function deleteProject(projectId: string, expectedVersion: number):
   )
 }
 
-export async function listTasks(projectId?: string, cursor?: string): Promise<TaskPage> {
+export async function listTasks(
+  projectId?: string,
+  cursor?: string,
+  signal?: AbortSignal,
+): Promise<TaskPage> {
   const result = await client.GET('/api/v1/tasks', {
+    signal,
     params: {
       query: {
         project_id: projectId,
