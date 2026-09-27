@@ -221,7 +221,9 @@ Run one claim for diagnostics:
 cargo run -p prosepect-api --bin worker -- --once
 ```
 
-Run the long-lived worker without `--once` for Docker Compose or a future server. Jobs are idempotent per tenant, and a failed worker can restart safely after its lease expires.
+Run the long-lived worker without `--once` for Docker Compose or a future server. Jobs are idempotent per tenant. While the API is awake, its dispatcher checks for eligible queued jobs after a five-second wait or a wake signal, processing at most 32 jobs per drain. This resumes due failed retries without a manual Sync now action, including after startup; long jobs and backlog can delay them. It does not keep Render Free awake or guarantee cron timing.
+
+Interrupted jobs left in `running` status are not automatically reclaimed, even after their lease expires. Safe recovery requires live-worker exclusion and claim fencing; lease expiry alone does not prove that processing stopped. Do not bulk-reset these rows or replay exhausted jobs without inspecting their state.
 
 ## Backups and migration to a server
 

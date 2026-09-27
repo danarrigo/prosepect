@@ -110,7 +110,11 @@ impl SyncService {
                 self.record_activity(
                     job.user_id,
                     "synchronization_failed",
-                    "Calendar synchronization failed and will be retried",
+                    if job.attempt_count + 1 < 8 {
+                        "Calendar synchronization failed and will be retried"
+                    } else {
+                        "Calendar synchronization failed after the final attempt"
+                    },
                 )
                 .await?;
             }

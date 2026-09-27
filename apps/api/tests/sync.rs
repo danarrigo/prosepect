@@ -618,6 +618,7 @@ struct DispatcherFixture {
     user_id: Uuid,
     calendar_id: Uuid,
     requests: Arc<AtomicUsize>,
+    first_response: Arc<tokio::sync::Semaphore>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -630,12 +631,20 @@ impl Drop for DispatcherFixture {
 async fn dispatcher_fixture(pool: &PgPool, failures: usize) -> anyhow::Result<DispatcherFixture> {
     let requests = Arc::new(AtomicUsize::new(0));
     let calls = requests.clone();
+    let first_response = Arc::new(tokio::sync::Semaphore::new(1));
+    let response_gate = first_response.clone();
     let app = Router::new().route(
         "/calendars/{calendar_id}/events",
         get(move || {
             let calls = calls.clone();
+            let response_gate = response_gate.clone();
             async move {
-                if calls.fetch_add(1, Ordering::SeqCst) < failures {
+                let attempt = calls.fetch_add(1, Ordering::SeqCst);
+                if attempt == 0 {
+                    // Tests can hold the first response without sleeping or real provider traffic.
+                    let _permit = response_gate.acquire().await.unwrap();
+                }
+                if attempt < failures {
                     // Non-5xx failure: test the durable job retry, not HTTP-level retries.
                     StatusCode::BAD_REQUEST.into_response()
                 } else {
@@ -683,6 +692,7 @@ async fn dispatcher_fixture(pool: &PgPool, failures: usize) -> anyhow::Result<Di
         user_id,
         calendar_id,
         requests,
+        first_response,
         server,
     })
 }
@@ -804,6 +814,116 @@ async fn dispatcher_final_failure_does_not_promise_another_retry(
     }).await??;
     assert_eq!(wait_for_dispatcher_job(&pool, job, "failed").await?, 8);
     assert_eq!(fixture.requests.load(Ordering::SeqCst), 1);
+    drop(dispatcher);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dispatcher_waits_after_database_error_then_recovers_without_wake(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let fixture = dispatcher_fixture(&pool, 0).await?;
+    let job = dispatcher_job(&fixture, "claim-error").await?;
+    // Sequence increments survive rollback: exactly the first claim fails in this disposable DB.
+    sqlx::raw_sql(
+        "CREATE SEQUENCE dispatcher_claim_attempts;
+         CREATE FUNCTION fail_first_dispatcher_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             IF NEW.status = 'running' AND nextval('dispatcher_claim_attempts') = 1 THEN
+                 RAISE EXCEPTION 'test transient claim error';
+             END IF;
+             RETURN NEW;
+         END $$;
+         CREATE TRIGGER dispatcher_claim_error BEFORE UPDATE ON sync_jobs
+         FOR EACH ROW EXECUTE FUNCTION fail_first_dispatcher_claim();",
+    )
+    .execute(&pool)
+    .await?;
+    let started = std::time::Instant::now();
+    let dispatcher = SyncDispatcher::start(fixture.service.clone());
+    assert_eq!(wait_for_dispatcher_job(&pool, job, "succeeded").await?, 1);
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(5),
+        "errors must wait before polling again"
+    );
+    let claims: i64 = sqlx::query_scalar("SELECT last_value FROM dispatcher_claim_attempts")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(claims, 2);
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 1);
+    drop(dispatcher);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dispatcher_shutdown_finishes_current_job_without_starting_another(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let fixture = dispatcher_fixture(&pool, 0).await?;
+    let first = dispatcher_job(&fixture, "shutdown-first").await?;
+    let second = dispatcher_job(&fixture, "shutdown-second").await?;
+    let blocked_response = fixture.first_response.acquire().await?;
+    let dispatcher = SyncDispatcher::start(fixture.service.clone());
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        let mut poll = tokio::time::interval(std::time::Duration::from_millis(25));
+        while fixture.requests.load(Ordering::SeqCst) == 0 {
+            poll.tick().await;
+        }
+    })
+    .await?;
+    // Queue many coalesced wake signals while a real run_once is blocked in mock HTTP.
+    for _ in 0..100 {
+        dispatcher.wake();
+    }
+    drop(dispatcher);
+    drop(blocked_response);
+    assert_eq!(wait_for_dispatcher_job(&pool, first, "succeeded").await?, 1);
+    // Observe an entire retry-poll window. Shutdown must suppress both buffered wakes and timers.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(6), async {
+            let mut poll = tokio::time::interval(std::time::Duration::from_millis(25));
+            while fixture.requests.load(Ordering::SeqCst) == 1 {
+                poll.tick().await;
+            }
+        })
+        .await
+        .is_err()
+    );
+    assert_eq!(wait_for_dispatcher_job(&pool, second, "pending").await?, 0);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn dispatcher_coalesces_wakes_and_bounds_each_drain(pool: PgPool) -> anyhow::Result<()> {
+    let fixture = dispatcher_fixture(&pool, 0).await?;
+    let mut jobs = Vec::new();
+    for index in 0..33 {
+        jobs.push(dispatcher_job(&fixture, &format!("bounded-drain-{index}")).await?);
+    }
+    // Block startup cleanup so the receiver cannot consume a signal during this burst.
+    let mut startup_lock = pool.begin().await?;
+    sqlx::query("LOCK TABLE oauth_login_attempts IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *startup_lock)
+        .await?;
+    let dispatcher = SyncDispatcher::start(fixture.service.clone());
+    for _ in 0..100 {
+        dispatcher.wake();
+    }
+    startup_lock.commit().await?;
+    assert_eq!(
+        wait_for_dispatcher_job(&pool, jobs[32], "succeeded").await?,
+        1
+    );
+    let waited_between_batches: bool = sqlx::query_scalar(
+        "SELECT later.updated_at >= earlier.updated_at + INTERVAL '5 seconds'
+         FROM sync_jobs earlier, sync_jobs later WHERE earlier.id = $1 AND later.id = $2",
+    )
+    .bind(jobs[31])
+    .bind(jobs[32])
+    .fetch_one(&pool)
+    .await?;
+    assert!(waited_between_batches, "a drain must yield after 32 jobs");
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 33);
     drop(dispatcher);
     Ok(())
 }
