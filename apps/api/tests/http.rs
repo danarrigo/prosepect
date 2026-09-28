@@ -1094,3 +1094,99 @@ async fn calendar_move_http_is_authenticated_owner_scoped_and_one_shot(
     }
     Ok(())
 }
+
+// Protocol-only RED: this deliberately uses no reversible-deletion Rust symbols.
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_http_restores_identity_once(pool: PgPool) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let router = app::build(&test_config(), store)?;
+    let created = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/tasks")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"title":"Recover this task","description":"Private contents"}"#,
+                ))?,
+        )
+        .await?;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let task: serde_json::Value =
+        serde_json::from_slice(&to_bytes(created.into_body(), 64 * 1024).await?)?;
+    let id = task["id"].as_str().expect("task id");
+    let deleted = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/tasks/{id}/delete-with-undo"))
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"expected_version": task["version"]}).to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(
+        deleted.status(),
+        StatusCode::OK,
+        "explicit reversible deletion must exist"
+    );
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&to_bytes(deleted.into_body(), 64 * 1024).await?)?;
+    assert_eq!(receipt["task_id"], task["id"]);
+    assert_eq!(receipt["task_title"], task["title"]);
+    assert_eq!(
+        receipt.as_object().expect("receipt object").len(),
+        4,
+        "receipt must expose only the approved UI fields"
+    );
+    let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE id=$1")
+        .bind(uuid::Uuid::parse_str(id)?)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(remaining, 0, "canonical row must be hard deleted");
+    let listed = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/task-delete-undos")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed: serde_json::Value =
+        serde_json::from_slice(&to_bytes(listed.into_body(), 64 * 1024).await?)?;
+    assert_eq!(listed["items"], serde_json::json!([receipt.clone()]));
+    let consume = format!(
+        "/api/v1/task-delete-undos/{}/consume",
+        receipt["id"].as_str().expect("receipt id")
+    );
+    for expected in [StatusCode::NO_CONTENT, StatusCode::NOT_FOUND] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&consume)
+                    .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), expected);
+    }
+    let restored: (String, String, i32) =
+        sqlx::query_as("SELECT title, description, version FROM tasks WHERE id=$1")
+            .bind(uuid::Uuid::parse_str(id)?)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(restored.0, "Recover this task");
+    assert_eq!(restored.1, "Private contents");
+    assert!(i64::from(restored.2) > task["version"].as_i64().unwrap());
+    Ok(())
+}
