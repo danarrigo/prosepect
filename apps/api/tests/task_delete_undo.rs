@@ -28,12 +28,19 @@ async fn fixture(pool: &PgPool, scheduled: bool) -> anyhow::Result<(Store, Uuid,
     Ok((store, user, task))
 }
 async fn rows(pool: &PgPool, table: &str, user: Uuid) -> anyhow::Result<Vec<Value>> {
-    Ok(sqlx::query_scalar(&format!(
-        "SELECT to_jsonb(r) FROM {table} r WHERE user_id=$1 ORDER BY to_jsonb(r)::text"
-    ))
-    .bind(user)
-    .fetch_all(pool)
-    .await?)
+    let query = match table {
+        "tasks" => "SELECT to_jsonb(r) FROM tasks r WHERE user_id=$1 ORDER BY to_jsonb(r)::text",
+        "calendar_events" => {
+            "SELECT to_jsonb(r) FROM calendar_events r WHERE user_id=$1 ORDER BY to_jsonb(r)::text"
+        }
+        "notes" => "SELECT to_jsonb(r) FROM notes r WHERE user_id=$1 ORDER BY to_jsonb(r)::text",
+        "files" => "SELECT to_jsonb(r) FROM files r WHERE user_id=$1 ORDER BY to_jsonb(r)::text",
+        "daily_focus_tasks" => {
+            "SELECT to_jsonb(r) FROM daily_focus_tasks r WHERE user_id=$1 ORDER BY to_jsonb(r)::text"
+        }
+        _ => panic!("unknown fixture table"),
+    };
+    Ok(sqlx::query_scalar(query).bind(user).fetch_all(pool).await?)
 }
 fn assert_advanced(before: &[Value], after: &[Value]) {
     assert_eq!(before.len(), after.len());

@@ -1157,12 +1157,12 @@ async fn task_delete_undo_google_refuses_uncertain_dirty_nonpreferred_and_incomp
     ));
     undo_initial_push(&f).await?;
     for update in [
-        "local_dirty=TRUE",
-        "external_etag=NULL",
-        "base_fingerprint=NULL",
-        "base_fingerprint='incomplete'",
-        "pending_resolution='google'",
-        "conflict_state='unresolved'",
+        "UPDATE external_event_mappings SET local_dirty=TRUE WHERE user_id=$1",
+        "UPDATE external_event_mappings SET external_etag=NULL WHERE user_id=$1",
+        "UPDATE external_event_mappings SET base_fingerprint=NULL WHERE user_id=$1",
+        "UPDATE external_event_mappings SET base_fingerprint='incomplete' WHERE user_id=$1",
+        "UPDATE external_event_mappings SET pending_resolution='google' WHERE user_id=$1",
+        "UPDATE external_event_mappings SET conflict_state='unresolved' WHERE user_id=$1",
     ] {
         let mut tx = pool.begin().await?;
         // Apply and commit each mutation, then restore the complete exact baseline.
@@ -1172,12 +1172,7 @@ async fn task_delete_undo_google_refuses_uncertain_dirty_nonpreferred_and_incomp
         .bind(f.user)
         .fetch_one(&mut *tx)
         .await?;
-        sqlx::query(&format!(
-            "UPDATE external_event_mappings SET {update} WHERE user_id=$1"
-        ))
-        .bind(f.user)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query(update).bind(f.user).execute(&mut *tx).await?;
         tx.commit().await?;
         assert!(
             matches!(

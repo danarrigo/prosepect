@@ -485,14 +485,22 @@ async fn row(
     user: Uuid,
     key: Uuid,
 ) -> AppResult<Option<Value>> {
-    // Table names are exclusively static internal call sites, never request/snapshot data.
-    Ok(sqlx::query_scalar(&format!(
-        "SELECT to_jsonb(r) FROM {table} r WHERE user_id=$1 AND id=$2 FOR UPDATE NOWAIT"
-    ))
-    .bind(user)
-    .bind(key)
-    .fetch_optional(connection)
-    .await?)
+    let query = match table {
+        "tasks" => "SELECT to_jsonb(r) FROM tasks r WHERE user_id=$1 AND id=$2 FOR UPDATE NOWAIT",
+        "projects" => {
+            "SELECT to_jsonb(r) FROM projects r WHERE user_id=$1 AND id=$2 FOR UPDATE NOWAIT"
+        }
+        "calendars" => {
+            "SELECT to_jsonb(r) FROM calendars r WHERE user_id=$1 AND id=$2 FOR UPDATE NOWAIT"
+        }
+        "files" => "SELECT to_jsonb(r) FROM files r WHERE user_id=$1 AND id=$2 FOR UPDATE NOWAIT",
+        _ => return Err(changed()),
+    };
+    Ok(sqlx::query_scalar(query)
+        .bind(user)
+        .bind(key)
+        .fetch_optional(connection)
+        .await?)
 }
 async fn guard(
     connection: &mut PgConnection,
@@ -514,7 +522,18 @@ async fn insert_versioned(
     table: &str,
     value: &Value,
 ) -> AppResult<()> {
-    sqlx::query(&format!("INSERT INTO {table} SELECT * FROM jsonb_populate_record(NULL::{table},$1 || jsonb_build_object('version',($1->>'version')::integer+1,'updated_at',clock_timestamp()))"))
-        .bind(value).execute(connection).await?;
+    let query = match table {
+        "tasks" => {
+            "INSERT INTO tasks SELECT * FROM jsonb_populate_record(NULL::tasks,$1 || jsonb_build_object('version',($1->>'version')::integer+1,'updated_at',clock_timestamp()))"
+        }
+        "calendar_events" => {
+            "INSERT INTO calendar_events SELECT * FROM jsonb_populate_record(NULL::calendar_events,$1 || jsonb_build_object('version',($1->>'version')::integer+1,'updated_at',clock_timestamp()))"
+        }
+        "notes" => {
+            "INSERT INTO notes SELECT * FROM jsonb_populate_record(NULL::notes,$1 || jsonb_build_object('version',($1->>'version')::integer+1,'updated_at',clock_timestamp()))"
+        }
+        _ => return Err(changed()),
+    };
+    sqlx::query(query).bind(value).execute(connection).await?;
     Ok(())
 }
