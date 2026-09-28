@@ -1528,3 +1528,94 @@ async fn task_delete_undo_google_explicit_keep_google_disarms_deletion_and_recon
     }
     Ok(())
 }
+
+// Exercise the existing route/service wiring, so legacy repair is automatic on deletion.
+async fn delete_with_provider(
+    f: &UndoFixture,
+) -> anyhow::Result<prosepect_api::models::TaskDeleteUndo> {
+    use prosepect_api::{
+        app::AppState,
+        auth::CurrentUser,
+        extract::{ApiJson, ApiPath},
+        file_storage::FileStorage,
+        rate_limit::LoginRateLimiter,
+    };
+    let dispatcher = SyncDispatcher::default();
+    let state = AppState {
+        store: f.store.clone(),
+        allow_insecure_dev_auth: true,
+        invite_only: false,
+        trust_proxy_headers: false,
+        login_rate_limiter: LoginRateLimiter::default(),
+        action_rate_limiter: LoginRateLimiter::default(),
+        secure_cookies: false,
+        app_url: "http://localhost".into(),
+        google_oauth: None,
+        file_storage: FileStorage::new(&prosepect_api::config::ObjectStorageConfig::Local {
+            root: std::env::temp_dir()
+                .join("prosepect-sync-tests")
+                .to_string_lossy()
+                .into_owned(),
+        })?,
+        max_file_size_bytes: 1024,
+        max_user_file_storage_bytes: 1024,
+        max_total_file_storage_bytes: 1024,
+        max_user_accounts: None,
+        admin_user_ids: Default::default(),
+        worker_trigger_token: None,
+        sync_service: Some(f.service.clone()),
+        sync_dispatcher: dispatcher.clone(),
+        metrics: prosepect_api::observability::initialize_metrics(),
+    };
+    let result = prosepect_api::task_delete_routes::delete_task_with_undo(
+        State(state),
+        CurrentUser(f.user),
+        ApiPath(f.task.id),
+        ApiJson(serde_json::from_value(
+            json!({"expected_version":f.task.version}),
+        )?),
+    )
+    .await;
+    Ok(result?.0)
+}
+
+async fn seed_legacy_fingerprint(pool: &PgPool, f: &UndoFixture) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    // Actual pre-Undo six-field format, including chrono Display and enum Debug.
+    let (title, description, start, end, location, recurrence): (String, String, chrono::DateTime<Utc>, chrono::DateTime<Utc>, String, prosepect_api::models::EventRecurrence) = sqlx::query_as(
+        "SELECT title,description,starts_at,ends_at,location,recurrence FROM calendar_events WHERE linked_task_id=$1"
+    ).bind(f.task.id).fetch_one(pool).await?;
+    let legacy = format!(
+        "{:x}",
+        Sha256::digest(
+            format!("{title}|{description}|{start}|{end}|{location}|{recurrence:?}").as_bytes()
+        )
+    );
+    sqlx::query("UPDATE external_event_mappings SET base_fingerprint=$2 WHERE user_id=$1")
+        .bind(f.user)
+        .bind(&legacy)
+        .execute(pool)
+        .await?;
+    Ok(legacy)
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_legacy_fingerprint_read_only_repair(pool: PgPool) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    undo_initial_push(&f).await?;
+    let legacy = seed_legacy_fingerprint(&pool, &f).await?;
+    undo_sync(&f, "unchanged-legacy-pull").await?;
+    let receipt = delete_with_provider(&f).await?;
+    let upgraded: String =
+        sqlx::query_scalar("SELECT base_fingerprint FROM external_event_mappings WHERE user_id=$1")
+            .bind(f.user)
+            .fetch_one(&pool)
+            .await?;
+    assert_ne!(upgraded, legacy);
+    f.store
+        .undo_task_delete(f.user, receipt.id, Some(&f.service))
+        .await?;
+    undo_sync(&f, "legacy-repaired-restore").await?;
+    assert!(f.state.writes.lock().await.is_empty());
+    Ok(())
+}

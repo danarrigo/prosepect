@@ -490,3 +490,52 @@ async fn task_delete_undo_does_not_restore_old_move_receipts(pool: PgPool) -> an
     ));
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_review_completion_guards_disappeared_focus_date(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, task_a) = fixture(&pool, false).await?;
+    let task_b = store
+        .create_task(user, serde_json::from_value(json!({"title":"Earlier B"}))?)
+        .await?;
+    for (day, task) in [("2026-09-08", task_b.id), ("2026-09-09", task_a.id)] {
+        store
+            .update_daily_focus(
+                user,
+                day.parse()?,
+                UpdateDailyFocusRequest {
+                    task_ids: vec![task],
+                },
+            )
+            .await?;
+    }
+    let day = "2026-09-10".parse()?;
+    let review = store
+        .start_daily_review(user, day, true)
+        .await?
+        .review
+        .unwrap();
+    assert_eq!(review.unfinished_tasks[0].id, task_a.id);
+    let receipt = store
+        .delete_task_with_undo(user, task_a.id, task_a.version)
+        .await?;
+    let reloaded = store
+        .start_daily_review(user, day, true)
+        .await?
+        .review
+        .unwrap();
+    assert_eq!(reloaded.unfinished_tasks[0].id, task_b.id);
+    store.complete_daily_review(user, day, serde_json::from_value(json!({
+        "expected_version":reloaded.version,"decisions":[{"task_id":task_b.id,"action":"remove"}]
+    }))?).await?;
+    assert!(
+        matches!(
+            store.undo_task_delete(user, receipt.id, None).await,
+            Err(AppError::Conflict(_))
+        ),
+        "completed review must invalidate Undo even though September 9 disappeared"
+    );
+    assert_eq!(rows(&pool, "tasks", user).await?.len(), 1);
+    Ok(())
+}
