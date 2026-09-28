@@ -449,6 +449,43 @@ impl Store {
             ));
         }
         let mut transaction = self.pool.begin().await?;
+        let tombstone: Option<(Uuid,bool)> = sqlx::query_as("SELECT m.id,m.reversible_tombstone FROM external_event_mappings m JOIN sync_conflicts c ON c.mapping_id=m.id WHERE c.id=$1 AND c.user_id=$2 AND c.status='unresolved'")
+            .bind(conflict_id).bind(user_id).fetch_optional(&mut *transaction).await?;
+        let tombstone = tombstone.filter(|(_, held)| *held).map(|(id, _)| id);
+        if let Some(mapping_id) = tombstone {
+            if resolution != "google" {
+                return Err(AppError::Conflict("This deleted-task conflict can only be resolved with Keep Google. The task stays deleted and Google is preserved.".into()));
+            }
+            let available: bool =
+                sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+                    .bind(format!("prosepect-sync:{user_id}"))
+                    .fetch_one(&mut *transaction)
+                    .await?;
+            if !available {
+                return Err(AppError::Conflict(
+                    "Calendar synchronization is in progress. Try again shortly.".into(),
+                ));
+            }
+            sqlx::query("SET LOCAL lock_timeout='100ms'")
+                .execute(&mut *transaction)
+                .await?;
+            let held: Option<bool> = sqlx::query_scalar("SELECT reversible_tombstone FROM external_event_mappings WHERE id=$1 AND user_id=$2 FOR UPDATE NOWAIT")
+                .bind(mapping_id).bind(user_id).fetch_optional(&mut *transaction).await?;
+            if held != Some(true) {
+                return Err(AppError::Conflict(
+                    "Deletion conflict changed. Refresh before resolving it.".into(),
+                ));
+            }
+            sqlx::query(
+                "DELETE FROM task_delete_undos WHERE user_id=$1 AND snapshot->'mapping'->>'id'=$2",
+            )
+            .bind(user_id)
+            .bind(mapping_id.to_string())
+            .execute(&mut *transaction)
+            .await?;
+            sqlx::query("UPDATE external_event_mappings SET reversible_tombstone=FALSE,deletion_hold_until=NULL,delete_resolution_pending=TRUE WHERE id=$1")
+                .bind(mapping_id).execute(&mut *transaction).await?;
+        }
         let conflict = sqlx::query_as::<_, SyncConflict>(
             r#"
             UPDATE sync_conflicts SET status = 'resolved', resolution = $3, resolved_at = NOW()

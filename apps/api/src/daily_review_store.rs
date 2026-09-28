@@ -108,6 +108,8 @@ impl Store {
         let previous_date = previous_unfinished_focus_date(&mut transaction, user_id, review_date)
             .await?
             .ok_or_else(|| AppError::Conflict("there are no unfinished focus tasks".to_owned()))?;
+        Self::bump_focus_revision(&mut transaction, user_id, previous_date).await?;
+        Self::bump_focus_revision(&mut transaction, user_id, review_date).await?;
         let unfinished_tasks =
             focus_tasks_for_date(&mut transaction, user_id, previous_date).await?;
         let unfinished_ids: HashSet<_> = unfinished_tasks.iter().map(|task| task.id).collect();

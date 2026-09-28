@@ -1190,3 +1190,51 @@ async fn task_delete_undo_http_restores_identity_once(pool: PgPool) -> anyhow::R
     assert!(i64::from(restored.2) > task["version"].as_i64().unwrap());
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_http_requires_authentication_and_cookie_csrf(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let router = app::build(&test_config(), Store::from_pool(pool))?;
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/task-delete-undos")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let session = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .body(Body::empty())?,
+        )
+        .await?;
+    let cookie = session.headers()[header::SET_COOKIE]
+        .to_str()?
+        .split(';')
+        .next()
+        .unwrap();
+    for path in [
+        "/api/v1/tasks/00000000-0000-0000-0000-000000000001/delete-with-undo",
+        "/api/v1/task-delete-undos/00000000-0000-0000-0000-000000000001/consume",
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header(header::COOKIE, cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"expected_version":1}"#))?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    Ok(())
+}

@@ -48,6 +48,7 @@ use crate::{
     sync_dispatcher::SyncDispatcher,
     sync_routes,
     sync_service::SyncService,
+    task_delete_routes,
 };
 
 #[derive(Clone)]
@@ -81,6 +82,9 @@ pub struct AppState {
         description = "Personal productivity API for Prosepect"
     ),
     paths(
+        task_delete_routes::delete_task_with_undo,
+        task_delete_routes::list_task_delete_undos,
+        task_delete_routes::undo_task_delete,
         calendar_move_routes::list_calendar_move_undos,
         calendar_move_routes::move_event,
         calendar_move_routes::move_task,
@@ -147,6 +151,9 @@ pub struct AppState {
         sync_routes::activity
     ),
     components(schemas(
+        crate::models::DeleteTaskWithUndoRequest,
+        crate::models::TaskDeleteUndo,
+        crate::models::TaskDeleteUndoList,
         crate::models::MoveCalendarItemRequest,
         crate::models::CalendarMoveUndo,
         crate::models::CalendarMoveUndoList,
@@ -293,7 +300,7 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
     let sync_dispatcher = sync_service
         .clone()
         .map(SyncDispatcher::start)
-        .unwrap_or_default();
+        .unwrap_or_else(|| SyncDispatcher::start_maintenance(store.clone()));
     let state = AppState {
         store,
         allow_insecure_dev_auth: config.allow_insecure_dev_auth,
@@ -429,6 +436,18 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         )
         .route("/tasks", get(routes::list_tasks).post(routes::create_task))
         .route("/tasks/order", put(routes::reorder_tasks))
+        .route(
+            "/tasks/{task_id}/delete-with-undo",
+            post(task_delete_routes::delete_task_with_undo),
+        )
+        .route(
+            "/task-delete-undos",
+            get(task_delete_routes::list_task_delete_undos),
+        )
+        .route(
+            "/task-delete-undos/{receipt_id}/consume",
+            post(task_delete_routes::undo_task_delete),
+        )
         .route(
             "/calendar-move-undos",
             get(calendar_move_routes::list_calendar_move_undos),

@@ -53,6 +53,26 @@ impl SyncDispatcher {
         dispatcher
     }
 
+    pub fn start_maintenance(store: crate::store::Store) -> Self {
+        let (sender, mut receiver) = mpsc::channel(1);
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    message = receiver.recv() => if message.is_none() { break; },
+                    _ = tokio::time::sleep(RETRY_POLL_INTERVAL) => {}
+                }
+                if let Err(error) = store.cleanup_task_delete_undos().await {
+                    tracing::error!(error = ?error, "task deletion Undo cleanup failed");
+                }
+            }
+        });
+        let dispatcher = Self {
+            sender: Some(sender),
+        };
+        dispatcher.wake();
+        dispatcher
+    }
+
     pub fn wake(&self) {
         if let Some(sender) = &self.sender {
             let _ = sender.try_send(());

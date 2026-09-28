@@ -376,6 +376,7 @@ impl Store {
             ));
         }
 
+        Self::bump_focus_revision(&mut transaction, user_id, date).await?;
         sqlx::query("DELETE FROM daily_focus_tasks WHERE user_id = $1 AND focus_date = $2")
             .bind(user_id)
             .bind(date)

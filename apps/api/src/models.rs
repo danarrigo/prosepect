@@ -710,3 +710,21 @@ pub struct CalendarMoveUndo {
 pub struct CalendarMoveUndoList {
     pub items: Vec<CalendarMoveUndo>,
 }
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeleteTaskWithUndoRequest {
+    pub expected_version: i32,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
+pub struct TaskDeleteUndo {
+    pub id: Uuid,
+    pub task_id: Uuid,
+    pub task_title: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TaskDeleteUndoList {
+    pub items: Vec<TaskDeleteUndo>,
+}
