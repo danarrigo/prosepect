@@ -69,5 +69,7 @@ BEGIN
 END $$;
 CREATE TRIGGER task_delete_focus_revision BEFORE INSERT OR UPDATE OR DELETE ON daily_focus_tasks
     FOR EACH ROW EXECUTE FUNCTION task_delete_focus_revision();
-CREATE TRIGGER task_delete_review_revision BEFORE INSERT OR UPDATE OR DELETE ON daily_reviews
+-- Only actual review writes invalidate Undo; an idempotent start uses INSERT
+-- ON CONFLICT DO NOTHING. Store writers still lock before selecting task sets.
+CREATE TRIGGER task_delete_review_revision AFTER INSERT OR UPDATE OR DELETE ON daily_reviews
     FOR EACH ROW EXECUTE FUNCTION task_delete_focus_revision();
