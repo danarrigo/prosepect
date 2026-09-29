@@ -693,3 +693,70 @@ async fn task_delete_undo_first_makes_review_validate_restored_selection(
     assert_eq!(store.list_tasks(user, None, None, 10).await?.items.len(), 2);
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_noop_automatic_review_reload_preserves_receipt(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, task_a) = fixture(&pool, false).await?;
+    let task_b = store
+        .create_task(
+            user,
+            serde_json::from_value(json!({"title":"Surviving B"}))?,
+        )
+        .await?;
+    store
+        .update_daily_focus(
+            user,
+            "2026-09-09".parse()?,
+            UpdateDailyFocusRequest {
+                task_ids: vec![task_a.id, task_b.id],
+            },
+        )
+        .await?;
+    let day = "2026-09-10".parse()?;
+    let review = store
+        .start_daily_review(user, day, false)
+        .await?
+        .review
+        .unwrap();
+    assert_eq!(review.unfinished_tasks.len(), 2);
+    let receipt = store
+        .delete_task_with_undo(user, task_a.id, task_a.version)
+        .await?;
+    let before: Value = sqlx::query_scalar("SELECT to_jsonb(r) FROM daily_reviews r WHERE id=$1")
+        .bind(review.id)
+        .fetch_one(&pool)
+        .await?;
+    let revision_before: i64 = sqlx::query_scalar("SELECT revision FROM task_delete_guard_revisions WHERE user_id=$1 AND scope='review-selection'")
+        .bind(user).fetch_one(&pool).await?;
+
+    // Workspace reload automatically starts today's review again. B keeps the
+    // previous unfinished date reachable, but this existing review is not edited.
+    let reloaded = store
+        .start_daily_review(user, day, false)
+        .await?
+        .review
+        .unwrap();
+    assert_eq!(reloaded.id, review.id);
+    assert_eq!(reloaded.version, review.version);
+    assert_eq!(reloaded.unfinished_tasks.len(), 1);
+    assert_eq!(reloaded.unfinished_tasks[0].id, task_b.id);
+    let after: Value = sqlx::query_scalar("SELECT to_jsonb(r) FROM daily_reviews r WHERE id=$1")
+        .bind(review.id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(after, before, "reload must not write the review row");
+    let revision_after: i64 = sqlx::query_scalar("SELECT revision FROM task_delete_guard_revisions WHERE user_id=$1 AND scope='review-selection'")
+        .bind(user).fetch_one(&pool).await?;
+    assert_eq!(
+        revision_after, revision_before,
+        "no-op review reload must not invalidate Undo"
+    );
+    store.undo_task_delete(user, receipt.id, None).await?;
+    let focus: Vec<Uuid> = sqlx::query_scalar("SELECT task_id FROM daily_focus_tasks WHERE user_id=$1 AND focus_date='2026-09-09' ORDER BY position")
+        .bind(user).fetch_all(&pool).await?;
+    assert_eq!(focus, vec![task_a.id, task_b.id]);
+    assert!(store.list_task_delete_undos(user).await?.items.is_empty());
+    Ok(())
+}
