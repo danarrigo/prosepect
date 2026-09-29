@@ -14,7 +14,8 @@ use crate::{
     params(("task_id" = Uuid, Path)), request_body = DeleteTaskWithUndoRequest,
     responses((status = 200, body = TaskDeleteUndo), (status = 401, body = ErrorResponse),
         (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse),
-        (status = 409, body = ErrorResponse), (status = 422, body = ErrorResponse)),
+        (status = 409, body = ErrorResponse), (status = 422, body = ErrorResponse),
+        (status = 503, body = ErrorResponse)),
     security(("session_cookie" = []), ("development_user" = [])), tag = "tasks"
 )]
 pub async fn delete_task_with_undo(
@@ -25,7 +26,12 @@ pub async fn delete_task_with_undo(
 ) -> AppResult<Json<TaskDeleteUndo>> {
     let receipt = state
         .store
-        .delete_task_with_undo(user, id, request.expected_version)
+        .delete_task_with_undo_validated(
+            user,
+            id,
+            request.expected_version,
+            state.sync_service.as_ref(),
+        )
         .await?;
     state.sync_dispatcher.wake();
     Ok(Json(receipt))

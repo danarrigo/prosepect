@@ -426,9 +426,12 @@ impl Store {
     pub async fn list_sync_conflicts(&self, user_id: Uuid) -> AppResult<SyncConflictList> {
         let items = sqlx::query_as::<_, SyncConflict>(
             r#"
-            SELECT id, canonical_event_id, title, status, resolution, created_at, resolved_at
-            FROM sync_conflicts WHERE user_id = $1 AND status = 'unresolved'
-            ORDER BY created_at DESC
+            SELECT c.id, c.canonical_event_id, c.title, c.status, c.resolution, c.created_at, c.resolved_at,
+                CASE WHEN m.reversible_tombstone THEN ARRAY['google']::text[]
+                    ELSE ARRAY['google','prosepect','latest']::text[] END AS allowed_resolutions
+            FROM sync_conflicts c LEFT JOIN external_event_mappings m ON m.id=c.mapping_id AND m.user_id=c.user_id
+            WHERE c.user_id = $1 AND c.status = 'unresolved'
+            ORDER BY c.created_at DESC
             "#,
         )
         .bind(user_id)
@@ -490,12 +493,15 @@ impl Store {
             r#"
             UPDATE sync_conflicts SET status = 'resolved', resolution = $3, resolved_at = NOW()
             WHERE id = $1 AND user_id = $2 AND status = 'unresolved'
-            RETURNING id, canonical_event_id, title, status, resolution, created_at, resolved_at
+            RETURNING id, canonical_event_id, title, status, resolution, created_at, resolved_at,
+                CASE WHEN $4 THEN ARRAY['google']::text[]
+                    ELSE ARRAY['google','prosepect','latest']::text[] END AS allowed_resolutions
             "#,
         )
         .bind(conflict_id)
         .bind(user_id)
         .bind(resolution)
+        .bind(tombstone.is_some())
         .fetch_optional(&mut *transaction)
         .await?
         .ok_or(AppError::NotFound("sync conflict"))?;

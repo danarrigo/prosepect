@@ -147,7 +147,7 @@ impl SyncService {
         let unavailable = || {
             AppError::InvalidRequest {
             status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            message: "Google could not be freshly validated. Nothing was restored; retry before the original Undo deadline.".into(),
+            message: "Google could not be freshly validated. Nothing was changed; retry deletion or Undo while it remains eligible.".into(),
         }
         };
         let validate = async {
@@ -1316,7 +1316,7 @@ fn event_fingerprint(event: &NormalizedEvent) -> String {
 }
 fn local_fingerprint(event: &LocalEvent) -> String {
     // Hash exactly the provider-visible write shape, including all-day/timezone,
-    // attendees and recurrence end. Old incomplete baselines fail closed for Undo.
+    // attendees and recurrence end. Legacy baselines require read-only revalidation.
     fingerprint(
         &serde_json::to_string(&GoogleEventWrite::from_local(event))
             .expect("Google event writes contain only JSON-serializable fields"),
@@ -1328,6 +1328,21 @@ pub(crate) fn snapshot_event_fingerprint(
     let event: LocalEvent =
         serde_json::from_value(value.clone()).map_err(|_| crate::task_delete_store::changed())?;
     Ok(local_fingerprint(&event))
+}
+pub(crate) fn legacy_snapshot_event_fingerprint(
+    value: &serde_json::Value,
+) -> crate::error::AppResult<String> {
+    let event: LocalEvent =
+        serde_json::from_value(value.clone()).map_err(|_| crate::task_delete_store::changed())?;
+    Ok(fingerprint(&format!(
+        "{}|{}|{}|{}|{}|{:?}",
+        event.title,
+        event.description,
+        event.starts_at,
+        event.ends_at,
+        event.location,
+        event.recurrence
+    )))
 }
 fn fingerprint(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))

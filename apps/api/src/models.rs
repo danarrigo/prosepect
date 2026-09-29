@@ -370,6 +370,8 @@ pub struct CreateSynchronizationRequest {
 #[derive(Debug, Clone, Serialize, ToSchema, FromRow)]
 pub struct SyncConflict {
     pub id: Uuid,
+    /// Server-derived choices; resolution requests are still validated transactionally.
+    pub allowed_resolutions: Vec<String>,
     pub canonical_event_id: Option<Uuid>,
     pub title: String,
     pub status: String,

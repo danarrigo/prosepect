@@ -30,6 +30,11 @@ struct Snapshot {
     revisions: Vec<(String, i64)>,
 }
 
+enum DeletePreparation {
+    Deleted(TaskDeleteUndo),
+    Legacy(Box<Snapshot>),
+}
+
 pub(crate) fn changed() -> AppError {
     AppError::Conflict("Deletion Undo is no longer safe because a dependency changed or the 60-second window expired. Refresh and try again.".into())
 }
@@ -94,9 +99,43 @@ impl Store {
         task: Uuid,
         expected_version: i32,
     ) -> AppResult<TaskDeleteUndo> {
-        self.delete_task_with_undo_inner(user, task, expected_version)
+        self.delete_task_with_undo_validated(user, task, expected_version, None)
             .await
-            .map_err(retry_error)
+    }
+
+    pub async fn delete_task_with_undo_validated(
+        &self,
+        user: Uuid,
+        task: Uuid,
+        expected_version: i32,
+        service: Option<&SyncService>,
+    ) -> AppResult<TaskDeleteUndo> {
+        let prepared = self
+            .delete_task_with_undo_inner(user, task, expected_version, None)
+            .await
+            .map_err(retry_error)?;
+        let snapshot = match prepared {
+            DeletePreparation::Deleted(receipt) => return Ok(receipt),
+            DeletePreparation::Legacy(snapshot) => snapshot,
+        };
+        // The preparation transaction has rolled back and released its connection.
+        // Validate the complete current write shape, not the incomplete legacy hash.
+        let mut mapping = snapshot.mapping.clone().ok_or_else(changed)?;
+        mapping["base_fingerprint"] = json!(crate::sync_service::snapshot_event_fingerprint(
+            snapshot.event.as_ref().ok_or_else(changed)?
+        )?);
+        service
+            .ok_or(AppError::NotConfigured("Google Calendar validation"))?
+            .validate_task_delete_undo(user, &mapping)
+            .await?;
+        match self
+            .delete_task_with_undo_inner(user, task, expected_version, Some(&snapshot))
+            .await
+            .map_err(retry_error)?
+        {
+            DeletePreparation::Deleted(receipt) => Ok(receipt),
+            DeletePreparation::Legacy(_) => Err(changed()),
+        }
     }
 
     async fn delete_task_with_undo_inner(
@@ -104,7 +143,8 @@ impl Store {
         user: Uuid,
         task_id: Uuid,
         expected_version: i32,
-    ) -> AppResult<TaskDeleteUndo> {
+        validated: Option<&Snapshot>,
+    ) -> AppResult<DeletePreparation> {
         if expected_version < 1 {
             return Err(AppError::Validation(
                 "expected_version must be greater than zero".into(),
@@ -186,6 +226,10 @@ impl Store {
                 );
             }
         }
+        if !snapshot.focus.is_empty() {
+            let rev = revision(&mut tx, user, "review-selection").await?;
+            snapshot.revisions.push(("review-selection".into(), rev));
+        }
         for focus in &snapshot.focus {
             let scope = format!(
                 "focus:{}",
@@ -194,6 +238,7 @@ impl Store {
             let revision = revision(&mut tx, user, &scope).await?;
             snapshot.revisions.push((scope, revision));
         }
+        let mut legacy = false;
         if let Some(event) = &snapshot.event {
             let calendar_id = id(event, "calendar_id")?;
             // Serialize preference changes even when the preferred calendar changes to a
@@ -219,8 +264,6 @@ impl Store {
                     || m["external_calendar_id"] != calendar["external_id"]
                     || m["external_event_id"].as_str().is_none_or(str::is_empty)
                     || m["external_etag"].as_str().is_none_or(str::is_empty)
-                    || m["base_fingerprint"].as_str()
-                        != Some(crate::sync_service::snapshot_event_fingerprint(event)?.as_str())
                     || m["local_dirty"] != false
                     || m["local_deleted"] != false
                     || m["conflict_state"] != "none"
@@ -235,6 +278,18 @@ impl Store {
                     .bind(id(m,"id")?).fetch_one(&mut *tx).await?;
                 if unresolved {
                     return Err(google_refusal());
+                }
+                if m["base_fingerprint"].as_str()
+                    != Some(crate::sync_service::snapshot_event_fingerprint(event)?.as_str())
+                {
+                    if m["base_fingerprint"].as_str()
+                        != Some(
+                            crate::sync_service::legacy_snapshot_event_fingerprint(event)?.as_str(),
+                        )
+                    {
+                        return Err(google_refusal());
+                    }
+                    legacy = true;
                 }
             } else if mapping.is_some() {
                 return Err(google_refusal());
@@ -251,6 +306,27 @@ impl Store {
         if size + 512 > SNAPSHOT_BYTES as i64 || bytes + size + 512 > OWNER_BYTES {
             return Err(capacity());
         }
+        if let Some(validated) = validated {
+            // Rebuilt under synchronization exclusion: compare every dependency, clean
+            // mapping field, account identity and preference/focus revision before repair.
+            if value != encode(validated)? || !legacy {
+                return Err(changed());
+            }
+            let fingerprint = crate::sync_service::snapshot_event_fingerprint(
+                snapshot.event.as_ref().ok_or_else(changed)?,
+            )?;
+            let mapping = snapshot.mapping.as_mut().ok_or_else(changed)?;
+            sqlx::query("UPDATE external_event_mappings SET base_fingerprint=$2 WHERE id=$1")
+                .bind(id(mapping, "id")?)
+                .bind(&fingerprint)
+                .execute(&mut *tx)
+                .await?;
+            mapping["base_fingerprint"] = json!(fingerprint);
+        } else if legacy {
+            tx.rollback().await?;
+            return Ok(DeletePreparation::Legacy(Box::new(snapshot)));
+        }
+        let value = encode(&snapshot)?;
         let receipt: TaskDeleteUndo = sqlx::query_as("INSERT INTO task_delete_undos(id,user_id,task_id,task_title,snapshot,expires_at) VALUES ($1,$2,$3,$4,$5,clock_timestamp()+INTERVAL '60 seconds') RETURNING id,task_id,task_title,expires_at")
             .bind(Uuid::now_v7()).bind(user).bind(task_id).bind(snapshot.task["title"].as_str().ok_or_else(changed)?).bind(value).fetch_one(&mut *tx).await?;
         if let Some(mapping) = &snapshot.mapping {
@@ -274,7 +350,7 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        Ok(receipt)
+        Ok(DeletePreparation::Deleted(receipt))
     }
 
     pub async fn undo_task_delete(

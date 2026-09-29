@@ -55,6 +55,13 @@ BEGIN
         owner_id := NEW.user_id;
         IF TG_TABLE_NAME = 'daily_focus_tasks' THEN day := NEW.focus_date; ELSE day := NEW.review_date; END IF;
     END IF;
+    -- Review store writers take this lock before selecting unfinished tasks.
+    -- The trigger also guards direct review changes/deletion, not just focus rows.
+    IF TG_TABLE_NAME = 'daily_reviews' THEN
+        INSERT INTO task_delete_guard_revisions(user_id,scope,revision)
+            SELECT owner_id,'review-selection',1 WHERE EXISTS (SELECT 1 FROM users WHERE id=owner_id)
+            ON CONFLICT (user_id,scope) DO UPDATE SET revision=task_delete_guard_revisions.revision+1;
+    END IF;
     INSERT INTO task_delete_guard_revisions(user_id,scope,revision)
         SELECT owner_id,'focus:' || day::text,1 WHERE EXISTS (SELECT 1 FROM users WHERE id=owner_id)
         ON CONFLICT (user_id,scope) DO UPDATE SET revision=task_delete_guard_revisions.revision+1;

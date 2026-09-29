@@ -539,3 +539,157 @@ async fn task_delete_undo_review_completion_guards_disappeared_focus_date(
     assert_eq!(rows(&pool, "tasks", user).await?.len(), 1);
     Ok(())
 }
+
+// Poll PostgreSQL's actual blocker relation, not scheduler sleeps, to establish
+// which transaction owns the selection revision before attempting the other path.
+async fn wait_for_blocked_pid(pool: &PgPool, blocker: i32) -> anyhow::Result<i32> {
+    Ok(tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let pid: Option<i32> = sqlx::query_scalar("SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) LIMIT 1")
+                .bind(blocker).fetch_optional(pool).await?;
+            if let Some(pid) = pid { return anyhow::Ok(pid); }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await??)
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_review_completion_first_holds_selection_revision(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, task_a) = fixture(&pool, false).await?;
+    let task_b = store
+        .create_task(user, serde_json::from_value(json!({"title":"Earlier B"}))?)
+        .await?;
+    for (date, task) in [("2026-09-08", task_b.id), ("2026-09-09", task_a.id)] {
+        store
+            .update_daily_focus(
+                user,
+                date.parse()?,
+                UpdateDailyFocusRequest {
+                    task_ids: vec![task],
+                },
+            )
+            .await?;
+    }
+    let day = "2026-09-10".parse()?;
+    let review = store
+        .start_daily_review(user, day, true)
+        .await?
+        .review
+        .unwrap();
+    let receipt = store
+        .delete_task_with_undo(user, task_a.id, task_a.version)
+        .await?;
+    let mut gate = pool.begin().await?;
+    let gate_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *gate)
+        .await?;
+    sqlx::query("SELECT id FROM daily_reviews WHERE id=$1 FOR UPDATE")
+        .bind(review.id)
+        .fetch_one(&mut *gate)
+        .await?;
+    let complete = store.complete_daily_review(
+        user,
+        day,
+        serde_json::from_value(json!({
+            "expected_version":review.version,"decisions":[{"task_id":task_b.id,"action":"remove"}]
+        }))?,
+    );
+    let concurrent_undo = async {
+        wait_for_blocked_pid(&pool, gate_pid).await?;
+        // Completion is blocked on the review row, so it must already hold the
+        // selection revision. Undo fails promptly, without restoring any rows.
+        let attempt = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            store.undo_task_delete(user, receipt.id, None),
+        )
+        .await?;
+        assert!(matches!(attempt, Err(AppError::Conflict(_))));
+        gate.rollback().await?;
+        anyhow::Ok(())
+    };
+    let (completed, attempted) = tokio::join!(complete, concurrent_undo);
+    attempted?;
+    completed?;
+    assert!(matches!(
+        store.undo_task_delete(user, receipt.id, None).await,
+        Err(AppError::Conflict(_))
+    ));
+    assert_eq!(store.list_tasks(user, None, None, 10).await?.items.len(), 1);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_first_makes_review_validate_restored_selection(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, task_a) = fixture(&pool, false).await?;
+    let task_b = store
+        .create_task(user, serde_json::from_value(json!({"title":"Earlier B"}))?)
+        .await?;
+    for (date, task) in [("2026-09-08", task_b.id), ("2026-09-09", task_a.id)] {
+        store
+            .update_daily_focus(
+                user,
+                date.parse()?,
+                UpdateDailyFocusRequest {
+                    task_ids: vec![task],
+                },
+            )
+            .await?;
+    }
+    let day = "2026-09-10".parse()?;
+    let review = store
+        .start_daily_review(user, day, true)
+        .await?
+        .review
+        .unwrap();
+    let receipt = store
+        .delete_task_with_undo(user, task_a.id, task_a.version)
+        .await?;
+    // Pause restore after revision comparison and before the first insert. The
+    // transaction keeps its shared selection lock until the inverse commits.
+    sqlx::raw_sql("CREATE FUNCTION pause_restore() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM set_config('lock_timeout','5s',true); PERFORM pg_advisory_xact_lock(734812); RETURN NEW; END $$; CREATE TRIGGER pause_restore BEFORE INSERT ON tasks FOR EACH ROW EXECUTE FUNCTION pause_restore();")
+        .execute(&pool).await?;
+    let mut gate = pool.begin().await?;
+    let gate_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *gate)
+        .await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(734812)")
+        .execute(&mut *gate)
+        .await?;
+    let undo = store.undo_task_delete(user, receipt.id, None);
+    let concurrent_completion = async {
+        let undo_pid = wait_for_blocked_pid(&pool, gate_pid).await?;
+        let complete = store.complete_daily_review(user, day, serde_json::from_value(json!({
+            "expected_version":review.version,"decisions":[{"task_id":task_b.id,"action":"remove"}]
+        }))?);
+        let release = async {
+            wait_for_blocked_pid(&pool, undo_pid).await?;
+            gate.rollback().await?;
+            anyhow::Ok(())
+        };
+        let (result, released) = tokio::join!(complete, release);
+        released?;
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "completion must require a decision for restored A, not B: {result:?}"
+        );
+        anyhow::Ok(())
+    };
+    let (restored, completed) = tokio::join!(undo, concurrent_completion);
+    restored?;
+    completed?;
+    let reloaded = store
+        .start_daily_review(user, day, true)
+        .await?
+        .review
+        .unwrap();
+    assert_eq!(reloaded.unfinished_tasks[0].id, task_a.id);
+    store.complete_daily_review(user, day, serde_json::from_value(json!({
+        "expected_version":review.version,"decisions":[{"task_id":task_a.id,"action":"remove"}]
+    }))?).await?;
+    assert_eq!(store.list_tasks(user, None, None, 10).await?.items.len(), 2);
+    Ok(())
+}
