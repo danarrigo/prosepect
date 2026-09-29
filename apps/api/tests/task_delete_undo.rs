@@ -543,14 +543,14 @@ async fn task_delete_undo_review_completion_guards_disappeared_focus_date(
 // Poll PostgreSQL's actual blocker relation, not scheduler sleeps, to establish
 // which transaction owns the selection revision before attempting the other path.
 async fn wait_for_blocked_pid(pool: &PgPool, blocker: i32) -> anyhow::Result<i32> {
-    Ok(tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let pid: Option<i32> = sqlx::query_scalar("SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) LIMIT 1")
                 .bind(blocker).fetch_optional(pool).await?;
             if let Some(pid) = pid { return anyhow::Ok(pid); }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-    }).await??)
+    }).await?
 }
 
 #[sqlx::test(migrations = "../../migrations")]
