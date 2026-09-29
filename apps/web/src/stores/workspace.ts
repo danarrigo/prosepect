@@ -25,6 +25,7 @@ import type {
   ReviewTaskDecision,
   Task,
   TaskStatus,
+  TaskDeleteUndo,
   UpdateCalendarEventRequest,
   UpdateCalendarRequest,
   UserProfile,
@@ -60,6 +61,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const calendarMoveUndoing = ref(false)
   const calendarMoveMessage = ref('')
   const calendarMoveError = ref('')
+  const taskDeleteUndos = ref<TaskDeleteUndo[]>([])
+  const taskDeletePending = ref(false)
+  const taskDeleteMessage = ref('')
+  const taskDeleteError = ref('')
+  let accountGeneration = 0
+  let mutationGeneration = 0
+  let workspaceReadGeneration = 0
+  let receiptReadGeneration = 0
+  let taskDeleteGeneration = 0
+  let bootstrapGeneration = 0
+  let sessionRequest: AbortController | null = null
   let calendarRange: { start: Date; end: Date } | null = null
   let calendarMoveGeneration = 0
   let calendarReadGeneration = 0
@@ -73,8 +85,45 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     { deep: true, flush: 'sync' },
   )
   watch(
+    saving,
+    (pending) => {
+      if (pending) {
+        mutationGeneration += 1
+        calendarReadGeneration += 1
+        workspaceReadGeneration += 1
+      }
+    },
+    { flush: 'sync' },
+  )
+  watch(
     () => user.value?.id,
     () => {
+      accountGeneration += 1
+      sessionRequest?.abort()
+      sessionRequest = null
+      workspaceReadGeneration += 1
+      receiptReadGeneration += 1
+      taskDeleteGeneration += 1
+      taskDeleteUndos.value = []
+      taskDeleteMessage.value = ''
+      taskDeleteError.value = ''
+      taskDeletePending.value = false
+      projects.value = []
+      tasks.value = []
+      calendars.value = []
+      events.value = []
+      notes.value = []
+      files.value = []
+      labels.value = []
+      dailyPlan.value = null
+      dailyReview.value = null
+      settings.value = null
+      selectedProjectId.value = null
+      operationsAllowed.value = false
+      error.value = null
+      if (!user.value) loading.value = false
+      saving.value = false
+      resetFileUsage()
       calendarMoveGeneration += 1
       calendarReadGeneration += 1
       calendarMoveUndo.value = null
@@ -106,18 +155,31 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   })
 
   async function bootstrap() {
+    sessionRequest?.abort()
+    const sessionController = new AbortController()
+    sessionRequest = sessionController
+    const bootstrap = ++bootstrapGeneration
+    const initialAccount = accountGeneration
+    let bootstrapAccount = initialAccount
+    let bootstrapMutation = mutationGeneration
     const generation = ++capabilityGeneration
     loading.value = true
     operationsAllowed.value = false
     error.value = null
     try {
       try {
-        user.value = (await api.getSession()).user
+        const session = await api.getSession(sessionController.signal)
+        if (bootstrap !== bootstrapGeneration || initialAccount !== accountGeneration) return
+        user.value = session.user
       } catch (cause) {
+        if (bootstrap !== bootstrapGeneration || initialAccount !== accountGeneration) return
         if (!(cause instanceof api.ApiError) || cause.status !== 401) throw cause
         try {
-          user.value = (await api.startDevelopmentSession()).user
+          const session = await api.startDevelopmentSession(sessionController.signal)
+          if (bootstrap !== bootstrapGeneration || initialAccount !== accountGeneration) return
+          user.value = session.user
         } catch (developmentCause) {
+          if (bootstrap !== bootstrapGeneration || initialAccount !== accountGeneration) return
           if (developmentCause instanceof api.ApiError && developmentCause.status === 401) {
             authenticationRequired.value = true
             return
@@ -125,25 +187,45 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           throw developmentCause
         }
       }
+      bootstrapAccount = accountGeneration
       authenticationRequired.value = false
       const accountId = user.value?.id
+      const account = accountGeneration
       void getOperationsCapability(AbortSignal.timeout(10_000))
         .catch(() => false)
         .then((allowed) => {
-          if (generation === capabilityGeneration && user.value?.id === accountId) {
+          if (
+            generation === capabilityGeneration &&
+            account === accountGeneration &&
+            user.value?.id === accountId
+          ) {
             operationsAllowed.value = allowed === true
           }
         })
-      await refresh()
-      await recoverCalendarMoveUndo()
+      bootstrapMutation = mutationGeneration
+      await Promise.all([refresh(), recoverCalendarMoveUndo(), recoverTaskDeleteUndos()])
     } catch (cause) {
-      error.value = messageFrom(cause)
+      if (
+        bootstrap === bootstrapGeneration &&
+        bootstrapAccount === accountGeneration &&
+        bootstrapMutation === mutationGeneration
+      )
+        error.value = messageFrom(cause)
     } finally {
-      loading.value = false
+      if (sessionRequest === sessionController) sessionRequest = null
+      if (bootstrap === bootstrapGeneration) loading.value = false
     }
   }
 
   async function refresh() {
+    const account = accountGeneration
+    const mutation = mutationGeneration
+    const read = ++workspaceReadGeneration
+    const calendarRead = calendarReadGeneration
+    const current = () =>
+      account === accountGeneration &&
+      mutation === mutationGeneration &&
+      read === workspaceReadGeneration
     const today = localDateKey(new Date())
     const rangeStart = new Date()
     rangeStart.setHours(0, 0, 0, 0)
@@ -170,18 +252,19 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       api.listFiles(),
       api.getSettings(),
     ])
+    if (!current()) return
     projects.value = allProjects
     tasks.value = sortTasks(allTasks)
     labels.value = labelList.items
     dailyPlan.value = plan
     calendars.value = allCalendars
-    events.value = upcomingEvents
+    if (calendarRead === calendarReadGeneration) events.value = upcomingEvents
     notes.value = allNotes
     files.value = allFiles
     settings.value = userSettings
     if (userSettings.automatic_daily_review) {
       const review = await api.startDailyReview(today)
-      dailyReview.value = review?.status === 'open' ? review : null
+      if (current()) dailyReview.value = review?.status === 'open' ? review : null
     } else {
       dailyReview.value = null
     }
@@ -403,11 +486,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const range = { start, end }
     const account = user.value?.id
     const generation = ++calendarReadGeneration
+    const mutation = mutationGeneration
     calendarRange = range
     const result = await api.listEvents(end.toISOString(), start.toISOString(), signal)
     if (
       !signal?.aborted &&
       generation === calendarReadGeneration &&
+      mutation === mutationGeneration &&
       user.value?.id === account &&
       calendarRange === range
     )
@@ -636,18 +721,200 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  async function removeTask(task: Task) {
-    saving.value = true
-    error.value = null
+  function dismissTaskDeletionFeedback() {
+    if (taskDeletePending.value) return
+    receiptReadGeneration += 1
+    taskDeleteUndos.value = taskDeleteUndos.value.filter(
+      (receipt) => Date.parse(receipt.expires_at) > Date.now(),
+    )
+    taskDeleteMessage.value = ''
+    taskDeleteError.value = ''
+  }
+
+  async function recoverTaskDeleteUndos() {
+    if (!user.value) return
+    const account = accountGeneration
+    const operation = taskDeleteGeneration
+    const read = ++receiptReadGeneration
     try {
-      await api.deleteTask(task.id, task.version)
+      const receipts = await api.listTaskDeleteUndos()
+      if (
+        account !== accountGeneration ||
+        operation !== taskDeleteGeneration ||
+        read !== receiptReadGeneration
+      )
+        return
+      taskDeleteUndos.value = receipts
+      taskDeleteError.value = ''
+    } catch {
+      if (
+        account === accountGeneration &&
+        operation === taskDeleteGeneration &&
+        read === receiptReadGeneration
+      )
+        taskDeleteError.value = 'Could not recover deletion Undo. Retry before its original expiry.'
+    }
+  }
+
+  async function refreshDeletedItems() {
+    const account = accountGeneration
+    const mutation = mutationGeneration
+    const read = ++workspaceReadGeneration
+    const calendarRead = ++calendarReadGeneration
+    const range = calendarRange
+    const start = range?.start ?? new Date(new Date().setHours(0, 0, 0, 0))
+    const end = range?.end ?? new Date(start.getTime() + 8 * 86400000)
+    // Apply independently successful reads: one notes outage must not leave restored
+    // tasks or attachment relationships hidden. Never reload settings/editor state.
+    const results = await Promise.allSettled([
+      loadAllTasks(),
+      loadAllProjects(),
+      api.listNotes(),
+      api.listFiles(),
+      api.getDailyPlan(localDateKey(new Date())),
+      api.listLabels(),
+      api.listEvents(end.toISOString(), start.toISOString()),
+      api.listCalendars(),
+    ])
+    if (
+      account !== accountGeneration ||
+      mutation !== mutationGeneration ||
+      read !== workspaceReadGeneration
+    )
+      return
+    const [
+      taskResult,
+      projectResult,
+      noteResult,
+      fileResult,
+      planResult,
+      labelResult,
+      eventResult,
+      calendarResult,
+    ] = results
+    if (taskResult.status === 'fulfilled') tasks.value = sortTasks(taskResult.value)
+    if (projectResult.status === 'fulfilled') projects.value = projectResult.value
+    if (noteResult.status === 'fulfilled') notes.value = noteResult.value
+    if (fileResult.status === 'fulfilled') files.value = fileResult.value
+    if (planResult.status === 'fulfilled') dailyPlan.value = planResult.value
+    if (labelResult.status === 'fulfilled') labels.value = labelResult.value.items
+    if (calendarRead === calendarReadGeneration && calendarRange === range) {
+      if (eventResult.status === 'fulfilled') events.value = eventResult.value
+      if (calendarResult.status === 'fulfilled') calendars.value = calendarResult.value
+    }
+    if (results.some((result) => result.status === 'rejected')) throw new Error('Refresh failed')
+  }
+
+  async function retryTaskDeletionRefresh() {
+    if (saving.value) return
+    const operation = taskDeleteGeneration
+    await recoverTaskDeleteUndos()
+    if (operation !== taskDeleteGeneration) return
+    try {
+      await refreshDeletedItems()
+    } catch {
+      if (operation === taskDeleteGeneration)
+        taskDeleteError.value = 'Refresh failed. Retry to update the workspace.'
+    }
+  }
+
+  async function removeTask(task: Task) {
+    if (saving.value || !user.value) return false
+    saving.value = true
+    taskDeletePending.value = true
+    error.value = null
+    taskDeleteError.value = ''
+    const operation = ++taskDeleteGeneration
+    receiptReadGeneration += 1
+    try {
+      const receipt = await api.deleteTaskWithUndo(task.id, task.version)
+      if (operation !== taskDeleteGeneration) return false
+      receiptReadGeneration += 1
+      taskDeleteUndos.value = [
+        receipt,
+        ...taskDeleteUndos.value.filter((item) => item.id !== receipt.id),
+      ]
+      taskDeleteMessage.value = `Deleted “${task.title}”.`
       tasks.value = tasks.value.filter((candidate) => candidate.id !== task.id)
-      await Promise.all([reloadProjectSummaries(), reloadUpcomingEvents()])
+      if (dailyPlan.value)
+        dailyPlan.value = {
+          ...dailyPlan.value,
+          focus_tasks: dailyPlan.value.focus_tasks.filter((focus) => focus.id !== task.id),
+        }
+      const eventIds = new Set(
+        events.value.filter((event) => event.linked_task_id === task.id).map((event) => event.id),
+      )
+      const noteIds = new Set(
+        notes.value
+          .filter(
+            (note) => note.task_id === task.id || (note.event_id && eventIds.has(note.event_id)),
+          )
+          .map((note) => note.id),
+      )
+      events.value = events.value.filter((event) => !eventIds.has(event.id))
+      notes.value = notes.value.filter((note) => !noteIds.has(note.id))
+      files.value = files.value.map((file) => ({
+        ...file,
+        task_id: file.task_id === task.id ? null : file.task_id,
+        event_id: file.event_id && eventIds.has(file.event_id) ? null : file.event_id,
+        note_id: file.note_id && noteIds.has(file.note_id) ? null : file.note_id,
+      }))
+      if (
+        calendarMoveUndo.value?.task_id === task.id ||
+        (calendarMoveUndo.value?.event_id && eventIds.has(calendarMoveUndo.value.event_id))
+      )
+        dismissCalendarMoveFeedback()
+      try {
+        await refreshDeletedItems()
+      } catch {
+        if (operation === taskDeleteGeneration)
+          taskDeleteError.value =
+            'Deletion saved, but refresh failed. Undo is still available; retry refresh.'
+      }
+      return operation === taskDeleteGeneration
     } catch (cause) {
+      if (operation !== taskDeleteGeneration) return false
       error.value = messageFrom(cause)
       throw cause
     } finally {
-      saving.value = false
+      if (operation === taskDeleteGeneration) {
+        taskDeletePending.value = false
+        saving.value = false
+      }
+    }
+  }
+
+  async function undoTaskDeletion(receipt: TaskDeleteUndo) {
+    if (saving.value || !user.value) return
+    saving.value = true
+    taskDeletePending.value = true
+    taskDeleteError.value = ''
+    const operation = ++taskDeleteGeneration
+    receiptReadGeneration += 1
+    try {
+      await api.consumeTaskDeleteUndo(receipt.id)
+      if (operation !== taskDeleteGeneration) return
+      receiptReadGeneration += 1
+      taskDeleteUndos.value = taskDeleteUndos.value.filter((item) => item.id !== receipt.id)
+      taskDeleteMessage.value = `Restored “${receipt.task_title}”.`
+      try {
+        await refreshDeletedItems()
+      } catch {
+        if (operation === taskDeleteGeneration)
+          taskDeleteError.value = 'Restoration saved, but refresh failed. Retry refresh.'
+      }
+    } catch (cause) {
+      if (operation !== taskDeleteGeneration) return
+      // Re-fetch is authoritative for consumed/expired/invalidated receipts, and
+      // also handles a lost successful response. Never claim a restore on error.
+      await recoverTaskDeleteUndos()
+      if (operation === taskDeleteGeneration)
+        taskDeleteError.value = `${messageFrom(cause)} Refresh to check the task and remaining Undo.`
+    } finally {
+      if (operation === taskDeleteGeneration) {
+        taskDeletePending.value = false
+        saving.value = false
+      }
     }
   }
 
@@ -657,6 +924,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function deleteAccount() {
+    sessionRequest?.abort()
+    bootstrapGeneration += 1
     await api.deleteAccount()
     capabilityGeneration += 1
     calendarMoveUndo.value = null
@@ -675,6 +944,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function logout() {
+    sessionRequest?.abort()
+    bootstrapGeneration += 1
     await api.logout()
     capabilityGeneration += 1
     calendarMoveUndo.value = null
@@ -790,6 +1061,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     setDailyFocus,
     reorderTask,
     removeTask,
+    taskDeleteUndos,
+    taskDeletePending,
+    taskDeleteMessage,
+    taskDeleteError,
+    recoverTaskDeleteUndos,
+    dismissTaskDeletionFeedback,
+    retryTaskDeletionRefresh,
+    undoTaskDeletion,
     saveSettings,
     deleteAccount,
     logout,

@@ -40,7 +40,7 @@ const message = computed(() => {
     tabindex="-1"
     aria-label="Calendar move Undo"
     :aria-busy="store.calendarMovePending"
-    class="fixed bottom-4 left-4 right-4 z-40 mx-auto flex max-w-xl items-center gap-3 rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-950 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
+    class="flex items-center gap-3 rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-950 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
   >
     <div class="min-w-0 flex-1">
       <p role="status" aria-live="polite" aria-atomic="true">{{ message }}</p>
@@ -58,7 +58,7 @@ const message = computed(() => {
       v-if="store.calendarMoveUndo"
       type="button"
       class="button-secondary min-h-11 shrink-0"
-      :disabled="expired || store.calendarMovePending || store.saving"
+      :disabled="expired || store.calendarMovePending || store.saving || store.loading"
       @click="undo"
     >
       {{ store.calendarMoveUndoing ? 'Undoing…' : 'Undo' }}

@@ -74,10 +74,13 @@ const taskFilterActive = computed(
     sortBy.value !== 'manual',
 )
 
-watch(selected, () => {
-  editingProject.value = false
-  resetTaskFilters()
-})
+watch(
+  () => selected.value?.id,
+  () => {
+    editingProject.value = false
+    resetTaskFilters()
+  },
+)
 
 watch(
   () => route.query,

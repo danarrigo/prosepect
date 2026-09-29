@@ -45,5 +45,6 @@ export type TaskPriority = components['schemas']['TaskPriority']
 export type TaskRecurrence = components['schemas']['TaskRecurrence']
 export type TaskStatus = components['schemas']['TaskStatus']
 
+export type TaskDeleteUndo = components['schemas']['TaskDeleteUndo']
 export type CalendarMoveUndo = components['schemas']['CalendarMoveUndo']
 export type MoveCalendarItemRequest = components['schemas']['MoveCalendarItemRequest']

@@ -5,6 +5,7 @@ import type {
   Calendar,
   CalendarEvent,
   CalendarMoveUndo,
+  TaskDeleteUndo,
   MoveCalendarItemRequest,
   CreateCalendarEventRequest,
   CreateCalendarRequest,
@@ -79,16 +80,18 @@ export class ApiError extends Error {
   }
 }
 
-export async function startDevelopmentSession(): Promise<SessionResponse> {
-  const result = await client.POST('/api/v1/development/session')
+export async function startDevelopmentSession(signal?: AbortSignal): Promise<SessionResponse> {
+  const result = await client.POST('/api/v1/development/session', { signal })
   const session = unwrap(result)
+  signal?.throwIfAborted()
   csrfToken = session.csrf_token
   localStorage.setItem(USER_ID_KEY, session.user.id)
   return session
 }
 
-export async function getSession(): Promise<SessionResponse> {
-  const session = unwrap(await client.GET('/api/v1/session'))
+export async function getSession(signal?: AbortSignal): Promise<SessionResponse> {
+  const session = unwrap(await client.GET('/api/v1/session', { signal }))
+  signal?.throwIfAborted()
   csrfToken = session.csrf_token
   return session
 }
@@ -522,6 +525,30 @@ function unwrap<T>({
 
 function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
   return typeof value === 'object' && value !== null && 'error' in value
+}
+
+export async function deleteTaskWithUndo(
+  taskId: string,
+  expectedVersion: number,
+): Promise<TaskDeleteUndo> {
+  return unwrap(
+    await client.POST('/api/v1/tasks/{task_id}/delete-with-undo', {
+      params: { path: { task_id: taskId } },
+      body: { expected_version: expectedVersion },
+    }),
+  )
+}
+
+export async function listTaskDeleteUndos(): Promise<TaskDeleteUndo[]> {
+  return unwrap(await client.GET('/api/v1/task-delete-undos')).items
+}
+
+export async function consumeTaskDeleteUndo(receiptId: string): Promise<void> {
+  unwrap(
+    await client.POST('/api/v1/task-delete-undos/{receipt_id}/consume', {
+      params: { path: { receipt_id: receiptId } },
+    }),
+  )
 }
 
 export async function listCalendarMoveUndos(): Promise<CalendarMoveUndo[]> {

@@ -41,8 +41,8 @@ watch(
   ([notes, requestedId]) => {
     const requested =
       typeof requestedId === 'string' ? notes.find((note) => note.id === requestedId) : null
-    if (requested) selectNote(requested)
-    else if (!selectedId.value && notes.length) selectNote(notes[0]!)
+    if (requested && requested.id !== selectedId.value && !editing.value) selectNote(requested)
+    else if (!selectedId.value && notes.length && !editing.value) selectNote(notes[0]!)
   },
   { immediate: true },
 )
