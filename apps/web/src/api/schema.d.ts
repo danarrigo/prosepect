@@ -1240,6 +1240,8 @@ export interface components {
             manual?: boolean;
         };
         SyncConflict: {
+            /** @description Server-derived choices; resolution requests are still validated transactionally. */
+            allowed_resolutions: string[];
             /** Format: uuid */
             canonical_event_id?: string | null;
             /** Format: date-time */
@@ -3980,6 +3982,14 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

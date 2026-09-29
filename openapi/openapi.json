@@ -3752,6 +3752,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -5232,11 +5242,19 @@
         "type": "object",
         "required": [
           "id",
+          "allowed_resolutions",
           "title",
           "status",
           "created_at"
         ],
         "properties": {
+          "allowed_resolutions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Server-derived choices; resolution requests are still validated transactionally."
+          },
           "canonical_event_id": {
             "type": [
               "string",
