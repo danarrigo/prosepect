@@ -12,6 +12,7 @@ pub mod file_routes;
 pub mod file_storage;
 mod file_store;
 pub mod google_auth;
+pub mod google_tasks;
 pub mod import_routes;
 pub mod models;
 pub mod note_routes;
