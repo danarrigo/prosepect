@@ -11,6 +11,7 @@ const store = useWorkspaceStore()
 const route = useRoute()
 const selectedId = ref<string | null>(null)
 const editing = ref(false)
+const draftBase = ref<Note | null>(null)
 const saving = ref(false)
 const error = ref('')
 const titleInput = ref<HTMLInputElement | null>(null)
@@ -75,6 +76,13 @@ function selectNote(note: Note) {
   editing.value = false
 }
 
+function beginEdit() {
+  if (!selected.value) return
+  selectNote(selected.value)
+  draftBase.value = { ...selected.value }
+  editing.value = true
+}
+
 async function cancel() {
   if (selected.value) selectNote(selected.value)
   await nextTick()
@@ -83,6 +91,7 @@ async function cancel() {
 
 function newNote() {
   error.value = ''
+  draftBase.value = null
   selectedId.value = null
   title.value = ''
   markdown.value = ''
@@ -101,9 +110,9 @@ async function save() {
     event_id: linkKind.value === 'event' ? linkedId.value : undefined,
   }
   try {
-    if (selected.value) {
+    if (draftBase.value) {
       const updated = await store.editNote(
-        selected.value,
+        draftBase.value,
         title.value.trim(),
         markdown.value,
         links,
@@ -279,7 +288,7 @@ async function remove() {
                 class="icon-button"
                 type="button"
                 aria-label="Edit note"
-                @click="editing = true"
+                @click="beginEdit"
               >
                 <Pencil :size="16" />
               </button>

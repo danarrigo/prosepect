@@ -523,3 +523,156 @@ test('a delayed initial calendar read cannot resurrect pre-deletion data', async
   await expect(page.getByText('Stale pre-deletion snapshot', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Edit First task', exact: true })).toHaveCount(0)
 })
+
+// Independent-review regressions: exercise real editor/store interleavings with deferred HTTP.
+test('review: a successful note creation survives an older Undo refresh snapshot', async ({
+  page,
+}) => {
+  await mockDeletions(page)
+  const notes: { id: string; title: string; markdown: string; version: number }[] = []
+  await page.route('**/api/v1/notes', async (route) => {
+    if (route.request().method() === 'POST') {
+      const note = {
+        ...route.request().postDataJSON(),
+        id: 'new-note',
+        version: 1,
+        updated_at: new Date().toISOString(),
+      }
+      notes.push(note)
+      await route.fulfill({ status: 201, json: note })
+    } else await route.fulfill({ json: { items: notes } })
+  })
+  await page.goto('/projects')
+  await remove(page, 'First task')
+  await page.goto('/notes')
+  await page.getByRole('button', { name: 'New note', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Title', exact: true }).fill('Saved during Undo')
+  await page.getByRole('textbox', { name: 'Markdown', exact: true }).fill('New successful content')
+  let release!: () => void
+  let captured = false
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/v1/files', async (route) => {
+    captured = true
+    await pending
+    await route.fulfill({ json: { items: [] } })
+  })
+  const snapshot = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/notes' && response.request().method() === 'GET',
+  )
+  await page.getByRole('button', { name: 'Undo deletion of First task' }).click()
+  await snapshot
+  await expect.poll(() => captured).toBe(true)
+  await page.getByRole('button', { name: 'Save note', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Saved during Undo' })).toBeVisible()
+  release()
+  await expect(page.getByRole('region', { name: 'Task deletion Undo', exact: true })).toContainText(
+    'Restored “First task”.',
+  )
+  await expect(page.getByRole('heading', { name: 'Saved during Undo' })).toBeVisible()
+  await expect(page.getByText('New successful content', { exact: true })).toBeVisible()
+})
+
+test('review: a routed note draft retains its base version and reopening uses the newest content', async ({
+  page,
+}) => {
+  await mockDeletions(page)
+  let note = {
+    id: 'note',
+    title: 'Concurrent note',
+    markdown: 'Original content',
+    version: 1,
+    updated_at: new Date().toISOString(),
+  }
+  let submittedVersion: number | undefined
+  await page.route('**/api/v1/notes', (route) => route.fulfill({ json: { items: [note] } }))
+  await page.route('**/api/v1/notes/note', async (route) => {
+    const input = route.request().postDataJSON()
+    submittedVersion = input.expected_version
+    if (submittedVersion !== note.version)
+      await route.fulfill({
+        status: 409,
+        json: { error: { code: 'conflict', message: 'Note changed. Your draft was not saved.' } },
+      })
+    else {
+      note = { ...note, ...input, version: note.version + 1 }
+      await route.fulfill({ json: note })
+    }
+  })
+  await page.goto('/projects')
+  await remove(page, 'First task')
+  await remove(page, 'Second task')
+  await page.goto('/notes?note=note')
+  await page.getByRole('button', { name: 'Edit note', exact: true }).click()
+  const markdown = page.getByRole('textbox', { name: 'Markdown', exact: true })
+  await markdown.fill('My unsaved version-one draft')
+  note = { ...note, markdown: 'Other session version two', version: 2 }
+  await page.getByRole('button', { name: 'Undo deletion of First task' }).click()
+  await expect(page.getByRole('region', { name: 'Task deletion Undo', exact: true })).toContainText(
+    'Restored “First task”.',
+  )
+  await page.getByRole('button', { name: 'Save note', exact: true }).click()
+  await expect.poll(() => submittedVersion).toBe(1)
+  await expect(page.getByRole('alert')).toContainText('Your draft was not saved')
+  await expect(markdown).toHaveValue('My unsaved version-one draft')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  note = { ...note, markdown: 'Other session version three', version: 3 }
+  await page.getByRole('button', { name: 'Undo deletion of Second task' }).click()
+  await expect(page.getByText('Other session version three', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Edit note', exact: true }).click()
+  await expect(markdown).toHaveValue('Other session version three')
+})
+
+test('review: a project draft retains its base version through Undo summary refresh', async ({
+  page,
+}) => {
+  await mockDeletions(page)
+  let project = {
+    id: 'project',
+    name: 'Concurrent project',
+    outcome: 'Original outcome',
+    status: 'active',
+    total_tasks: 0,
+    completed_tasks: 0,
+    version: 1,
+  }
+  let submittedVersion: number | undefined
+  await page.route('**/api/v1/projects?**', (route) =>
+    route.fulfill({ json: { items: [project], next_cursor: null } }),
+  )
+  await page.route('**/api/v1/projects/project', async (route) => {
+    const input = route.request().postDataJSON()
+    submittedVersion = input.expected_version
+    if (submittedVersion !== project.version)
+      await route.fulfill({
+        status: 409,
+        json: {
+          error: { code: 'conflict', message: 'Project changed. Your draft was not saved.' },
+        },
+      })
+    else {
+      project = { ...project, ...input, version: project.version + 1 }
+      await route.fulfill({ json: project })
+    }
+  })
+  await page.goto('/projects')
+  await remove(page, 'First task')
+  await page
+    .getByRole('main')
+    .getByRole('button', { name: /Concurrent project/ })
+    .click()
+  await page.getByRole('button', { name: 'Edit project', exact: true }).click()
+  const outcome = page.getByRole('form', { name: 'Edit project' }).getByLabel('Desired outcome')
+  await outcome.fill('My unsaved version-one outcome')
+  project = { ...project, outcome: 'Other session version two', version: 2 }
+  await page.getByRole('button', { name: 'Undo deletion of First task' }).click()
+  await expect(page.getByRole('region', { name: 'Task deletion Undo', exact: true })).toContainText(
+    'Restored “First task”.',
+  )
+  await page.getByRole('button', { name: 'Save project', exact: true }).click()
+  await expect.poll(() => submittedVersion).toBe(1)
+  await expect(page.getByRole('alert')).toContainText('Your draft was not saved')
+  await expect(outcome).toHaveValue('My unsaved version-one outcome')
+})

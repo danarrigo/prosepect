@@ -32,6 +32,12 @@ vi.mock('../api/client', async (original) => ({
   getOperationsCapability: vi.fn(),
   listCalendarMoveUndos: vi.fn(),
   logout: vi.fn(),
+  createNote: vi.fn(),
+  updateNote: vi.fn(),
+  deleteNote: vi.fn(),
+  uploadFile: vi.fn(),
+  deleteFile: vi.fn(),
+  getFileUsage: vi.fn(),
 }))
 
 const account = (id: string) => ({
@@ -86,9 +92,68 @@ beforeEach(() => {
   vi.mocked(api.listTaskDeleteUndos).mockResolvedValue([])
   vi.mocked(api.deleteTaskWithUndo).mockResolvedValue(receipt)
   vi.mocked(api.consumeTaskDeleteUndo).mockResolvedValue(undefined)
+  vi.mocked(api.getFileUsage).mockResolvedValue({
+    used_bytes: 0,
+    max_user_storage_bytes: 1000000,
+    max_file_size_bytes: 1000000,
+  })
 })
 
 describe('workspace task deletion Undo', () => {
+  it.each(['create', 'edit', 'delete'] as const)(
+    'preserves a successful note %s during an older Undo refresh',
+    async (operation) => {
+      const store = workspace()
+      const note = { id: 'note', title: 'Before', markdown: '', version: 1 } as Note
+      const updated = { ...note, title: 'Saved', version: 2 }
+      store.notes = [note]
+      store.taskDeleteUndos = [receipt]
+      const pending = deferred<FileRecord[]>()
+      vi.mocked(api.listFiles).mockReturnValueOnce(pending.promise)
+      vi.mocked(api.listNotes).mockResolvedValue([note])
+      vi.mocked(api.createNote).mockResolvedValue(updated)
+      vi.mocked(api.updateNote).mockResolvedValue(updated)
+      vi.mocked(api.deleteNote).mockResolvedValue(undefined)
+      const undo = store.undoTaskDeletion(receipt)
+      await vi.waitFor(() => expect(api.listFiles).toHaveBeenCalled())
+      if (operation === 'create') await store.addNote({ title: updated.title, markdown: '' })
+      else if (operation === 'edit') await store.editNote(note, updated.title, '')
+      else await store.removeNote(note)
+      const saved = [...store.notes]
+      pending.resolve([])
+      await undo
+      expect(store.notes).toEqual(saved)
+      expect(store.taskDeleteError).toContain('refresh failed')
+      expect(store.taskDeleteUndos).toEqual([])
+    },
+  )
+
+  it.each(['upload', 'delete'] as const)(
+    'preserves a successful attachment %s during an older Undo refresh',
+    async (operation) => {
+      const store = workspace()
+      const file = { id: 'file', filename: 'saved.txt' } as FileRecord
+      store.files = operation === 'delete' ? [file] : []
+      store.taskDeleteUndos = [receipt]
+      const pending = deferred<Note[]>()
+      vi.mocked(api.listNotes).mockReturnValueOnce(pending.promise)
+      vi.mocked(api.listFiles).mockResolvedValue([...store.files])
+      vi.mocked(api.uploadFile).mockResolvedValue(file)
+      vi.mocked(api.deleteFile).mockResolvedValue(undefined)
+      const undo = store.undoTaskDeletion(receipt)
+      await vi.waitFor(() => expect(api.listNotes).toHaveBeenCalled())
+      if (operation === 'upload') await store.addFile(new File(['test'], 'saved.txt'))
+      else await store.removeFile(file)
+      const saved = [...store.files]
+      const restoredNote = { id: 'restored-note' } as Note
+      pending.resolve([restoredNote])
+      await undo
+      expect(store.files).toEqual(saved)
+      expect(store.notes).toEqual([restoredNote])
+      expect(store.taskDeleteError).toContain('refresh failed')
+    },
+  )
+
   it('uses expected_version, retains distinct receipts and never calls legacy DELETE', async () => {
     const store = workspace()
     await store.removeTask(task)

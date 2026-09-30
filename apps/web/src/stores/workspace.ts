@@ -67,6 +67,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const taskDeleteError = ref('')
   let accountGeneration = 0
   let mutationGeneration = 0
+  let noteWriteGeneration = 0
+  let fileWriteGeneration = 0
   let workspaceReadGeneration = 0
   let receiptReadGeneration = 0
   let taskDeleteGeneration = 0
@@ -431,6 +433,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (validationError) throw new Error(validationError)
     try {
       const uploaded = await api.uploadFile(file, link)
+      fileWriteGeneration += 1
       files.value = [uploaded, ...files.value]
       return uploaded
     } finally {
@@ -441,6 +444,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function removeFile(file: FileRecord) {
     try {
       await api.deleteFile(file.id)
+      fileWriteGeneration += 1
       files.value = files.value.filter((candidate) => candidate.id !== file.id)
     } finally {
       await refreshFileUsage()
@@ -449,6 +453,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function addNote(input: CreateNoteRequest) {
     const note = await api.createNote(input)
+    noteWriteGeneration += 1
     notes.value = [note, ...notes.value]
     return note
   }
@@ -472,6 +477,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       markdown,
       expected_version: note.version,
     })
+    noteWriteGeneration += 1
     const index = notes.value.findIndex((candidate) => candidate.id === note.id)
     if (index >= 0) notes.value[index] = updated
     return updated
@@ -479,6 +485,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function removeNote(note: Note) {
     await api.deleteNote(note.id, note.version)
+    noteWriteGeneration += 1
     notes.value = notes.value.filter((candidate) => candidate.id !== note.id)
   }
 
@@ -757,6 +764,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function refreshDeletedItems() {
+    const noteWrite = noteWriteGeneration
+    const fileWrite = fileWriteGeneration
     const account = accountGeneration
     const mutation = mutationGeneration
     const read = ++workspaceReadGeneration
@@ -794,15 +803,20 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     ] = results
     if (taskResult.status === 'fulfilled') tasks.value = sortTasks(taskResult.value)
     if (projectResult.status === 'fulfilled') projects.value = projectResult.value
-    if (noteResult.status === 'fulfilled') notes.value = noteResult.value
-    if (fileResult.status === 'fulfilled') files.value = fileResult.value
+    // A successful edit/upload may have completed while these snapshots were in flight.
+    // Preserve that resource locally; unrelated restoration reads can still apply.
+    const notesCurrent = noteWrite === noteWriteGeneration
+    const filesCurrent = fileWrite === fileWriteGeneration
+    if (noteResult.status === 'fulfilled' && notesCurrent) notes.value = noteResult.value
+    if (fileResult.status === 'fulfilled' && filesCurrent) files.value = fileResult.value
     if (planResult.status === 'fulfilled') dailyPlan.value = planResult.value
     if (labelResult.status === 'fulfilled') labels.value = labelResult.value.items
     if (calendarRead === calendarReadGeneration && calendarRange === range) {
       if (eventResult.status === 'fulfilled') events.value = eventResult.value
       if (calendarResult.status === 'fulfilled') calendars.value = calendarResult.value
     }
-    if (results.some((result) => result.status === 'rejected')) throw new Error('Refresh failed')
+    if (!notesCurrent || !filesCurrent || results.some((result) => result.status === 'rejected'))
+      throw new Error('Refresh interrupted or failed; retry for current dependent state')
   }
 
   async function retryTaskDeletionRefresh() {

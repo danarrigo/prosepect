@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type APIResponse, type Page } from '@playwright/test'
 import type {
   CalendarEvent,
   DailyPlan,
@@ -12,6 +12,11 @@ import type {
 // REAL backend acceptance: no intercepted API responses or fake Google claim.
 // Run in the parent-owned isolated CI stack, not against production.
 test.use({ timezoneId: 'UTC' })
+
+async function checkedJson(response: APIResponse) {
+  expect(response.ok(), `${response.url()}: ${await response.text()}`).toBe(true)
+  return response.json()
+}
 
 async function sessionHeaders(page: Page) {
   await page.goto('/projects')
@@ -52,6 +57,10 @@ test('real backend: native deletion recovers multiple receipts and restores depe
   let file: FileRecord | undefined
   const today = new Date().toISOString().slice(0, 10)
   const planPath = `/api/v1/daily-plans/${today}`
+  const eventsPath = `/api/v1/events?${new URLSearchParams({
+    ends_after: `${today}T00:00:00Z`,
+    starts_before: `${today}T23:59:59Z`,
+  })}`
   const originalPlan = (await (await page.request.get(planPath, { headers })).json()) as DailyPlan
   try {
     const projectResponse = await page.request.post('/api/v1/projects', {
@@ -75,7 +84,7 @@ test('real backend: native deletion recovers multiple receipts and restores depe
       created.push((await response.json()) as Task)
     }
     const task = created[0]!
-    const events = (await (await page.request.get('/api/v1/events', { headers })).json()) as {
+    const events = (await checkedJson(await page.request.get(eventsPath, { headers }))) as {
       items: CalendarEvent[]
     }
     const event = events.items.find((event) => event.linked_task_id === task.id)!
@@ -161,9 +170,9 @@ test('real backend: native deletion recovers multiple receipts and restores depe
       items: FileRecord[]
     }
     expect(restoredFiles.items.find((item) => item.id === file!.id)?.note_id).toBe(note.id)
-    const restoredEvents = (await (
-      await page.request.get('/api/v1/events', { headers })
-    ).json()) as { items: CalendarEvent[] }
+    const restoredEvents = (await checkedJson(await page.request.get(eventsPath, { headers }))) as {
+      items: CalendarEvent[]
+    }
     expect(restoredEvents.items.find((item) => item.id === event.id)?.linked_task_id).toBe(task.id)
     const restoredPlan = (await (await page.request.get(planPath, { headers })).json()) as DailyPlan
     expect(restoredPlan.focus_tasks.map((item) => item.id)).toContain(task.id)
