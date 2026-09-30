@@ -17,6 +17,7 @@ import * as api from './api/client'
 import AppSidebar from './components/AppSidebar.vue'
 import BrandLogo from './components/BrandLogo.vue'
 import CalendarMoveFeedback from './components/CalendarMoveFeedback.vue'
+import TaskDeletionFeedback from './components/TaskDeletionFeedback.vue'
 import CreateTaskDialog from './components/CreateTaskDialog.vue'
 import DailyReviewDialog from './components/DailyReviewDialog.vue'
 import GlobalSearch from './components/GlobalSearch.vue'
@@ -54,6 +55,18 @@ const dueReminders = computed(() =>
 )
 const sidebarVisible = computed(() => store.settings?.sidebar_visible ?? false)
 const publicRoute = computed(() => route.meta.public === true)
+const undoFeedbackVisible = computed(() =>
+  Boolean(
+    store.calendarMoveUndo ||
+    store.calendarMovePending ||
+    store.calendarMoveMessage ||
+    store.calendarMoveError ||
+    store.taskDeleteUndos.length ||
+    store.taskDeletePending ||
+    store.taskDeleteMessage ||
+    store.taskDeleteError,
+  ),
+)
 
 watch(dueReminders, (tasks) => {
   for (const task of tasks) {
@@ -206,7 +219,6 @@ onBeforeUnmount(() => {
       Skip to content
     </a>
     <DailyReviewDialog />
-    <CalendarMoveFeedback />
     <KeyboardPalette
       :open="paletteMode !== null"
       :mode="paletteMode ?? 'commands'"
@@ -303,6 +315,15 @@ onBeforeUnmount(() => {
       </header>
 
       <div
+        v-if="undoFeedbackVisible"
+        class="mx-auto grid max-h-[45dvh] w-full max-w-xl gap-2 overflow-y-auto overscroll-contain p-3"
+        aria-label="Undo feedback"
+      >
+        <CalendarMoveFeedback />
+        <TaskDeletionFeedback />
+      </div>
+
+      <div
         v-if="store.error"
         class="mx-5 mt-4 flex items-start gap-3 border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-200 sm:mx-8"
         role="alert"
@@ -337,7 +358,7 @@ onBeforeUnmount(() => {
             Loading…
           </div>
         </div>
-        <RouterView v-else />
+        <RouterView v-else :key="store.user?.id" />
       </main>
     </div>
 

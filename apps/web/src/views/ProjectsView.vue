@@ -14,6 +14,7 @@ const route = useRoute()
 const selected = computed(() => store.selectedProject)
 const showArchived = ref(false)
 const editingProject = ref(false)
+const projectDraftBase = ref<Project | null>(null)
 const projectName = ref('')
 const projectOutcome = ref('')
 const projectTargetDate = ref('')
@@ -74,10 +75,13 @@ const taskFilterActive = computed(
     sortBy.value !== 'manual',
 )
 
-watch(selected, () => {
-  editingProject.value = false
-  resetTaskFilters()
-})
+watch(
+  () => selected.value?.id,
+  () => {
+    editingProject.value = false
+    resetTaskFilters()
+  },
+)
 
 watch(
   () => route.query,
@@ -109,6 +113,7 @@ function targetLabel(value?: string | null) {
 function beginProjectEdit() {
   const project = selected.value
   if (!project) return
+  projectDraftBase.value = { ...project }
   projectName.value = project.name
   projectOutcome.value = project.outcome
   projectTargetDate.value = project.target_date ?? ''
@@ -117,7 +122,7 @@ function beginProjectEdit() {
 }
 
 async function submitProjectEdit() {
-  const project = selected.value
+  const project = projectDraftBase.value
   if (!project || !projectName.value.trim()) return
   try {
     await store.editProject(project, {

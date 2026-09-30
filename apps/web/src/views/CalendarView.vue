@@ -896,7 +896,7 @@ function pointerInsideTimelineDeleteZone(event: PointerEvent) {
 
 async function deleteTimelineItem(item: TimelineItem) {
   if (item.event) await store.removeEvent(item.event)
-  if (item.task) await store.removeTask(item.task)
+  if (item.task && !(await store.removeTask(item.task))) return
   timelineAnnouncement.value = `${item.title} deleted`
 }
 

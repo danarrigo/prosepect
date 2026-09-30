@@ -54,6 +54,7 @@ impl SyncService {
     }
 
     pub async fn run_once(&self) -> Result<bool> {
+        self.store.cleanup_task_delete_undos().await?;
         let Some(job) = self.store.claim_sync_job().await? else {
             return Ok(false);
         };
@@ -67,6 +68,7 @@ impl SyncService {
             .fetch_optional(&self.store.pool)
             .await?;
         if status.as_deref() != Some("running") {
+            user_lock.rollback().await?;
             return Ok(true);
         }
         let started = std::time::Instant::now();
@@ -119,6 +121,9 @@ impl SyncService {
                 .await?;
             }
         }
+        // Drop only queues a rollback. Await release before reporting completion so
+        // an immediately following nonblocking user mutation cannot see our old lock.
+        user_lock.rollback().await?;
         Ok(true)
     }
 
@@ -135,6 +140,65 @@ impl SyncService {
             "credential_revoke" => self.revoke(job.user_id).await,
             kind => bail!("unsupported synchronization job kind {kind}"),
         }
+    }
+
+    pub(crate) async fn validate_task_delete_undo(
+        &self,
+        user: Uuid,
+        mapping: &serde_json::Value,
+    ) -> crate::error::AppResult<()> {
+        use crate::error::AppError;
+        let unavailable = || {
+            AppError::InvalidRequest {
+            status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            message: "Google could not be freshly validated. Nothing was changed; retry deletion or Undo while it remains eligible.".into(),
+        }
+        };
+        let validate = async {
+            let calendar = mapping["external_calendar_id"]
+                .as_str()
+                .ok_or_else(crate::task_delete_store::changed)?;
+            let identity = mapping["external_event_id"]
+                .as_str()
+                .ok_or_else(crate::task_delete_store::changed)?;
+            let token = self.access_token(user).await.map_err(|_| unavailable())?;
+            let url = self
+                .url(&["calendars", calendar, "events", identity])
+                .map_err(|_| unavailable())?;
+            let mut response = self
+                .send(Method::GET, url, &token, Option::<&()>::None, None)
+                .await
+                .map_err(|_| unavailable())?;
+            if matches!(response.status(), StatusCode::NOT_FOUND | StatusCode::GONE) {
+                return Err(crate::task_delete_store::changed());
+            }
+            if !response.status().is_success() {
+                return Err(unavailable());
+            }
+            let mut body = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
+                if body.len() + chunk.len() > 128 * 1024 {
+                    return Err(unavailable());
+                }
+                body.extend_from_slice(&chunk);
+            }
+            let event: GoogleEvent = serde_json::from_slice(&body).map_err(|_| unavailable())?;
+            if event.id.as_deref() != Some(identity)
+                || event.status.as_deref() == Some("cancelled")
+                || event.etag.as_deref() != mapping["external_etag"].as_str()
+            {
+                return Err(crate::task_delete_store::changed());
+            }
+            let normalized = normalize_event(&event).map_err(|_| unavailable())?;
+            if Some(event_fingerprint(&normalized).as_str()) != mapping["base_fingerprint"].as_str()
+            {
+                return Err(crate::task_delete_store::changed());
+            }
+            Ok(())
+        };
+        tokio::time::timeout(Duration::from_secs(5), validate)
+            .await
+            .map_err(|_| unavailable())?
     }
 
     async fn access_token(&self, user_id: Uuid) -> Result<String> {
@@ -346,6 +410,8 @@ impl SyncService {
                 .await?;
                 return Err(error);
             }
+            self.reconcile_deleted_task_resolution(user_id, &calendar, &token)
+                .await?;
             self.push_calendar(user_id, &calendar, &token).await?;
             sqlx::query(
                 "UPDATE calendars SET last_synced_at = NOW(), last_sync_error = NULL WHERE id = $1 AND user_id = $2",
@@ -354,6 +420,39 @@ impl SyncService {
             .bind(user_id)
             .execute(&self.store.pool)
             .await?;
+        }
+        Ok(())
+    }
+
+    async fn reconcile_deleted_task_resolution(
+        &self,
+        user: Uuid,
+        calendar: &SyncCalendar,
+        token: &str,
+    ) -> Result<()> {
+        // Explicit Keep Google has disarmed all pushes. A targeted read also settles
+        // missing identities when an incremental/full list contains no event.
+        let pending: Vec<(Uuid,String)> = sqlx::query_as("SELECT id,external_event_id FROM external_event_mappings WHERE user_id=$1 AND calendar_id=$2 AND delete_resolution_pending AND NOT local_dirty AND NOT local_deleted AND canonical_event_id IS NULL ORDER BY id LIMIT 100")
+            .bind(user).bind(calendar.id).fetch_all(&self.store.pool).await?;
+        for (mapping, identity) in pending {
+            let url = self.url(&["calendars", &calendar.external_id, "events", &identity])?;
+            let response = self
+                .send(Method::GET, url, token, Option::<&()>::None, None)
+                .await?;
+            if matches!(response.status(), StatusCode::NOT_FOUND | StatusCode::GONE) {
+                sqlx::query(
+                    "DELETE FROM external_event_mappings WHERE id=$1 AND delete_resolution_pending",
+                )
+                .bind(mapping)
+                .execute(&self.store.pool)
+                .await?;
+            } else {
+                let event: GoogleEvent = response.error_for_status()?.json().await?;
+                if event.id.as_deref() != Some(&identity) {
+                    bail!("Google resolution returned a different identity");
+                }
+                self.apply_remote_event(user, calendar, event).await?;
+            }
         }
         Ok(())
     }
@@ -436,7 +535,7 @@ impl SyncService {
         let mapping = sqlx::query_as::<_, MappingState>(
             r#"
             SELECT m.id, m.canonical_event_id, m.external_etag, m.local_dirty, m.local_deleted,
-                   m.pending_resolution, e.updated_at AS local_updated_at
+                   m.pending_resolution, m.reversible_tombstone, e.updated_at AS local_updated_at
             FROM external_event_mappings m
             LEFT JOIN calendar_events e ON e.id = m.canonical_event_id
             WHERE m.user_id = $1 AND m.external_calendar_id = $2 AND m.external_event_id = $3
@@ -447,6 +546,33 @@ impl SyncService {
         .bind(&external_id)
         .fetch_optional(&self.store.pool)
         .await?;
+        // Reversible tombstones keep their own provenance after receipt cleanup.
+        // This precedes every conflict policy, full pull, and 410 recovery path.
+        if let Some(mapping) = &mapping
+            && mapping.reversible_tombstone
+        {
+            if event.status.as_deref() == Some("cancelled") {
+                let mut tx = self.store.pool.begin().await?;
+                sqlx::query("DELETE FROM task_delete_undos WHERE user_id=$1 AND snapshot->'mapping'->>'id'=$2")
+                    .bind(user_id).bind(mapping.id.to_string()).execute(&mut *tx).await?;
+                sqlx::query("DELETE FROM external_event_mappings WHERE id=$1")
+                    .bind(mapping.id)
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+            } else if event.etag.is_none() || mapping.external_etag != event.etag {
+                // Never replace the deleted canonical event or advance this baseline.
+                self.create_conflict(
+                    user_id,
+                    mapping,
+                    event.summary.as_deref().unwrap_or("Deleted task event"),
+                )
+                .await?;
+                sqlx::query("DELETE FROM task_delete_undos WHERE user_id=$1 AND snapshot->'mapping'->>'id'=$2")
+                    .bind(user_id).bind(mapping.id.to_string()).execute(&self.store.pool).await?;
+            }
+            return Ok(());
+        }
         if event.status.as_deref() == Some("cancelled") {
             if let Some(mapping) = mapping {
                 if mapping.local_dirty {
@@ -666,6 +792,8 @@ impl SyncService {
             LEFT JOIN calendar_events e ON e.id = m.canonical_event_id
             WHERE m.user_id = $1 AND m.calendar_id = $2
               AND (m.local_dirty OR m.local_deleted) AND m.conflict_state = 'none'
+              AND NOT m.delete_resolution_pending
+              AND (m.deletion_hold_until IS NULL OR m.deletion_hold_until <= clock_timestamp())
             "#,
         )
         .bind(user_id)
@@ -1032,9 +1160,10 @@ struct MappingState {
     local_dirty: bool,
     local_deleted: bool,
     pending_resolution: Option<String>,
+    reversible_tombstone: bool,
     local_updated_at: Option<DateTime<Utc>>,
 }
-#[derive(Clone, sqlx::FromRow)]
+#[derive(Clone, Deserialize, sqlx::FromRow)]
 struct LocalEvent {
     id: Uuid,
     title: String,
@@ -1175,18 +1304,41 @@ fn recurrence_rule(value: EventRecurrence, until: Option<DateTime<Utc>>) -> Vec<
     vec![rule]
 }
 fn event_fingerprint(event: &NormalizedEvent) -> String {
-    fingerprint(&format!(
-        "{}|{}|{}|{}|{}|{:?}",
-        event.title,
-        event.description,
-        event.starts_at,
-        event.ends_at,
-        event.location,
-        event.recurrence
-    ))
+    local_fingerprint(&LocalEvent {
+        id: Uuid::nil(),
+        title: event.title.clone(),
+        description: event.description.clone(),
+        starts_at: event.starts_at,
+        ends_at: event.ends_at,
+        all_day: event.all_day,
+        timezone: event.timezone.clone(),
+        location: event.location.clone(),
+        attendees: event.attendees.clone(),
+        recurrence: event.recurrence,
+        recurrence_until: event.recurrence_until,
+    })
 }
 fn local_fingerprint(event: &LocalEvent) -> String {
-    fingerprint(&format!(
+    // Hash exactly the provider-visible write shape, including all-day/timezone,
+    // attendees and recurrence end. Legacy baselines require read-only revalidation.
+    fingerprint(
+        &serde_json::to_string(&GoogleEventWrite::from_local(event))
+            .expect("Google event writes contain only JSON-serializable fields"),
+    )
+}
+pub(crate) fn snapshot_event_fingerprint(
+    value: &serde_json::Value,
+) -> crate::error::AppResult<String> {
+    let event: LocalEvent =
+        serde_json::from_value(value.clone()).map_err(|_| crate::task_delete_store::changed())?;
+    Ok(local_fingerprint(&event))
+}
+pub(crate) fn legacy_snapshot_event_fingerprint(
+    value: &serde_json::Value,
+) -> crate::error::AppResult<String> {
+    let event: LocalEvent =
+        serde_json::from_value(value.clone()).map_err(|_| crate::task_delete_store::changed())?;
+    Ok(fingerprint(&format!(
         "{}|{}|{}|{}|{}|{:?}",
         event.title,
         event.description,
@@ -1194,7 +1346,7 @@ fn local_fingerprint(event: &LocalEvent) -> String {
         event.ends_at,
         event.location,
         event.recurrence
-    ))
+    )))
 }
 fn fingerprint(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
@@ -1276,7 +1428,7 @@ async fn update_mapping_baseline(
     remote: &GoogleEvent,
     event: &NormalizedEvent,
 ) -> Result<()> {
-    sqlx::query("UPDATE external_event_mappings SET external_etag=$2,base_fingerprint=$3,local_dirty=FALSE,local_deleted=FALSE,pending_resolution=NULL,last_synced_at=NOW() WHERE id=$1").bind(mapping_id).bind(&remote.etag).bind(event_fingerprint(event)).execute(&store.pool).await?;
+    sqlx::query("UPDATE external_event_mappings SET external_etag=$2,base_fingerprint=$3,local_dirty=FALSE,local_deleted=FALSE,pending_resolution=NULL,delete_resolution_pending=FALSE,last_synced_at=NOW() WHERE id=$1").bind(mapping_id).bind(&remote.etag).bind(event_fingerprint(event)).execute(&store.pool).await?;
     Ok(())
 }
 

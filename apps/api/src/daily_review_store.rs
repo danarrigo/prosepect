@@ -36,6 +36,7 @@ impl Store {
             return Ok(DailyReviewResponse { review: None });
         }
 
+        lock_review_selection(&mut transaction, user_id).await?;
         let previous_date =
             previous_unfinished_focus_date(&mut transaction, user_id, review_date).await?;
         let Some(previous_date) = previous_date else {
@@ -80,6 +81,12 @@ impl Store {
         request: CompleteDailyReviewRequest,
     ) -> AppResult<DailyReview> {
         let mut transaction = self.pool.begin().await?;
+        // Hold the shared owner selection revision BEFORE selecting the review or
+        // its previous unfinished date. Undo cannot restore a disappearing date
+        // between selection and completion; a waiting completion sees restored rows.
+        lock_review_selection(&mut transaction, user_id).await?;
+        sqlx::query("UPDATE task_delete_guard_revisions SET revision=revision+1 WHERE user_id=$1 AND scope='review-selection'")
+            .bind(user_id).execute(&mut *transaction).await?;
         let review = sqlx::query_as::<_, DailyReviewRow>(
             r#"
             SELECT id, review_date, status, started_at, completed_at, version
@@ -108,6 +115,8 @@ impl Store {
         let previous_date = previous_unfinished_focus_date(&mut transaction, user_id, review_date)
             .await?
             .ok_or_else(|| AppError::Conflict("there are no unfinished focus tasks".to_owned()))?;
+        Self::bump_focus_revision(&mut transaction, user_id, previous_date).await?;
+        Self::bump_focus_revision(&mut transaction, user_id, review_date).await?;
         let unfinished_tasks =
             focus_tasks_for_date(&mut transaction, user_id, previous_date).await?;
         let unfinished_ids: HashSet<_> = unfinished_tasks.iter().map(|task| task.id).collect();
@@ -232,6 +241,14 @@ impl DailyReviewRow {
             version: self.version,
         }
     }
+}
+
+async fn lock_review_selection(connection: &mut sqlx::PgConnection, user: Uuid) -> AppResult<()> {
+    sqlx::query("INSERT INTO task_delete_guard_revisions(user_id,scope) VALUES ($1,'review-selection') ON CONFLICT DO NOTHING")
+        .bind(user).execute(&mut *connection).await?;
+    sqlx::query("SELECT revision FROM task_delete_guard_revisions WHERE user_id=$1 AND scope='review-selection' FOR UPDATE")
+        .bind(user).fetch_one(connection).await?;
+    Ok(())
 }
 
 async fn previous_unfinished_focus_date(

@@ -86,8 +86,12 @@ async function queue(action: () => Promise<Synchronization>) {
   }
 }
 
-async function resolve(conflict: SyncConflict, resolution: 'google' | 'prosepect') {
-  if (disabled.value) return
+function deletionConflict(conflict: SyncConflict) {
+  return conflict.allowed_resolutions.length === 1 && conflict.allowed_resolutions[0] === 'google'
+}
+
+async function resolve(conflict: SyncConflict, resolution: 'google' | 'prosepect' | 'latest') {
+  if (disabled.value || !conflict.allowed_resolutions.includes(resolution)) return
   clearTimeout(timer)
   busy.value = true
   error.value = ''
@@ -95,9 +99,15 @@ async function resolve(conflict: SyncConflict, resolution: 'google' | 'prosepect
     await api.resolveSyncConflict(conflict.id, resolution)
     if (!mounted) return
     conflicts.value = conflicts.value.filter((candidate) => candidate.id !== conflict.id)
-    message.value = 'Decision saved. Applying it is queued; synchronization has not completed yet.'
-  } catch {
-    if (mounted) error.value = 'Could not save the conflict decision. Refresh status and try again.'
+    message.value = deletionConflict(conflict)
+      ? 'Keep Google saved. The task stays deleted; reconciliation of the standalone Google event is queued.'
+      : 'Decision saved. Applying it is queued; synchronization has not completed yet.'
+  } catch (cause) {
+    if (mounted)
+      error.value =
+        cause instanceof api.ApiError
+          ? `${cause.message} Refresh status and try again.`
+          : 'Could not save the conflict decision. Refresh status and try again.'
   } finally {
     if (mounted) {
       busy.value = false
@@ -205,7 +215,10 @@ onBeforeUnmount(() => {
     </button>
     <div v-if="conflicts.length" class="mt-6">
       <h3 class="text-xs font-semibold uppercase tracking-wide text-amber-600">Needs a decision</h3>
-      <p class="mt-2 text-xs leading-5 text-slate-500">
+      <p
+        v-if="conflicts.some((conflict) => !deletionConflict(conflict))"
+        class="mt-2 text-xs leading-5 text-slate-500"
+      >
         Both copies changed. Choose which version to keep; the other version's changes will be
         replaced. A Google deletion removes an event or unschedules a task, not the task itself.
       </p>
@@ -214,22 +227,42 @@ onBeforeUnmount(() => {
         :key="conflict.id"
         class="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-100 py-3 dark:border-slate-900"
       >
-        <span class="min-w-0 flex-1 truncate text-sm">{{ conflict.title }}</span>
+        <div class="min-w-0 flex-1 text-sm">
+          <p class="break-words">{{ conflict.title }}</p>
+          <p
+            v-if="deletionConflict(conflict)"
+            class="mt-1 text-xs text-slate-500 dark:text-slate-400"
+          >
+            The task stays deleted. Keep Google keeps the current Google event as a standalone
+            event, without restoring the task.
+          </p>
+        </div>
         <button
+          v-if="conflict.allowed_resolutions.includes('google')"
           class="secondary-button !h-8 !text-xs"
           type="button"
           :disabled="disabled"
           @click="resolve(conflict, 'google')"
         >
-          Use Google
+          {{ deletionConflict(conflict) ? 'Keep Google' : 'Use Google' }}
         </button>
         <button
+          v-if="conflict.allowed_resolutions.includes('prosepect')"
           class="secondary-button !h-8 !text-xs"
           type="button"
           :disabled="disabled"
           @click="resolve(conflict, 'prosepect')"
         >
           Use Prosepect
+        </button>
+        <button
+          v-if="conflict.allowed_resolutions.includes('latest')"
+          class="secondary-button !h-8 !text-xs"
+          type="button"
+          :disabled="disabled"
+          @click="resolve(conflict, 'latest')"
+        >
+          Use latest
         </button>
       </div>
     </div>

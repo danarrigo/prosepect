@@ -195,15 +195,23 @@ async fn scheduled_task_time_blocks_follow_the_google_event_lifecycle(
     assert!(service.run_once().await?);
     let conflicts = store.list_sync_conflicts(user_id).await?.items;
     assert_eq!(conflicts.len(), 1);
+    assert_eq!(
+        conflicts[0].allowed_resolutions,
+        ["google", "prosepect", "latest"]
+    );
     let before_decision = store
         .list_tasks(user_id, None, None, 10)
         .await?
         .items
         .remove(0);
     assert!(before_decision.scheduled_start.is_some());
-    store
+    let resolved = store
         .resolve_sync_conflict(user_id, conflicts[0].id, "google")
         .await?;
+    assert_eq!(
+        resolved.allowed_resolutions,
+        ["google", "prosepect", "latest"]
+    );
     assert!(service.run_once().await?);
     let after_deletion = store
         .list_tasks(user_id, None, None, 10)
@@ -925,5 +933,1037 @@ async fn dispatcher_coalesces_wakes_and_bounds_each_drain(pool: PgPool) -> anyho
     assert!(waited_between_batches, "a drain must yield after 32 jobs");
     assert_eq!(fixture.requests.load(Ordering::SeqCst), 33);
     drop(dispatcher);
+    Ok(())
+}
+
+// Deterministic fake provider for reversible deletion. No live Google calls.
+#[derive(Clone, Default)]
+struct UndoGoogle {
+    remote: Arc<tokio::sync::Mutex<serde_json::Value>>,
+    writes: Arc<tokio::sync::Mutex<Vec<String>>>,
+    get_status: Arc<AtomicUsize>,
+    empty_list: Arc<AtomicBool>,
+    paginated: Arc<AtomicBool>,
+    gone_once: Arc<AtomicBool>,
+    pause_get: Arc<AtomicBool>,
+    started: Arc<tokio::sync::Notify>,
+    resume: Arc<tokio::sync::Notify>,
+    race_delete: Arc<AtomicBool>,
+}
+
+async fn undo_google_list(
+    State(state): State<UndoGoogle>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if query.contains_key("syncToken") && state.gone_once.swap(false, Ordering::SeqCst) {
+        return StatusCode::GONE.into_response();
+    }
+    if state.paginated.load(Ordering::SeqCst) && !query.contains_key("pageToken") {
+        return Json(json!({"items":[],"nextPageToken":"second-page"})).into_response();
+    }
+    let remote = state.remote.lock().await.clone();
+    let items = if remote.is_null() || state.empty_list.load(Ordering::SeqCst) {
+        vec![]
+    } else {
+        vec![remote]
+    };
+    Json(json!({"items":items,"nextSyncToken":"after-pull"})).into_response()
+}
+async fn undo_google_get(State(state): State<UndoGoogle>) -> Response {
+    // Snapshot the response before pausing so tests can change provider/database state
+    // between the observed GET and final transactional revalidation.
+    let remote = state.remote.lock().await.clone();
+    if state.pause_get.load(Ordering::SeqCst) {
+        state.started.notify_one();
+        state.resume.notified().await;
+    }
+    let status = state.get_status.load(Ordering::SeqCst);
+    if status != 0 {
+        return StatusCode::from_u16(status as u16).unwrap().into_response();
+    }
+    if remote.is_null() {
+        StatusCode::NOT_FOUND.into_response()
+    } else {
+        Json(remote).into_response()
+    }
+}
+async fn undo_google_create(
+    State(state): State<UndoGoogle>,
+    Json(mut body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    state.writes.lock().await.push("POST".into());
+    body["etag"] = json!("clean-etag");
+    body["status"] = json!("confirmed");
+    *state.remote.lock().await = body.clone();
+    Json(body)
+}
+async fn undo_google_update(State(state): State<UndoGoogle>) -> StatusCode {
+    state.writes.lock().await.push("PUT".into());
+    StatusCode::PRECONDITION_FAILED
+}
+async fn undo_google_delete(State(state): State<UndoGoogle>, headers: HeaderMap) -> StatusCode {
+    state.writes.lock().await.push("DELETE".into());
+    let mut remote = state.remote.lock().await;
+    if state.race_delete.load(Ordering::SeqCst) {
+        remote["etag"] = json!("raced-etag");
+    }
+    if headers.get("if-match").and_then(|h| h.to_str().ok()) != remote["etag"].as_str() {
+        return StatusCode::PRECONDITION_FAILED;
+    }
+    *remote = serde_json::Value::Null;
+    StatusCode::NO_CONTENT
+}
+async fn undo_google_discovery() -> Json<serde_json::Value> {
+    Json(
+        json!({"items":[{"id":"undo-calendar","summary":"Undo calendar","primary":true,"selected":true,"accessRole":"owner"}]}),
+    )
+}
+
+struct UndoFixture {
+    store: Store,
+    service: SyncService,
+    user: Uuid,
+    calendar: Uuid,
+    task: prosepect_api::models::Task,
+    state: UndoGoogle,
+    api_base: String,
+    server: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+impl Drop for UndoFixture {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+async fn undo_fixture(pool: &PgPool) -> anyhow::Result<UndoFixture> {
+    let state = UndoGoogle::default();
+    let app = Router::new()
+        .route("/users/me/calendarList", get(undo_google_discovery))
+        .route(
+            "/calendars/{calendar}/events",
+            get(undo_google_list).post(undo_google_create),
+        )
+        .route(
+            "/calendars/{calendar}/events/{event}",
+            get(undo_google_get)
+                .put(undo_google_update)
+                .delete(undo_google_delete),
+        )
+        .with_state(state.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let user = create_user(pool, "undo-provider@example.test").await?;
+    let calendar = Uuid::now_v7();
+    sqlx::query("INSERT INTO calendars(id,user_id,name,source,external_id,selected,provider_primary,access_role) VALUES ($1,$2,'Undo calendar','google','undo-calendar',TRUE,TRUE,'owner')")
+        .bind(calendar).bind(user).execute(pool).await?;
+    let key = [41_u8; 32];
+    sqlx::query("INSERT INTO google_accounts(user_id,encrypted_access_token,access_token_expires_at,scopes) VALUES ($1,$2,$3,$4)")
+        .bind(user).bind(encrypt_token(&key,b"fake-token")?).bind(Utc::now()+Duration::hours(1))
+        .bind(vec!["https://www.googleapis.com/auth/calendar.events"]).execute(pool).await?;
+    let store = Store::from_pool(pool.clone());
+    let task=store.create_task(user,serde_json::from_value(json!({"title":"Clean mapped task","description":"Undo content","scheduled_start":"2026-09-10T10:00:00Z","scheduled_end":"2026-09-10T11:00:00Z"}))?).await?;
+    let google = GoogleOAuth::new(GoogleOAuthConfig {
+        client_id: "fake".into(),
+        client_secret: "fake".into(),
+        redirect_uri: "http://localhost/callback".into(),
+        token_encryption_key: STANDARD.encode(key),
+    })?;
+    let service =
+        SyncService::new(store.clone(), google, None)?.with_api_base(format!("http://{address}"));
+    Ok(UndoFixture {
+        store,
+        service,
+        user,
+        calendar,
+        task,
+        state,
+        api_base: format!("http://{address}"),
+        server,
+    })
+}
+async fn undo_initial_push(f: &UndoFixture) -> anyhow::Result<()> {
+    assert!(f.service.run_once().await?);
+    assert_eq!(*f.state.writes.lock().await, vec!["POST"]);
+    f.state.writes.lock().await.clear();
+    Ok(())
+}
+async fn undo_sync(f: &UndoFixture, key: &str) -> anyhow::Result<()> {
+    f.store
+        .enqueue_sync(f.user, Some(f.calendar), "calendar_sync", key)
+        .await?;
+    assert!(f.service.run_once().await?);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_google_hold_restore_expiry_and_discovery_are_write_free(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    undo_initial_push(&f).await?;
+    let event: Uuid = sqlx::query_scalar("SELECT id FROM calendar_events WHERE linked_task_id=$1")
+        .bind(f.task.id)
+        .fetch_one(&pool)
+        .await?;
+    let mapping: Uuid =
+        sqlx::query_scalar("SELECT id FROM external_event_mappings WHERE canonical_event_id=$1")
+            .bind(event)
+            .fetch_one(&pool)
+            .await?;
+    let receipt = f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+    let expiry_job: (chrono::DateTime<Utc>, String) =
+        sqlx::query_as("SELECT available_at,status FROM sync_jobs WHERE idempotency_key=$1")
+            .bind(format!("task-delete-expiry:{}", receipt.id))
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(expiry_job.0, receipt.expires_at);
+    assert_eq!(expiry_job.1, "pending");
+    for key in ["manual-hold", "webhook-hold", "unrelated-hold"] {
+        undo_sync(&f, key).await?;
+    }
+    assert!(f.state.writes.lock().await.is_empty());
+    f.store
+        .undo_task_delete(f.user, receipt.id, Some(&f.service))
+        .await?;
+    let restored:(Uuid,bool,bool,bool)=sqlx::query_as("SELECT canonical_event_id,local_dirty,local_deleted,reversible_tombstone FROM external_event_mappings WHERE id=$1").bind(mapping).fetch_one(&pool).await?;
+    assert_eq!(restored, (event, false, false, false));
+    sqlx::query("UPDATE sync_jobs SET available_at=clock_timestamp() WHERE idempotency_key=$1")
+        .bind(format!("task-delete-expiry:{}", receipt.id))
+        .execute(&pool)
+        .await?;
+    assert!(f.service.run_once().await?);
+    f.store
+        .enqueue_sync(f.user, None, "calendar_discovery", "discover-after-undo")
+        .await?;
+    assert!(f.service.run_once().await?);
+    undo_sync(&f, "sync-after-discovery").await?;
+    assert!(f.state.writes.lock().await.is_empty());
+    // A subsequent remote cancellation of the CLEAN restore never becomes POST.
+    {
+        let mut remote = f.state.remote.lock().await;
+        remote["status"] = json!("cancelled");
+        remote["etag"] = json!("cancelled-etag");
+    }
+    undo_sync(&f, "cancel-clean-restore").await?;
+    assert!(f.state.writes.lock().await.is_empty());
+    assert!(
+        f.store.list_tasks(f.user, None, None, 10).await?.items[0]
+            .scheduled_start
+            .is_none()
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_google_refuses_uncertain_dirty_nonpreferred_and_incomplete_baselines(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    assert!(matches!(
+        f.store.delete_task_with_undo(f.user, f.task.id, 1).await,
+        Err(prosepect_api::error::AppError::Conflict(_))
+    ));
+    undo_initial_push(&f).await?;
+    for update in [
+        "UPDATE external_event_mappings SET local_dirty=TRUE WHERE user_id=$1",
+        "UPDATE external_event_mappings SET external_etag=NULL WHERE user_id=$1",
+        "UPDATE external_event_mappings SET base_fingerprint=NULL WHERE user_id=$1",
+        "UPDATE external_event_mappings SET base_fingerprint='incomplete' WHERE user_id=$1",
+        "UPDATE external_event_mappings SET pending_resolution='google' WHERE user_id=$1",
+        "UPDATE external_event_mappings SET conflict_state='unresolved' WHERE user_id=$1",
+    ] {
+        let mut tx = pool.begin().await?;
+        // Apply and commit each mutation, then restore the complete exact baseline.
+        let before: serde_json::Value = sqlx::query_scalar(
+            "SELECT to_jsonb(m) FROM external_event_mappings m WHERE user_id=$1",
+        )
+        .bind(f.user)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query(update).bind(f.user).execute(&mut *tx).await?;
+        tx.commit().await?;
+        assert!(
+            matches!(
+                f.store.delete_task_with_undo(f.user, f.task.id, 1).await,
+                Err(prosepect_api::error::AppError::Conflict(_))
+            ),
+            "{update}"
+        );
+        sqlx::query("DELETE FROM external_event_mappings WHERE user_id=$1")
+            .bind(f.user)
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO external_event_mappings SELECT * FROM jsonb_populate_record(NULL::external_event_mappings,$1)").bind(before).execute(&pool).await?;
+    }
+    sqlx::query("UPDATE calendars SET provider_primary=FALSE WHERE id=$1")
+        .bind(f.calendar)
+        .execute(&pool)
+        .await?;
+    assert!(matches!(
+        f.store.delete_task_with_undo(f.user, f.task.id, 1).await,
+        Err(prosepect_api::error::AppError::Conflict(_))
+    ));
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 10)
+            .await?
+            .items
+            .len(),
+        1
+    );
+    assert!(f.state.writes.lock().await.is_empty());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_google_pull_matrix_never_automatically_resurrects(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    for policy in ["ask", "google", "latest", "prosepect"] {
+        for cancelled in [false, true] {
+            for expired in [false, true] {
+                let f = undo_fixture(&pool).await?;
+                undo_initial_push(&f).await?;
+                sqlx::query("INSERT INTO user_settings(user_id,sync_conflict_policy) VALUES ($1,$2) ON CONFLICT(user_id) DO UPDATE SET sync_conflict_policy=$2").bind(f.user).bind(policy).execute(&pool).await?;
+                let receipt = f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+                if expired {
+                    sqlx::query(
+                        "UPDATE task_delete_undos SET expires_at=clock_timestamp() WHERE id=$1",
+                    )
+                    .bind(receipt.id)
+                    .execute(&pool)
+                    .await?;
+                    sqlx::query("UPDATE external_event_mappings SET deletion_hold_until=clock_timestamp() WHERE user_id=$1").bind(f.user).execute(&pool).await?;
+                }
+                {
+                    let mut remote = f.state.remote.lock().await;
+                    remote["etag"] = json!("changed-etag");
+                    remote["summary"] = json!("Changed remotely");
+                    if cancelled {
+                        remote["status"] = json!("cancelled");
+                    }
+                }
+                f.state.paginated.store(true, Ordering::SeqCst);
+                f.state.gone_once.store(true, Ordering::SeqCst);
+                undo_sync(&f, &format!("matrix-{policy}-{cancelled}-{expired}")).await?;
+                assert!(f.state.writes.lock().await.is_empty());
+                let events: i64 =
+                    sqlx::query_scalar("SELECT count(*) FROM calendar_events WHERE user_id=$1")
+                        .bind(f.user)
+                        .fetch_one(&pool)
+                        .await?;
+                assert_eq!(events, 0, "{policy}/{cancelled}/{expired}");
+                assert!(
+                    f.store
+                        .undo_task_delete(f.user, receipt.id, Some(&f.service))
+                        .await
+                        .is_err()
+                );
+                let conflicts = f.store.list_sync_conflicts(f.user).await?.items;
+                assert_eq!(conflicts.len(), usize::from(!cancelled));
+                if !cancelled {
+                    let etag: String = sqlx::query_scalar(
+                        "SELECT external_etag FROM external_event_mappings WHERE user_id=$1",
+                    )
+                    .bind(f.user)
+                    .fetch_one(&pool)
+                    .await?;
+                    assert_eq!(etag, "clean-etag");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_google_fresh_validation_fails_closed_without_consumption(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    undo_initial_push(&f).await?;
+    let receipt = f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+    for status in [404, 410, 401, 503] {
+        f.state.get_status.store(status, Ordering::SeqCst);
+        assert!(
+            f.store
+                .undo_task_delete(f.user, receipt.id, Some(&f.service))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            f.store.list_task_delete_undos(f.user).await?.items[0].expires_at,
+            receipt.expires_at
+        );
+    }
+    f.state.get_status.store(0, Ordering::SeqCst);
+    for field in ["etag", "status", "id", "description"] {
+        let before = f.state.remote.lock().await.clone();
+        f.state.remote.lock().await[field] = json!(if field == "status" {
+            "cancelled"
+        } else {
+            "changed"
+        });
+        assert!(
+            f.store
+                .undo_task_delete(f.user, receipt.id, Some(&f.service))
+                .await
+                .is_err(),
+            "{field}"
+        );
+        *f.state.remote.lock().await = before;
+    }
+    f.state.pause_get.store(true, Ordering::SeqCst);
+    let timed = f
+        .store
+        .undo_task_delete(f.user, receipt.id, Some(&f.service))
+        .await;
+    assert!(matches!(
+        timed,
+        Err(prosepect_api::error::AppError::InvalidRequest {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            ..
+        })
+    ));
+    f.state.pause_get.store(false, Ordering::SeqCst);
+    f.state.resume.notify_one();
+    assert_eq!(
+        f.store.list_task_delete_undos(f.user).await?.items[0].expires_at,
+        receipt.expires_at
+    );
+    assert!(f.state.writes.lock().await.is_empty());
+    f.store
+        .undo_task_delete(f.user, receipt.id, Some(&f.service))
+        .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_google_preflight_releases_single_pool_and_revalidates_preferences(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    undo_initial_push(&f).await?;
+    let receipt = f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+    let single = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with((*pool.connect_options()).clone())
+        .await?;
+    let store = Store::from_pool(single.clone());
+    let google = GoogleOAuth::new(GoogleOAuthConfig {
+        client_id: "fake".into(),
+        client_secret: "fake".into(),
+        redirect_uri: "http://localhost/callback".into(),
+        token_encryption_key: STANDARD.encode([41_u8; 32]),
+    })?;
+    let service = SyncService::new(store.clone(), google, None)?.with_api_base(f.api_base.clone());
+    f.state.pause_get.store(true, Ordering::SeqCst);
+    let attempt = store.undo_task_delete(f.user, receipt.id, Some(&service));
+    let change = async {
+        f.state.started.notified().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            sqlx::query("UPDATE calendars SET selected=FALSE WHERE id=$1")
+                .bind(f.calendar)
+                .execute(&single),
+        )
+        .await??;
+        f.state.resume.notify_one();
+        anyhow::Ok(())
+    };
+    let (result, changed) = tokio::join!(attempt, change);
+    changed?;
+    assert!(matches!(
+        result,
+        Err(prosepect_api::error::AppError::Conflict(_))
+    ));
+    assert_eq!(f.store.list_task_delete_undos(f.user).await?.items.len(), 1);
+    assert!(f.state.writes.lock().await.is_empty());
+    single.close().await;
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_google_persistence_gap_is_not_treated_as_never_pushed(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    sqlx::raw_sql("CREATE FUNCTION fail_mapping() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected persistence gap'; END $$; CREATE TRIGGER fail_mapping BEFORE INSERT ON external_event_mappings FOR EACH ROW EXECUTE FUNCTION fail_mapping();").execute(&pool).await?;
+    assert!(f.service.run_once().await?);
+    assert!(!f.state.remote.lock().await.is_null());
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM external_event_mappings WHERE user_id=$1")
+            .bind(f.user)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(count, 0);
+    assert!(matches!(
+        f.store.delete_task_with_undo(f.user, f.task.id, 1).await,
+        Err(prosepect_api::error::AppError::Conflict(_))
+    ));
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 10)
+            .await?
+            .items
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_sync_completion_releases_exclusion_before_return(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    // Reserve an independent connection: reusing the sync connection would flush
+    // its queued rollback and mask a lock still held after run_once returns.
+    let mut observer = pool.begin().await?;
+    undo_initial_push(&f).await?;
+    let released: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("prosepect-sync:{}", f.user))
+            .fetch_one(&mut *observer)
+            .await?;
+    assert!(
+        released,
+        "completed sync must release user exclusion before returning"
+    );
+    observer.rollback().await?;
+    f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_google_expiry_is_conditional_and_legacy_delete_is_immediate(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    for race in [false, true] {
+        let f = undo_fixture(&pool).await?;
+        undo_initial_push(&f).await?;
+        let receipt = f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+        sqlx::query("UPDATE task_delete_undos SET expires_at=clock_timestamp() WHERE id=$1")
+            .bind(receipt.id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("UPDATE external_event_mappings SET deletion_hold_until=clock_timestamp() WHERE user_id=$1").bind(f.user).execute(&pool).await?;
+        sqlx::query("UPDATE sync_jobs SET available_at=clock_timestamp() WHERE idempotency_key=$1")
+            .bind(format!("task-delete-expiry:{}", receipt.id))
+            .execute(&pool)
+            .await?;
+        f.state.race_delete.store(race, Ordering::SeqCst);
+        assert!(f.service.run_once().await?);
+        assert_eq!(*f.state.writes.lock().await, vec!["DELETE"]);
+        assert_eq!(f.state.remote.lock().await.is_null(), !race);
+        assert!(
+            f.store
+                .list_task_delete_undos(f.user)
+                .await?
+                .items
+                .is_empty()
+        );
+    }
+    let f = undo_fixture(&pool).await?;
+    undo_initial_push(&f).await?;
+    f.store.delete_task(f.user, f.task.id, 1).await?;
+    assert!(f.service.run_once().await?);
+    assert_eq!(*f.state.writes.lock().await, vec!["DELETE"]);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_google_explicit_keep_google_disarms_deletion_and_reconciles(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    for remote in ["live", "cancelled", "missing", "outage"] {
+        let f = undo_fixture(&pool).await?;
+        undo_initial_push(&f).await?;
+        let receipt = f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+        {
+            let mut event = f.state.remote.lock().await;
+            event["etag"] = json!("changed-etag");
+            event["summary"] = json!("Keep Google");
+        }
+        undo_sync(&f, &format!("conflict-{remote}")).await?;
+        let conflict = f.store.list_sync_conflicts(f.user).await?.items.remove(0);
+        assert_eq!(conflict.allowed_resolutions, ["google"]);
+        let before: serde_json::Value = sqlx::query_scalar(
+            "SELECT to_jsonb(m) FROM external_event_mappings m WHERE user_id=$1",
+        )
+        .bind(f.user)
+        .fetch_one(&pool)
+        .await?;
+        for refused in ["prosepect", "latest"] {
+            assert!(matches!(
+                f.store
+                    .resolve_sync_conflict(f.user, conflict.id, refused)
+                    .await,
+                Err(prosepect_api::error::AppError::Conflict(_))
+            ));
+            let after: serde_json::Value = sqlx::query_scalar(
+                "SELECT to_jsonb(m) FROM external_event_mappings m WHERE user_id=$1",
+            )
+            .bind(f.user)
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(before, after);
+        }
+        let mut sync = pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("prosepect-sync:{}", f.user))
+            .execute(&mut *sync)
+            .await?;
+        assert!(matches!(
+            f.store
+                .resolve_sync_conflict(f.user, conflict.id, "google")
+                .await,
+            Err(prosepect_api::error::AppError::Conflict(_))
+        ));
+        sync.rollback().await?;
+        let resolved = f
+            .store
+            .resolve_sync_conflict(f.user, conflict.id, "google")
+            .await?;
+        assert_eq!(resolved.allowed_resolutions, ["google"]);
+        f.state.empty_list.store(true, Ordering::SeqCst);
+        match remote {
+            "cancelled" => f.state.remote.lock().await["status"] = json!("cancelled"),
+            "missing" => *f.state.remote.lock().await = serde_json::Value::Null,
+            "outage" => f.state.get_status.store(503, Ordering::SeqCst),
+            _ => {}
+        }
+        assert!(f.service.run_once().await?);
+        sqlx::query("UPDATE sync_jobs SET available_at=clock_timestamp() WHERE idempotency_key=$1")
+            .bind(format!("task-delete-expiry:{}", receipt.id))
+            .execute(&pool)
+            .await?;
+        assert!(f.service.run_once().await?);
+        assert!(f.state.writes.lock().await.is_empty(), "{remote}");
+        assert!(
+            f.store
+                .list_tasks(f.user, None, None, 10)
+                .await?
+                .items
+                .is_empty()
+        );
+        assert!(
+            f.store
+                .undo_task_delete(f.user, receipt.id, Some(&f.service))
+                .await
+                .is_err()
+        );
+        let events: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM calendar_events WHERE user_id=$1")
+                .bind(f.user)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(events, i64::from(remote == "live"));
+    }
+    Ok(())
+}
+
+// Exercise the existing route/service wiring, so legacy repair is automatic on deletion.
+async fn delete_with_provider(
+    f: &UndoFixture,
+) -> anyhow::Result<prosepect_api::models::TaskDeleteUndo> {
+    use prosepect_api::{
+        app::AppState,
+        auth::CurrentUser,
+        extract::{ApiJson, ApiPath},
+        file_storage::FileStorage,
+        rate_limit::LoginRateLimiter,
+    };
+    let dispatcher = SyncDispatcher::default();
+    let state = AppState {
+        store: f.store.clone(),
+        allow_insecure_dev_auth: true,
+        invite_only: false,
+        trust_proxy_headers: false,
+        login_rate_limiter: LoginRateLimiter::default(),
+        action_rate_limiter: LoginRateLimiter::default(),
+        secure_cookies: false,
+        app_url: "http://localhost".into(),
+        google_oauth: None,
+        file_storage: FileStorage::new(&prosepect_api::config::ObjectStorageConfig::Local {
+            root: std::env::temp_dir()
+                .join("prosepect-sync-tests")
+                .to_string_lossy()
+                .into_owned(),
+        })?,
+        max_file_size_bytes: 1024,
+        max_user_file_storage_bytes: 1024,
+        max_total_file_storage_bytes: 1024,
+        max_user_accounts: None,
+        admin_user_ids: Default::default(),
+        worker_trigger_token: None,
+        sync_service: Some(f.service.clone()),
+        sync_dispatcher: dispatcher.clone(),
+        metrics: prosepect_api::observability::initialize_metrics(),
+    };
+    let result = prosepect_api::task_delete_routes::delete_task_with_undo(
+        State(state),
+        CurrentUser(f.user),
+        ApiPath(f.task.id),
+        ApiJson(serde_json::from_value(
+            json!({"expected_version":f.task.version}),
+        )?),
+    )
+    .await;
+    Ok(result?.0)
+}
+
+async fn seed_legacy_fingerprint(pool: &PgPool, f: &UndoFixture) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    // Actual pre-Undo six-field format, including chrono Display and enum Debug.
+    let (title, description, start, end, location, recurrence): (String, String, chrono::DateTime<Utc>, chrono::DateTime<Utc>, String, prosepect_api::models::EventRecurrence) = sqlx::query_as(
+        "SELECT title,description,starts_at,ends_at,location,recurrence FROM calendar_events WHERE linked_task_id=$1"
+    ).bind(f.task.id).fetch_one(pool).await?;
+    let legacy = format!(
+        "{:x}",
+        Sha256::digest(
+            format!("{title}|{description}|{start}|{end}|{location}|{recurrence:?}").as_bytes()
+        )
+    );
+    sqlx::query("UPDATE external_event_mappings SET base_fingerprint=$2 WHERE user_id=$1")
+        .bind(f.user)
+        .bind(&legacy)
+        .execute(pool)
+        .await?;
+    Ok(legacy)
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_legacy_fingerprint_read_only_repair(pool: PgPool) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    undo_initial_push(&f).await?;
+    let legacy = seed_legacy_fingerprint(&pool, &f).await?;
+    undo_sync(&f, "unchanged-legacy-pull").await?;
+    let receipt = delete_with_provider(&f).await?;
+    let upgraded: String =
+        sqlx::query_scalar("SELECT base_fingerprint FROM external_event_mappings WHERE user_id=$1")
+            .bind(f.user)
+            .fetch_one(&pool)
+            .await?;
+    assert_ne!(upgraded, legacy);
+    f.store
+        .undo_task_delete(f.user, receipt.id, Some(&f.service))
+        .await?;
+    undo_sync(&f, "legacy-repaired-restore").await?;
+    assert!(f.state.writes.lock().await.is_empty());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_legacy_repair_refuses_remote_mismatch_and_unavailability(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    undo_initial_push(&f).await?;
+    let legacy = seed_legacy_fingerprint(&pool, &f).await?;
+    for status in [404, 410, 401, 503] {
+        f.state.get_status.store(status, Ordering::SeqCst);
+        assert!(
+            f.store
+                .delete_task_with_undo_validated(f.user, f.task.id, 1, Some(&f.service))
+                .await
+                .is_err()
+        );
+    }
+    f.state.get_status.store(0, Ordering::SeqCst);
+    let original = f.state.remote.lock().await.clone();
+    for (field, value) in [
+        ("id", json!("wrong-identity")),
+        ("etag", json!("changed-etag")),
+        ("status", json!("cancelled")),
+        ("description", json!("changed content")),
+        ("attendees", json!([{"email":"new@example.test"}])),
+        (
+            "recurrence",
+            json!(["RRULE:FREQ=DAILY;UNTIL=20261001T090000Z"]),
+        ),
+        (
+            "start",
+            json!({"dateTime":"2026-09-10T10:00:00Z","timeZone":"Europe/London"}),
+        ),
+    ] {
+        f.state.remote.lock().await[field] = value;
+        assert!(
+            matches!(
+                f.store
+                    .delete_task_with_undo_validated(f.user, f.task.id, 1, Some(&f.service))
+                    .await,
+                Err(prosepect_api::error::AppError::Conflict(_))
+            ),
+            "{field}"
+        );
+        *f.state.remote.lock().await = original.clone();
+    }
+    f.state.pause_get.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        f.store
+            .delete_task_with_undo_validated(f.user, f.task.id, 1, Some(&f.service))
+            .await,
+        Err(prosepect_api::error::AppError::InvalidRequest {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            ..
+        })
+    ));
+    f.state.pause_get.store(false, Ordering::SeqCst);
+    f.state.resume.notify_one();
+    let baseline: String =
+        sqlx::query_scalar("SELECT base_fingerprint FROM external_event_mappings WHERE user_id=$1")
+            .bind(f.user)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(baseline, legacy);
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 10)
+            .await?
+            .items
+            .len(),
+        1
+    );
+    assert!(
+        f.store
+            .list_task_delete_undos(f.user)
+            .await?
+            .items
+            .is_empty()
+    );
+    assert!(f.state.writes.lock().await.is_empty());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_legacy_repair_revalidates_after_connection_free_get(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    for change in [
+        "preference",
+        "dirty",
+        "etag",
+        "content",
+        "conflict",
+        "synchronization",
+    ] {
+        let f = undo_fixture(&pool).await?;
+        undo_initial_push(&f).await?;
+        let legacy = seed_legacy_fingerprint(&pool, &f).await?;
+        let single = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with((*pool.connect_options()).clone())
+            .await?;
+        let store = Store::from_pool(single.clone());
+        let google = GoogleOAuth::new(GoogleOAuthConfig {
+            client_id: "fake".into(),
+            client_secret: "fake".into(),
+            redirect_uri: "http://localhost/callback".into(),
+            token_encryption_key: STANDARD.encode([41_u8; 32]),
+        })?;
+        let service =
+            SyncService::new(store.clone(), google, None)?.with_api_base(f.api_base.clone());
+        f.state.pause_get.store(true, Ordering::SeqCst);
+        let attempt = store.delete_task_with_undo_validated(f.user, f.task.id, 1, Some(&service));
+        let mutate = async {
+            f.state.started.notified().await;
+            // The one-connection pool must be available during provider validation.
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                sqlx::query("SELECT 1").execute(&single),
+            )
+            .await??;
+            let mut sync = pool.begin().await?;
+            match change {
+                "preference" => {
+                    sqlx::query("UPDATE calendars SET selected=FALSE WHERE user_id=$1")
+                        .bind(f.user)
+                        .execute(&single)
+                        .await?;
+                }
+                "dirty" => {
+                    sqlx::query(
+                        "UPDATE external_event_mappings SET local_dirty=TRUE WHERE user_id=$1",
+                    )
+                    .bind(f.user)
+                    .execute(&single)
+                    .await?;
+                }
+                "etag" => {
+                    sqlx::query("UPDATE external_event_mappings SET external_etag='changed' WHERE user_id=$1").bind(f.user).execute(&single).await?;
+                }
+                "content" => {
+                    sqlx::query(
+                        "UPDATE calendar_events SET description='changed' WHERE user_id=$1",
+                    )
+                    .bind(f.user)
+                    .execute(&single)
+                    .await?;
+                }
+                "conflict" => {
+                    sqlx::query("UPDATE external_event_mappings SET conflict_state='unresolved' WHERE user_id=$1").bind(f.user).execute(&single).await?;
+                }
+                "synchronization" => {
+                    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                        .bind(format!("prosepect-sync:{}", f.user))
+                        .execute(&mut *sync)
+                        .await?;
+                }
+                _ => unreachable!(),
+            }
+            f.state.resume.notify_one();
+            anyhow::Ok(sync)
+        };
+        let (result, held) = tokio::join!(attempt, mutate);
+        held?.rollback().await?;
+        assert!(
+            matches!(result, Err(prosepect_api::error::AppError::Conflict(_))),
+            "{change}"
+        );
+        let baseline: String = sqlx::query_scalar(
+            "SELECT base_fingerprint FROM external_event_mappings WHERE user_id=$1",
+        )
+        .bind(f.user)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(baseline, legacy, "{change}");
+        assert_eq!(
+            f.store
+                .list_tasks(f.user, None, None, 10)
+                .await?
+                .items
+                .len(),
+            1
+        );
+        assert!(
+            f.store
+                .list_task_delete_undos(f.user)
+                .await?
+                .items
+                .is_empty()
+        );
+        assert!(f.state.writes.lock().await.is_empty());
+        single.close().await;
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_google_paused_preflight_crosses_real_deadline(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    undo_initial_push(&f).await?;
+    let receipt = f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+    // Shorten both durable deadlines together, then let clock_timestamp pass them
+    // while GET is paused. No mutation artificially expires the in-flight receipt.
+    let deadline: chrono::DateTime<Utc> = sqlx::query_scalar("UPDATE task_delete_undos SET expires_at=clock_timestamp()+INTERVAL '1 second' WHERE id=$1 RETURNING expires_at")
+        .bind(receipt.id).fetch_one(&pool).await?;
+    sqlx::query("UPDATE external_event_mappings SET deletion_hold_until=$2 WHERE user_id=$1")
+        .bind(f.user)
+        .bind(deadline)
+        .execute(&pool)
+        .await?;
+    f.state.pause_get.store(true, Ordering::SeqCst);
+    let attempt = f
+        .store
+        .undo_task_delete(f.user, receipt.id, Some(&f.service));
+    let expire = async {
+        f.state.started.notified().await;
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        f.state.resume.notify_one();
+    };
+    let (result, ()) = tokio::join!(attempt, expire);
+    assert!(matches!(
+        result,
+        Err(prosepect_api::error::AppError::Conflict(_))
+    ));
+    let retained: chrono::DateTime<Utc> =
+        sqlx::query_scalar("SELECT expires_at FROM task_delete_undos WHERE id=$1")
+            .bind(receipt.id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(retained, deadline);
+    assert!(
+        f.store
+            .list_tasks(f.user, None, None, 10)
+            .await?
+            .items
+            .is_empty()
+    );
+    let held: bool = sqlx::query_scalar("SELECT local_deleted AND reversible_tombstone AND canonical_event_id IS NULL FROM external_event_mappings WHERE user_id=$1")
+        .bind(f.user).fetch_one(&pool).await?;
+    assert!(held);
+    assert!(f.state.writes.lock().await.is_empty());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_post_get_remote_changes_remain_write_free(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    for cancelled in [false, true] {
+        let f = undo_fixture(&pool).await?;
+        undo_initial_push(&f).await?;
+        let receipt = f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+        f.state.pause_get.store(true, Ordering::SeqCst);
+        let attempt = f
+            .store
+            .undo_task_delete(f.user, receipt.id, Some(&f.service));
+        let change = async {
+            f.state.started.notified().await;
+            let mut remote = f.state.remote.lock().await;
+            remote["etag"] = json!("after-get");
+            if cancelled {
+                remote["status"] = json!("cancelled");
+            } else {
+                remote["description"] = json!("Edited after GET snapshot");
+            }
+            drop(remote);
+            f.state.resume.notify_one();
+        };
+        let (result, ()) = tokio::join!(attempt, change);
+        result?;
+        f.state.pause_get.store(false, Ordering::SeqCst);
+        assert!(f.state.writes.lock().await.is_empty());
+        undo_sync(&f, "after-get-race").await?;
+        assert!(f.state.writes.lock().await.is_empty());
+        let tasks = f.store.list_tasks(f.user, None, None, 10).await?.items;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, f.task.id);
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn sync_conflict_capabilities_do_not_infer_tombstones_from_missing_canonical_event(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    undo_initial_push(&f).await?;
+    f.store.delete_task(f.user, f.task.id, 1).await?;
+    let conflict = Uuid::now_v7();
+    sqlx::query("INSERT INTO sync_conflicts(id,user_id,mapping_id,canonical_event_id,title) SELECT $1,user_id,id,NULL,'Ordinary deletion' FROM external_event_mappings WHERE user_id=$2")
+        .bind(conflict).bind(f.user).execute(&pool).await?;
+    sqlx::query("UPDATE external_event_mappings SET conflict_state='unresolved' WHERE user_id=$1")
+        .bind(f.user)
+        .execute(&pool)
+        .await?;
+    let listed = f.store.list_sync_conflicts(f.user).await?.items.remove(0);
+    assert_eq!(listed.canonical_event_id, None);
+    assert_eq!(
+        listed.allowed_resolutions,
+        ["google", "prosepect", "latest"]
+    );
+    let resolved = f
+        .store
+        .resolve_sync_conflict(f.user, conflict, "prosepect")
+        .await?;
+    assert_eq!(
+        resolved.allowed_resolutions,
+        ["google", "prosepect", "latest"]
+    );
+    assert!(f.state.writes.lock().await.is_empty());
     Ok(())
 }

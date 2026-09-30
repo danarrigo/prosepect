@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { EditableTaskFields, Project, Task, TaskStatus } from '../api/types'
 import { useWorkspaceStore } from '../stores/workspace'
 import TaskItem from './TaskItem.vue'
@@ -41,8 +41,12 @@ async function edit(task: Task, fields: EditableTaskFields) {
 
 async function remove(task: Task) {
   if (!window.confirm(`Delete “${task.title}”?`)) return
+  const focused = document.activeElement
   try {
-    await store.removeTask(task)
+    const deleted = await store.removeTask(task)
+    await nextTick()
+    if (deleted && focused && !focused.isConnected && document.activeElement === document.body)
+      document.getElementById('task-deletion-feedback')?.focus()
   } catch {
     // The store presents the API error globally.
   }

@@ -370,6 +370,8 @@ pub struct CreateSynchronizationRequest {
 #[derive(Debug, Clone, Serialize, ToSchema, FromRow)]
 pub struct SyncConflict {
     pub id: Uuid,
+    /// Server-derived choices; resolution requests are still validated transactionally.
+    pub allowed_resolutions: Vec<String>,
     pub canonical_event_id: Option<Uuid>,
     pub title: String,
     pub status: String,
@@ -709,4 +711,22 @@ pub struct CalendarMoveUndo {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CalendarMoveUndoList {
     pub items: Vec<CalendarMoveUndo>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeleteTaskWithUndoRequest {
+    pub expected_version: i32,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
+pub struct TaskDeleteUndo {
+    pub id: Uuid,
+    pub task_id: Uuid,
+    pub task_title: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TaskDeleteUndoList {
+    pub items: Vec<TaskDeleteUndo>,
 }
