@@ -68,6 +68,7 @@ impl SyncService {
             .fetch_optional(&self.store.pool)
             .await?;
         if status.as_deref() != Some("running") {
+            user_lock.rollback().await?;
             return Ok(true);
         }
         let started = std::time::Instant::now();
@@ -120,6 +121,9 @@ impl SyncService {
                 .await?;
             }
         }
+        // Drop only queues a rollback. Await release before reporting completion so
+        // an immediately following nonblocking user mutation cannot see our old lock.
+        user_lock.rollback().await?;
         Ok(true)
     }
 

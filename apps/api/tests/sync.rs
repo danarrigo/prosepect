@@ -1413,6 +1413,29 @@ async fn task_delete_undo_google_persistence_gap_is_not_treated_as_never_pushed(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn task_delete_undo_sync_completion_releases_exclusion_before_return(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = undo_fixture(&pool).await?;
+    // Reserve an independent connection: reusing the sync connection would flush
+    // its queued rollback and mask a lock still held after run_once returns.
+    let mut observer = pool.begin().await?;
+    undo_initial_push(&f).await?;
+    let released: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("prosepect-sync:{}", f.user))
+            .fetch_one(&mut *observer)
+            .await?;
+    assert!(
+        released,
+        "completed sync must release user exclusion before returning"
+    );
+    observer.rollback().await?;
+    f.store.delete_task_with_undo(f.user, f.task.id, 1).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn task_delete_undo_google_expiry_is_conditional_and_legacy_delete_is_immediate(
     pool: PgPool,
 ) -> anyhow::Result<()> {
