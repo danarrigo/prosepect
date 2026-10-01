@@ -1243,7 +1243,9 @@ async fn task_delete_undo_http_requires_authentication_and_cookie_csrf(
 async fn google_tasks_settings_are_authenticated_and_do_not_infer_calendar_permission(
     pool: PgPool,
 ) -> anyhow::Result<()> {
-    let router = app::build(&test_config(), Store::from_pool(pool))?;
+    let store = Store::from_pool(pool);
+    store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let router = app::build(&test_config(), store)?;
     let denied = router
         .clone()
         .oneshot(
