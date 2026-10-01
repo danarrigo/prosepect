@@ -278,6 +278,47 @@
         }
       }
     },
+    "/api/v1/auth/google/tasks/start": {
+      "get": {
+        "tags": [
+          "authentication"
+        ],
+        "operationId": "google_tasks_connect_start",
+        "responses": {
+          "307": {
+            "description": "Redirect to Google for incremental Tasks consent"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
     "/api/v1/calendar-move-undos": {
       "get": {
         "tags": [
