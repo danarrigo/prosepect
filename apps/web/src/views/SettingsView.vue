@@ -3,6 +3,7 @@ import { nextTick, ref, watch } from 'vue'
 import { Download, Trash2, Upload } from '@lucide/vue'
 import * as api from '../api/client'
 import GoogleSyncPanel from '../components/GoogleSyncPanel.vue'
+import GoogleTasksPanel from '../components/GoogleTasksPanel.vue'
 import type { SyncConflictPolicy, ThemePreference } from '../api/types'
 import { useWorkspaceStore } from '../stores/workspace'
 import { parseTodoistCsv, todoistProjectName, type ParsedTodoistImport } from '../todoist-import'
@@ -172,6 +173,7 @@ async function deleteAccount() {
     </form>
 
     <GoogleSyncPanel />
+    <GoogleTasksPanel />
 
     <section class="border-b border-slate-200 py-8 dark:border-slate-800">
       <h2 class="text-sm font-semibold">Import from Todoist</h2>

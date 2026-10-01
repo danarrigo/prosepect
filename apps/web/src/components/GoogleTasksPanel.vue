@@ -1,0 +1,256 @@
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import * as api from '../api/client'
+import type { GoogleTaskList, GoogleTasksStatus } from '../api/types'
+
+const connectUrl = api.apiUrl('/api/v1/auth/google/tasks/start')
+const status = ref<GoogleTasksStatus | null>(null)
+const lists = ref<GoogleTaskList[]>([])
+const selectedList = ref('')
+const timezone = ref(Intl.DateTimeFormat().resolvedOptions().timeZone)
+const loading = ref(true)
+const busy = ref(false)
+const error = ref('')
+const message = ref('')
+let mounted = false
+let request: AbortController | null = null
+let timer: ReturnType<typeof setTimeout> | undefined
+
+function schedule() {
+  clearTimeout(timer)
+  if (mounted && !document.hidden) timer = setTimeout(() => void refresh(), 10000)
+}
+
+async function refresh() {
+  if (!mounted || busy.value || document.hidden || request) return
+  const controller = new AbortController()
+  request = controller
+  loading.value = true
+  try {
+    const current = await api.getGoogleTasksStatus(controller.signal)
+    const available = current.authorized ? await api.listGoogleTaskLists(controller.signal) : []
+    if (!mounted || controller.signal.aborted) return
+    status.value = current
+    lists.value = available
+    if (!selectedList.value) selectedList.value = current.task_list_id ?? ''
+    if (current.timezone) timezone.value = current.timezone
+    error.value = ''
+  } catch (cause) {
+    if (mounted && !controller.signal.aborted)
+      error.value =
+        cause instanceof Error ? cause.message : 'Could not refresh Google Tasks status.'
+  } finally {
+    if (request === controller) request = null
+    if (mounted && !controller.signal.aborted) {
+      loading.value = false
+      schedule()
+    }
+  }
+}
+
+async function perform(action: () => Promise<void>) {
+  if (busy.value || !status.value) return
+  clearTimeout(timer)
+  request?.abort()
+  request = null
+  busy.value = true
+  error.value = ''
+  message.value = ''
+  try {
+    await action()
+  } catch (cause) {
+    if (mounted)
+      error.value =
+        cause instanceof Error
+          ? cause.message
+          : 'Request not confirmed. Refresh status before retrying.'
+  } finally {
+    if (mounted) {
+      busy.value = false
+      loading.value = false
+      schedule()
+    }
+  }
+}
+
+async function save(enabled: boolean) {
+  const current = status.value
+  if (!current || (enabled && !selectedList.value)) return
+  await perform(async () => {
+    const saved = await api.configureGoogleTasks({
+      enabled,
+      expected_version: current.version,
+      task_list_id: enabled ? selectedList.value : undefined,
+      timezone: enabled ? timezone.value : undefined,
+    })
+    if (!mounted) return
+    status.value = saved
+    message.value = enabled
+      ? 'Google Tasks sync enabled. Initial synchronization is queued.'
+      : 'Google Tasks sync disabled. Both apps keep their tasks; Calendar sync is unchanged.'
+  })
+}
+
+async function createList() {
+  const current = status.value
+  if (!current || current.list_create_attempted) return
+  await perform(async () => {
+    try {
+      const created = await api.createGoogleTaskList(current.version)
+      if (!mounted) return
+      lists.value = [...lists.value, created]
+      selectedList.value = created.id
+      message.value = 'List created. Enable sync when ready.'
+    } finally {
+      // Even a failed request may have created the list. Refresh its durable
+      // attempt flag before offering another create, never retry POST blindly.
+      if (mounted) {
+        status.value = { ...current, list_create_attempted: true }
+        const refreshed = await api.getGoogleTasksStatus()
+        if (mounted) status.value = refreshed
+      }
+    }
+  })
+}
+
+async function syncNow() {
+  await perform(async () => {
+    await api.syncGoogleTasks()
+    if (mounted) message.value = 'Google Tasks synchronization queued; changes are not applied yet.'
+  })
+}
+
+function visibilityChanged() {
+  if (document.hidden) {
+    clearTimeout(timer)
+    request?.abort()
+    request = null
+  } else void refresh()
+}
+
+onMounted(() => {
+  mounted = true
+  document.addEventListener('visibilitychange', visibilityChanged)
+  void refresh()
+})
+onBeforeUnmount(() => {
+  mounted = false
+  request?.abort()
+  clearTimeout(timer)
+  document.removeEventListener('visibilitychange', visibilityChanged)
+})
+</script>
+
+<template>
+  <section
+    aria-labelledby="google-tasks-heading"
+    class="border-b border-slate-200 py-8 dark:border-slate-800"
+  >
+    <h2 id="google-tasks-heading" class="text-sm font-semibold">Google Tasks</h2>
+    <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+      Sync titles, deadline dates, and completion both ways. Precise deadline times stay in
+      prosepect; scheduled work blocks still use Calendar. Deleting in either app keeps the other
+      copy.
+    </p>
+    <p v-if="error" role="alert" class="mt-3 text-sm text-red-600 dark:text-red-400">{{ error }}</p>
+    <p v-if="message" role="status" class="mt-3 text-sm text-slate-600 dark:text-slate-300">
+      {{ message }}
+    </p>
+    <div v-if="status" class="mt-4 space-y-4">
+      <a
+        v-if="!status.authorized"
+        :href="connectUrl"
+        class="inline-flex rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white dark:bg-white dark:text-slate-950"
+        >Connect Google Tasks</a
+      >
+      <button
+        v-if="!status.authorized && status.enabled"
+        type="button"
+        :disabled="busy"
+        class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50 dark:border-slate-700"
+        @click="save(false)"
+      >
+        Disable Tasks sync
+      </button>
+      <template v-if="status.authorized">
+        <div class="flex max-w-lg flex-col items-stretch gap-3 sm:flex-row sm:items-end">
+          <label class="min-w-0 flex-1 text-sm font-medium">
+            Task list
+            <select
+              v-model="selectedList"
+              :disabled="busy || status.enabled"
+              class="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-950"
+            >
+              <option value="">Choose a list</option>
+              <option v-for="list in lists" :key="list.id" :value="list.id">
+                {{ list.title }}
+              </option>
+            </select>
+          </label>
+          <button
+            v-if="!status.enabled"
+            type="button"
+            :disabled="busy || status.list_create_attempted"
+            class="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium disabled:opacity-50 dark:border-slate-700"
+            @click="createList"
+          >
+            Create prosepect list
+          </button>
+        </div>
+        <p class="text-sm text-slate-500 dark:text-slate-400">
+          Sync timezone: {{ timezone }}. Enabling sync copies your tasks to this list and imports
+          tasks already in it.
+        </p>
+        <p
+          v-if="status.list_create_attempted && !selectedList"
+          class="text-sm text-slate-500 dark:text-slate-400"
+        >
+          An earlier list creation may have succeeded. Refresh lists and choose the existing list.
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <button
+            v-if="!status.enabled"
+            type="button"
+            :disabled="busy || !selectedList"
+            class="rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-slate-950"
+            @click="save(true)"
+          >
+            Enable Tasks sync
+          </button>
+          <template v-else>
+            <button
+              type="button"
+              :disabled="busy"
+              class="rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-slate-950"
+              @click="syncNow"
+            >
+              Sync Tasks now
+            </button>
+            <button
+              type="button"
+              :disabled="busy"
+              class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50 dark:border-slate-700"
+              @click="save(false)"
+            >
+              Disable Tasks sync
+            </button>
+          </template>
+        </div>
+        <p v-if="status.last_synced_at" class="text-sm text-slate-500 dark:text-slate-400">
+          Last Tasks sync: {{ new Date(status.last_synced_at).toLocaleString() }}
+        </p>
+        <p v-if="status.last_error" role="alert" class="text-sm text-red-600 dark:text-red-400">
+          {{ status.last_error }}
+        </p>
+      </template>
+    </div>
+    <button
+      type="button"
+      :disabled="busy"
+      class="mt-4 text-sm font-medium underline underline-offset-4 disabled:opacity-50"
+      @click="refresh"
+    >
+      {{ loading ? 'Refreshing Tasks status…' : 'Refresh Tasks status and lists' }}
+    </button>
+  </section>
+</template>

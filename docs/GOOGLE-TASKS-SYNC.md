@@ -7,7 +7,7 @@ This integration is not enabled or deployed yet. Existing Google Calendar sync i
 - One-time additional Google Tasks permission, then automatic two-way title, date and completion synchronization in a dedicated prosepect list.
 - A prosepect deadline's date is projected onto Google's task calendar date. Google does **not** expose a true deadline or time through this API. Exact deadline times remain in prosepect; a remote date change must preserve an existing deadline's local time.
 - Scheduled work blocks continue through Google Calendar, independently of Google Tasks.
-- Google-side deletion must not delete or automatically recreate the prosepect task. Deletion is not ordinary field synchronization; explicit unlinking and existing deletion Undo must be respected.
+- Deletion in either app unlinks the copies and preserves the other app's task. It never automatically recreates the missing copy. An active prosepect deletion Undo receipt pauses the link until restoration or expiry.
 - Merge changes to different fields. If both sides change the same field differently, retain both versions and require resolution instead of silently choosing a winner.
 - Do not silently truncate Google's longer titles to prosepect's 240-character limit.
 - Never import other Google lists, assigned tasks or unrelated Google account data automatically.
@@ -20,7 +20,9 @@ This integration is not enabled or deployed yet. Existing Google Calendar sync i
 4. PostgreSQL/mock-provider tests, real-backend browser acceptance and normal generated API contracts. Rust/container execution stays remote. No live-provider writes or production configuration changes during development.
 5. Live opt-in acceptance after the operator enables the Google Tasks API and approves its OAuth scope. Calendar permission alone does not authorize Tasks.
 
-The current source checkpoint implements shared field rules, incremental consent, the bounded API transport and owner-scoped settings persistence. The consent callback stores verified permission without enabling copying. The transport is not wired to sync jobs yet; Settings enablement and reconciliation remain in development.
+The current source implements shared field rules, incremental consent, bounded API transport, owner-scoped settings, dispatcher-connected reconciliation and Settings controls. The consent callback stores verified permission without enabling copying. List creation is separately journaled and never blindly retried; users can discover and choose a list after an uncertain outcome.
+
+Before release, complete actionable per-task conflict/recovery controls, concurrency/failure review and real-backend browser acceptance. Current tests use a fake provider and do not establish live Google behavior. Google list selection is explicit: it imports only the selected list; other lists are never automatically synchronized.
 
 ## Primary API references
 

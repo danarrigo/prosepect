@@ -33,6 +33,7 @@ use uuid::Uuid;
 struct Provider {
     tasks: Arc<Mutex<HashMap<String, Value>>>,
     creates: Arc<AtomicUsize>,
+    list_creates: Arc<AtomicUsize>,
     patches: Arc<AtomicUsize>,
     ambiguous_create: Arc<AtomicBool>,
     conflict_patch: Arc<AtomicBool>,
@@ -84,6 +85,11 @@ async fn update(
     Json(task.clone()).into_response()
 }
 
+async fn create_list(State(provider): State<Provider>) -> Json<Value> {
+    provider.list_creates.fetch_add(1, Ordering::SeqCst);
+    Json(json!({"id":"new-list","title":"prosepect"}))
+}
+
 struct Fixture {
     store: Store,
     service: SyncService,
@@ -100,6 +106,11 @@ impl Drop for Fixture {
 async fn fixture(pool: &PgPool) -> anyhow::Result<Fixture> {
     let provider = Provider::default();
     let app = Router::new()
+        .route(
+            "/users/@me/lists",
+            get(|| async { Json(json!({"items":[{"id":"list","title":"prosepect"}]})) })
+                .post(create_list),
+        )
         .route("/lists/list/tasks", get(list).post(create))
         .route("/lists/list/tasks/{id}", get(get_task).merge(patch(update)))
         .with_state(provider.clone());
@@ -180,6 +191,113 @@ fn edit(task: &Task) -> UpdateTaskRequest {
         remind_at: task.remind_at,
         expected_version: task.version,
     }
+}
+
+fn app_state(f: &Fixture) -> anyhow::Result<prosepect_api::app::AppState> {
+    use prosepect_api::{
+        config::ObjectStorageConfig, file_storage::FileStorage, rate_limit::LoginRateLimiter,
+        sync_dispatcher::SyncDispatcher,
+    };
+    Ok(prosepect_api::app::AppState {
+        store: f.store.clone(),
+        allow_insecure_dev_auth: true,
+        invite_only: false,
+        trust_proxy_headers: false,
+        login_rate_limiter: LoginRateLimiter::default(),
+        action_rate_limiter: LoginRateLimiter::default(),
+        secure_cookies: false,
+        app_url: "http://localhost".into(),
+        google_oauth: None,
+        file_storage: FileStorage::new(&ObjectStorageConfig::Local {
+            root: std::env::temp_dir()
+                .join("prosepect-tasks-fixture")
+                .to_string_lossy()
+                .into_owned(),
+        })?,
+        max_file_size_bytes: 1024,
+        max_user_file_storage_bytes: 1024,
+        max_total_file_storage_bytes: 1024,
+        max_user_accounts: None,
+        admin_user_ids: Default::default(),
+        worker_trigger_token: None,
+        sync_service: Some(f.service.clone()),
+        sync_dispatcher: SyncDispatcher::default(),
+        metrics: prosepect_api::observability::initialize_metrics(),
+    })
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn tasks_settings_routes_verify_provider_list_and_claim_creation_once(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    use axum::extract::State;
+    use prosepect_api::{
+        auth::CurrentUser,
+        extract::ApiJson,
+        google_tasks_routes::{self, GoogleTasksCreateListRequest, GoogleTasksSettingsRequest},
+    };
+    let f = fixture(&pool).await?;
+    let state = app_state(&f)?;
+    let rejected = google_tasks_routes::configure(
+        State(state.clone()),
+        CurrentUser(f.user),
+        ApiJson(GoogleTasksSettingsRequest {
+            enabled: true,
+            task_list_id: Some("other-users-list".into()),
+            timezone: Some("Asia/Jakarta".into()),
+            expected_version: 1,
+        }),
+    )
+    .await;
+    assert!(matches!(
+        rejected,
+        Err(prosepect_api::error::AppError::Forbidden(_))
+    ));
+    assert_eq!(f.store.google_tasks_status(f.user).await?.version, 1);
+    let saved = google_tasks_routes::configure(
+        State(state.clone()),
+        CurrentUser(f.user),
+        ApiJson(GoogleTasksSettingsRequest {
+            enabled: true,
+            task_list_id: Some("list".into()),
+            timezone: Some("Asia/Jakarta".into()),
+            expected_version: 1,
+        }),
+    )
+    .await?
+    .0;
+    assert_eq!(saved.version, 2);
+    let job: String =
+        sqlx::query_scalar("SELECT kind FROM sync_jobs WHERE user_id=$1 AND idempotency_key=$2")
+            .bind(f.user)
+            .bind(format!("tasks-enable:{}:2", f.user))
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(job, "tasks_sync");
+    let (status, created) = google_tasks_routes::create_list(
+        State(state.clone()),
+        CurrentUser(f.user),
+        ApiJson(GoogleTasksCreateListRequest {
+            expected_version: 2,
+        }),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created.0.id, "new-list");
+    let repeated = google_tasks_routes::create_list(
+        State(state),
+        CurrentUser(f.user),
+        ApiJson(GoogleTasksCreateListRequest {
+            expected_version: 3,
+        }),
+    )
+    .await;
+    assert!(matches!(
+        repeated,
+        Err(prosepect_api::error::AppError::Conflict(_))
+    ));
+    assert_eq!(f.provider.list_creates.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 
 #[sqlx::test(migrations = "../../migrations")]
