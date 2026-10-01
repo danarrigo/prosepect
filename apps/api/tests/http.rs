@@ -1238,3 +1238,45 @@ async fn task_delete_undo_http_requires_authentication_and_cookie_csrf(
     }
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn google_tasks_consent_requires_authentication_without_starting_sync(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let router = app::build(&test_config(), store)?;
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/google/tasks/start")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let session = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(session.status(), StatusCode::OK);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/google/tasks/start")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM sync_jobs WHERE user_id=$1")
+        .bind(DEVELOPMENT_USER_ID)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(jobs, 0, "consent must not enqueue provider writes");
+    Ok(())
+}

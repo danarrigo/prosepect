@@ -102,6 +102,7 @@ pub struct AppState {
         routes::record_reminder_delivery,
         routes::google_auth_start,
         routes::google_calendar_connect_start,
+        routes::google_tasks_connect_start,
         routes::google_auth_callback,
         routes::get_daily_plan,
         routes::update_daily_focus,
@@ -341,6 +342,10 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         .route(
             "/auth/google/calendar/start",
             get(routes::google_calendar_connect_start),
+        )
+        .route(
+            "/auth/google/tasks/start",
+            get(routes::google_tasks_connect_start),
         )
         .route("/auth/google/callback", get(routes::google_auth_callback))
         .route("/daily-plans/{date}", get(routes::get_daily_plan))

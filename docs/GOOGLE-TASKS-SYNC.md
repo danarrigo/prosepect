@@ -20,7 +20,7 @@ This integration is not enabled or deployed yet. Existing Google Calendar sync i
 4. PostgreSQL/mock-provider tests, real-backend browser acceptance and normal generated API contracts. Rust/container execution stays remote. No live-provider writes or production configuration changes during development.
 5. Live opt-in acceptance after the operator enables the Google Tasks API and approves its OAuth scope. Calendar permission alone does not authorize Tasks.
 
-The current source checkpoint implements the shared field rules and OAuth URL construction only. It does not expose an enable endpoint or perform Google Tasks requests yet.
+The current source checkpoint implements shared field rules, incremental consent, the bounded API transport and owner-scoped settings persistence. The consent callback stores verified permission without enabling copying. The transport is not wired to sync jobs yet; Settings enablement and reconciliation remain in development.
 
 ## Primary API references
 

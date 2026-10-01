@@ -49,8 +49,8 @@ impl Store {
         let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
             .bind(format!("prosepect-sync:{user}")).fetch_one(&mut *tx).await?;
         if !acquired { return Err(AppError::Conflict("Synchronization is active. Try again shortly.".into())); }
-        let previous: Option<(i32, Option<String>)> = sqlx::query_as(
-            "SELECT version,timezone FROM google_task_connections WHERE user_id=$1 FOR UPDATE NOWAIT"
+        let previous: Option<(i32, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT version,timezone,task_list_id FROM google_task_connections WHERE user_id=$1 FOR UPDATE NOWAIT"
         ).bind(user).fetch_optional(&mut *tx).await.map_err(config_error)?;
         if previous.as_ref().map_or(0, |row| row.0) != expected_version {
             return Err(AppError::Conflict("Google Tasks settings changed. Refresh before saving.".into()));
@@ -66,10 +66,13 @@ impl Store {
             let valid_zone: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_timezone_names WHERE name=$1)")
                 .bind(timezone).fetch_one(&mut *tx).await?;
             if !valid_zone { return Err(AppError::Validation("Choose a valid IANA timezone.".into())); }
-            if previous.as_ref().and_then(|row| row.1.as_deref()).is_some_and(|old| old != timezone) {
+            if previous.as_ref().is_some_and(|row| {
+                row.1.as_deref().is_some_and(|old| old != timezone)
+                    || row.2.as_deref().is_some_and(|old| old != list)
+            }) {
                 let linked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM google_task_links WHERE user_id=$1)")
                     .bind(user).fetch_one(&mut *tx).await?;
-                if linked { return Err(AppError::Conflict("Keep the current sync timezone while tasks are linked.".into())); }
+                if linked { return Err(AppError::Conflict("Keep the current sync list and timezone while tasks are linked.".into())); }
             }
             (Some(list), Some(timezone))
         } else {

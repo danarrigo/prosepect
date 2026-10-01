@@ -212,6 +212,16 @@ impl GoogleTasksClient {
     }
 
     async fn pages<T: serde::de::DeserializeOwned>(&self, token: &str, url: Url) -> Result<Vec<T>> {
+        tokio::time::timeout(Duration::from_secs(120), self.pages_inner(token, url))
+            .await
+            .map_err(|_| TasksError::Unavailable)?
+    }
+
+    async fn pages_inner<T: serde::de::DeserializeOwned>(
+        &self,
+        token: &str,
+        url: Url,
+    ) -> Result<Vec<T>> {
         let mut items = Vec::new();
         let mut seen = HashSet::new();
         let mut next = None;
@@ -260,7 +270,15 @@ impl GoogleTasksClient {
             .append_pair("showHidden", "true")
             .append_pair("showDeleted", "true")
             .append_pair("showAssigned", "false");
-        self.pages(token, url).await
+        let tasks: Vec<GoogleTask> = self.pages(token, url).await?;
+        let mut identities = HashSet::new();
+        if tasks
+            .iter()
+            .any(|task| task.id.is_empty() || !identities.insert(task.id.as_str()))
+        {
+            return Err(TasksError::InvalidResponse);
+        }
+        Ok(tasks)
     }
 
     pub async fn get(&self, token: &str, list: &str, task: &str) -> Result<GoogleTask> {
