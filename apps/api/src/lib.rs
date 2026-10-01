@@ -13,6 +13,8 @@ pub mod file_storage;
 mod file_store;
 pub mod google_auth;
 pub mod google_tasks;
+pub mod google_tasks_client;
+pub mod google_tasks_store;
 pub mod import_routes;
 pub mod models;
 pub mod note_routes;
