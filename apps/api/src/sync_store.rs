@@ -197,7 +197,15 @@ impl Store {
         sqlx::query("DELETE FROM oauth_login_attempts WHERE expires_at <= NOW()")
             .execute(&self.pool)
             .await?;
-        Ok(result.rows_affected())
+        let tasks = sqlx::query(
+            "INSERT INTO sync_jobs(id,user_id,kind,idempotency_key)
+             SELECT gen_random_uuid(),c.user_id,'tasks_sync','tasks-periodic:' || c.user_id::TEXT || ':' || $1::TEXT
+             FROM google_task_connections c JOIN google_accounts g ON g.user_id=c.user_id
+             WHERE c.enabled AND $2=ANY(g.scopes)
+             AND (c.last_synced_at IS NULL OR c.last_synced_at < NOW()-INTERVAL '5 minutes')
+             ON CONFLICT(user_id,idempotency_key) DO NOTHING"
+        ).bind(bucket).bind(crate::google_tasks::TASKS_SCOPE).execute(&self.pool).await?;
+        Ok(result.rows_affected() + tasks.rows_affected())
     }
 
     pub async fn enqueue_expiring_calendar_watches(

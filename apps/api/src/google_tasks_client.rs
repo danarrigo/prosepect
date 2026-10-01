@@ -85,7 +85,7 @@ impl GoogleTask {
             })
             .transpose()?;
         let fields = TaskFields {
-            title: self.title.clone(),
+            title: self.title.trim().to_owned(),
             date,
             completed,
         };

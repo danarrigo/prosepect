@@ -4,6 +4,11 @@ ALTER TABLE oauth_login_attempts DROP CONSTRAINT oauth_login_attempts_purpose_ch
 ALTER TABLE oauth_login_attempts ADD CONSTRAINT oauth_login_attempts_purpose_check
     CHECK (purpose IN ('login', 'calendar_connect', 'tasks_connect'));
 
+ALTER TABLE sync_jobs DROP CONSTRAINT sync_jobs_kind_check;
+ALTER TABLE sync_jobs ADD CONSTRAINT sync_jobs_kind_check CHECK (kind IN (
+    'calendar_sync', 'calendar_discovery', 'calendar_watch', 'credential_revoke', 'tasks_sync'
+));
+
 CREATE TABLE google_task_connections (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -40,3 +45,25 @@ CREATE TABLE google_task_links (
     UNIQUE(user_id, task_list_id, external_task_id)
 );
 CREATE INDEX google_task_links_user_idx ON google_task_links(user_id, task_list_id);
+
+CREATE FUNCTION enqueue_google_tasks_change() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    owner UUID;
+    task UUID;
+    revision INTEGER;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        owner := OLD.user_id; task := OLD.id; revision := OLD.version;
+    ELSE
+        owner := NEW.user_id; task := NEW.id; revision := NEW.version;
+    END IF;
+    IF EXISTS (SELECT 1 FROM google_task_connections WHERE user_id=owner AND enabled) THEN
+        INSERT INTO sync_jobs(id,user_id,kind,idempotency_key)
+        VALUES(gen_random_uuid(),owner,'tasks_sync',
+            'tasks-change:' || task::TEXT || ':' || revision::TEXT || ':' || TG_OP)
+        ON CONFLICT(user_id,idempotency_key) DO NOTHING;
+    END IF;
+    RETURN NULL;
+END $$;
+CREATE TRIGGER enqueue_google_tasks_change AFTER INSERT OR UPDATE OR DELETE ON tasks
+    FOR EACH ROW EXECUTE FUNCTION enqueue_google_tasks_change();

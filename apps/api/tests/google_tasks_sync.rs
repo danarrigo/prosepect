@@ -1,0 +1,361 @@
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+};
+
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, patch},
+};
+use base64::{Engine, engine::general_purpose::STANDARD};
+use chrono::{Duration, Utc};
+use prosepect_api::{
+    config::GoogleOAuthConfig,
+    google_auth::GoogleOAuth,
+    google_tasks::TASKS_SCOPE,
+    models::{Task, TaskStatus, UpdateTaskRequest},
+    store::Store,
+    sync_service::SyncService,
+};
+use serde_json::{Value, json};
+use sqlx::PgPool;
+use tokio::{net::TcpListener, sync::Mutex};
+use uuid::Uuid;
+
+#[derive(Clone, Default)]
+struct Provider {
+    tasks: Arc<Mutex<HashMap<String, Value>>>,
+    creates: Arc<AtomicUsize>,
+    patches: Arc<AtomicUsize>,
+    ambiguous_create: Arc<AtomicBool>,
+    conflict_patch: Arc<AtomicBool>,
+}
+async fn list(State(provider): State<Provider>) -> Json<Value> {
+    Json(json!({"items":provider.tasks.lock().await.values().cloned().collect::<Vec<_>>()}))
+}
+async fn create(State(provider): State<Provider>, Json(mut task): Json<Value>) -> Response {
+    let sequence = provider.creates.fetch_add(1, Ordering::SeqCst);
+    let id = format!("remote-{sequence}");
+    task["id"] = json!(id);
+    task["etag"] = json!("v1");
+    provider.tasks.lock().await.insert(id, task.clone());
+    if provider.ambiguous_create.swap(false, Ordering::SeqCst) {
+        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+    } else {
+        Json(task).into_response()
+    }
+}
+async fn get_task(State(provider): State<Provider>, Path(id): Path<String>) -> Response {
+    match provider.tasks.lock().await.get(&id) {
+        Some(task) => Json(task.clone()).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+async fn update(
+    State(provider): State<Provider>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    provider.patches.fetch_add(1, Ordering::SeqCst);
+    let mut tasks = provider.tasks.lock().await;
+    let Some(task) = tasks.get_mut(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if provider.conflict_patch.load(Ordering::SeqCst)
+        || headers
+            .get("if-match")
+            .and_then(|value| value.to_str().ok())
+            != task["etag"].as_str()
+    {
+        return StatusCode::PRECONDITION_FAILED.into_response();
+    }
+    for (key, value) in body.as_object().unwrap() {
+        task[key] = value.clone();
+    }
+    task["etag"] = json!(Uuid::now_v7().to_string());
+    Json(task.clone()).into_response()
+}
+
+struct Fixture {
+    store: Store,
+    service: SyncService,
+    user: Uuid,
+    task: Task,
+    provider: Provider,
+    server: tokio::task::JoinHandle<()>,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+async fn fixture(pool: &PgPool) -> anyhow::Result<Fixture> {
+    let provider = Provider::default();
+    let app = Router::new()
+        .route("/lists/list/tasks", get(list).post(create))
+        .route("/lists/list/tasks/{id}", get(get_task).merge(patch(update)))
+        .with_state(provider.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let base = format!("http://{}/", listener.local_addr()?).parse()?;
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let user = Uuid::now_v7();
+    sqlx::query("INSERT INTO users(id,email,display_name) VALUES($1,$2,'Tasks fixture')")
+        .bind(user)
+        .bind(format!("{user}@example.test"))
+        .execute(pool)
+        .await?;
+    let key = [7_u8; 32];
+    let nonce = [8_u8; 12];
+    let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+    let mut token = nonce.to_vec();
+    token.extend(
+        cipher
+            .encrypt(Nonce::from_slice(&nonce), b"fixture-token".as_ref())
+            .unwrap(),
+    );
+    sqlx::query("INSERT INTO google_accounts(user_id,encrypted_access_token,access_token_expires_at,scopes) VALUES($1,$2,$3,$4)")
+        .bind(user).bind(token).bind(Utc::now()+Duration::hours(1)).bind(vec![TASKS_SCOPE]).execute(pool).await?;
+    let store = Store::from_pool(pool.clone());
+    let task = store.create_task(user, serde_json::from_value(json!({
+        "title":"Local task", "description":"Private local details", "due_at":"2026-10-02T08:30:00Z"
+    }))?).await?;
+    store
+        .configure_google_tasks(user, true, Some(("list", "Asia/Jakarta")), 0)
+        .await?;
+    let google = GoogleOAuth::new(GoogleOAuthConfig {
+        client_id: "fixture".into(),
+        client_secret: "fixture".into(),
+        redirect_uri: "http://localhost/callback".into(),
+        token_encryption_key: STANDARD.encode(key),
+    })?;
+    let service = SyncService::new(store.clone(), google, None)?.with_tasks_api_base(base);
+    Ok(Fixture {
+        store,
+        service,
+        user,
+        task,
+        provider,
+        server,
+    })
+}
+async fn sync(f: &Fixture, key: &str) -> anyhow::Result<()> {
+    f.store
+        .enqueue_sync(f.user, None, "tasks_sync", key)
+        .await?;
+    assert!(f.service.run_once().await?);
+    Ok(())
+}
+async fn current(f: &Fixture) -> anyhow::Result<Task> {
+    Ok(f.store
+        .list_tasks(f.user, None, None, 100)
+        .await?
+        .items
+        .into_iter()
+        .find(|task| task.id == f.task.id)
+        .unwrap())
+}
+fn edit(task: &Task) -> UpdateTaskRequest {
+    UpdateTaskRequest {
+        project_id: task.project_id,
+        parent_task_id: task.parent_task_id,
+        title: task.title.clone(),
+        description: task.description.clone(),
+        due_at: task.due_at,
+        scheduled_start: task.scheduled_start,
+        scheduled_end: task.scheduled_end,
+        status: task.status,
+        priority: task.priority,
+        recurrence: task.recurrence,
+        labels: task.labels.clone(),
+        remind_at: task.remind_at,
+        expected_version: task.version,
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn tasks_sync_merges_both_directions_without_losing_deadline_time_or_private_fields(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    sync(&f, "initial").await?;
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    let remote = f.provider.tasks.lock().await["remote-0"].clone();
+    assert_eq!(remote["due"], "2026-10-02T00:00:00.000Z");
+    assert!(!remote["notes"].as_str().unwrap().contains("Private"));
+    let mut request = edit(&f.task);
+    request.title = "Local rename".into();
+    f.store.update_task(f.user, f.task.id, request).await?;
+    {
+        let mut tasks = f.provider.tasks.lock().await;
+        let remote = tasks.get_mut("remote-0").unwrap();
+        remote["due"] = json!("2026-10-03T00:00:00.000Z");
+        remote["status"] = json!("completed");
+        remote["etag"] = json!("google-edit");
+    }
+    sync(&f, "merge").await?;
+    let task = current(&f).await?;
+    assert_eq!(task.title, "Local rename");
+    assert_eq!(task.status, TaskStatus::Completed);
+    assert_eq!(task.due_at, Some("2026-10-03T08:30:00Z".parse()?));
+    assert_eq!(task.description, "Private local details");
+    assert_eq!(
+        f.provider.tasks.lock().await["remote-0"]["title"],
+        "Local rename"
+    );
+    let patches = f.provider.patches.load(Ordering::SeqCst);
+    sync(&f, "stable").await?;
+    assert_eq!(f.provider.patches.load(Ordering::SeqCst), patches);
+    f.provider.tasks.lock().await.get_mut("remote-0").unwrap()["status"] = json!("needsAction");
+    sync(&f, "reopen").await?;
+    assert_eq!(current(&f).await?.status, TaskStatus::Todo);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn tasks_sync_preserves_same_field_conflicts_and_conditional_write_rejection(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    sync(&f, "initial").await?;
+    let mut request = edit(&f.task);
+    request.title = "Local rename".into();
+    f.store.update_task(f.user, f.task.id, request).await?;
+    f.provider.tasks.lock().await.get_mut("remote-0").unwrap()["title"] = json!("Google rename");
+    sync(&f, "conflict").await?;
+    assert_eq!(current(&f).await?.title, "Local rename");
+    assert_eq!(
+        f.provider.tasks.lock().await["remote-0"]["title"],
+        "Google rename"
+    );
+    assert_eq!(f.provider.patches.load(Ordering::SeqCst), 0);
+    let errors: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM google_task_links WHERE user_id=$1 AND last_error IS NOT NULL",
+    )
+    .bind(f.user)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(errors, 1);
+    f.provider.tasks.lock().await.get_mut("remote-0").unwrap()["title"] = json!("Local task");
+    f.provider.conflict_patch.store(true, Ordering::SeqCst);
+    sync(&f, "etag-conflict").await?;
+    assert_eq!(
+        f.provider.tasks.lock().await["remote-0"]["title"],
+        "Local task"
+    );
+    assert_eq!(current(&f).await?.title, "Local rename");
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn uncertain_task_create_recovers_without_duplicate_posts_or_imports(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    f.provider.ambiguous_create.store(true, Ordering::SeqCst);
+    sync(&f, "ambiguous").await?;
+    let phase: String = sqlx::query_scalar("SELECT phase FROM google_task_links WHERE user_id=$1")
+        .bind(f.user)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(phase, "creating");
+    sync(&f, "recover").await?;
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 100)
+            .await?
+            .items
+            .len(),
+        1
+    );
+    let phase: String = sqlx::query_scalar("SELECT phase FROM google_task_links WHERE user_id=$1")
+        .bind(f.user)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(phase, "linked");
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn tasks_import_is_atomic_and_deletion_does_not_resurrect_or_destroy_either_copy(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    f.provider.tasks.lock().await.insert("incoming".into(), json!({
+        "id":"incoming", "etag":"one", "title":"Google task", "due":"2026-10-04T00:00:00Z", "status":"completed", "hidden":true
+    }));
+    sync(&f, "initial").await?;
+    let imported = f
+        .store
+        .list_tasks(f.user, None, None, 100)
+        .await?
+        .items
+        .into_iter()
+        .find(|task| task.title == "Google task")
+        .unwrap();
+    assert_eq!(imported.status, TaskStatus::Completed);
+    assert_eq!(imported.due_at, Some("2026-10-04T16:59:59Z".parse()?));
+    sync(&f, "stable").await?;
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 100)
+            .await?
+            .items
+            .len(),
+        2
+    );
+    // Google removal detaches without deleting or recreating the local task.
+    f.provider.tasks.lock().await.remove("remote-0");
+    sync(&f, "remote-delete").await?;
+    assert_eq!(current(&f).await?.id, f.task.id);
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    f.store
+        .delete_task(f.user, imported.id, imported.version)
+        .await?;
+    sync(&f, "local-delete").await?;
+    assert!(f.provider.tasks.lock().await.contains_key("incoming"));
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 100)
+            .await?
+            .items
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn active_deletion_undo_holds_tasks_sync_and_restores_the_same_mapping(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    sync(&f, "initial").await?;
+    let receipt = f
+        .store
+        .delete_task_with_undo(f.user, f.task.id, f.task.version)
+        .await?;
+    sync(&f, "held").await?;
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(f.provider.patches.load(Ordering::SeqCst), 0);
+    f.store.undo_task_delete(f.user, receipt.id, None).await?;
+    sync(&f, "restored").await?;
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(f.provider.patches.load(Ordering::SeqCst), 0);
+    let phase: String = sqlx::query_scalar("SELECT phase FROM google_task_links WHERE user_id=$1")
+        .bind(f.user)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(phase, "linked");
+    Ok(())
+}
