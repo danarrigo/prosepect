@@ -24,7 +24,7 @@ use crate::{
     export_routes, file_routes,
     file_storage::FileStorage,
     google_auth::GoogleOAuth,
-    import_routes,
+    google_tasks_routes, import_routes,
     models::{
         ActivityEntry, ActivityList, Calendar, CalendarEvent, CalendarEventList, CalendarList,
         CalendarSource, CompleteDailyReviewRequest, CreateCalendarEventRequest,
@@ -142,6 +142,11 @@ pub struct AppState {
         file_routes::upload_file,
         file_routes::download_file,
         file_routes::delete_file,
+        google_tasks_routes::status,
+        google_tasks_routes::lists,
+        google_tasks_routes::configure,
+        google_tasks_routes::create_list,
+        google_tasks_routes::synchronize,
         sync_routes::google_status,
         sync_routes::discover_google_calendars,
         sync_routes::revoke_google,
@@ -152,6 +157,10 @@ pub struct AppState {
         sync_routes::activity
     ),
     components(schemas(
+        crate::google_tasks_store::GoogleTasksStatus,
+        crate::google_tasks_client::GoogleTaskList,
+        crate::google_tasks_routes::GoogleTasksSettingsRequest,
+        crate::google_tasks_routes::GoogleTasksCreateListRequest,
         crate::models::DeleteTaskWithUndoRequest,
         crate::models::TaskDeleteUndo,
         crate::models::TaskDeleteUndoList,
@@ -398,6 +407,18 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         .route(
             "/integrations/google",
             get(sync_routes::google_status).delete(sync_routes::revoke_google),
+        )
+        .route(
+            "/integrations/google/tasks",
+            get(google_tasks_routes::status).put(google_tasks_routes::configure),
+        )
+        .route(
+            "/integrations/google/tasks/lists",
+            get(google_tasks_routes::lists).post(google_tasks_routes::create_list),
+        )
+        .route(
+            "/integrations/google/tasks/sync",
+            post(google_tasks_routes::synchronize),
         )
         .route(
             "/integrations/google/calendars/discover",

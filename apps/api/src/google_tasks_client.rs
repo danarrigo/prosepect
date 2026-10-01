@@ -96,7 +96,7 @@ impl GoogleTask {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, Deserialize, utoipa::ToSchema)]
 pub struct GoogleTaskList {
     pub id: String,
     pub title: String,

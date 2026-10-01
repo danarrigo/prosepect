@@ -14,6 +14,7 @@ mod file_store;
 pub mod google_auth;
 pub mod google_tasks;
 pub mod google_tasks_client;
+pub mod google_tasks_routes;
 pub mod google_tasks_store;
 mod google_tasks_sync;
 pub mod import_routes;
