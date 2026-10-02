@@ -237,6 +237,10 @@ async fn tasks_settings_routes_verify_provider_list_and_claim_creation_once(
         google_tasks_routes::{self, GoogleTasksCreateListRequest, GoogleTasksSettingsRequest},
     };
     let f = fixture(&pool).await?;
+    sqlx::query("DELETE FROM google_task_connections WHERE user_id=$1")
+        .bind(f.user)
+        .execute(&pool)
+        .await?;
     let state = app_state(&f)?;
     let rejected = google_tasks_routes::configure(
         State(state.clone()),
@@ -245,7 +249,7 @@ async fn tasks_settings_routes_verify_provider_list_and_claim_creation_once(
             enabled: true,
             task_list_id: Some("other-users-list".into()),
             timezone: Some("Asia/Jakarta".into()),
-            expected_version: 1,
+            expected_version: 0,
         }),
     )
     .await;
@@ -253,7 +257,17 @@ async fn tasks_settings_routes_verify_provider_list_and_claim_creation_once(
         rejected,
         Err(prosepect_api::error::AppError::Forbidden(_))
     ));
-    assert_eq!(f.store.google_tasks_status(f.user).await?.version, 1);
+    assert_eq!(f.store.google_tasks_status(f.user).await?.version, 0);
+    let (status, created) = google_tasks_routes::create_list(
+        State(state.clone()),
+        CurrentUser(f.user),
+        ApiJson(GoogleTasksCreateListRequest {
+            expected_version: 0,
+        }),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created.0.id, "new-list");
     let saved = google_tasks_routes::configure(
         State(state.clone()),
         CurrentUser(f.user),
@@ -274,21 +288,11 @@ async fn tasks_settings_routes_verify_provider_list_and_claim_creation_once(
             .fetch_one(&pool)
             .await?;
     assert_eq!(job, "tasks_sync");
-    let (status, created) = google_tasks_routes::create_list(
-        State(state.clone()),
-        CurrentUser(f.user),
-        ApiJson(GoogleTasksCreateListRequest {
-            expected_version: 2,
-        }),
-    )
-    .await?;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(created.0.id, "new-list");
     let repeated = google_tasks_routes::create_list(
         State(state),
         CurrentUser(f.user),
         ApiJson(GoogleTasksCreateListRequest {
-            expected_version: 3,
+            expected_version: 2,
         }),
     )
     .await;

@@ -190,7 +190,7 @@ onBeforeUnmount(() => {
           <button
             v-if="!status.enabled"
             type="button"
-            :disabled="busy || status.list_create_attempted"
+            :disabled="busy || status.list_create_attempted || !!status.task_list_id"
             class="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium disabled:opacity-50 dark:border-slate-700"
             @click="createList"
           >
