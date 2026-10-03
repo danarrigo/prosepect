@@ -210,6 +210,37 @@ async fn task_delete_undo_refuses_parent_stale_owner_expired_and_repeated_reques
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn rejected_task_deletions_release_owner_exclusion_before_return(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, task) = fixture(&pool, false).await?;
+    for attempt in 0..64 {
+        let mut observer = pool.begin().await?;
+        assert!(matches!(
+            store
+                .delete_task_with_undo(user, task.id, task.version + 1)
+                .await,
+            Err(AppError::Conflict(_))
+        ));
+        let released: bool =
+            sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(format!("prosepect-sync:{user}"))
+                .fetch_one(&mut *observer)
+                .await?;
+        assert!(
+            released,
+            "rejected deletion {attempt} returned before releasing owner exclusion"
+        );
+        observer.rollback().await?;
+    }
+    let receipt = store
+        .delete_task_with_undo(user, task.id, task.version)
+        .await?;
+    store.undo_task_delete(user, receipt.id, None).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn task_delete_undo_dependency_changes_fail_closed(pool: PgPool) -> anyhow::Result<()> {
     for change in [
         "project",
