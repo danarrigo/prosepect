@@ -199,9 +199,11 @@ impl SyncService {
             let candidate = candidates[0];
             let sent: TaskFields =
                 serde_json::from_value(link.baseline.clone().context("Missing create baseline")?)?;
-            if candidate.fields()? != sent {
-                bail!("Uncertain created task changed");
-            }
+            // The unique durable marker establishes identity, not unchanged
+            // content. Validate the current fields but retain the originally
+            // sent baseline so later edits merge or become an explicit conflict.
+            // Recovery itself never overwrites either copy.
+            candidate.fields()?;
             self.record_google_task_link(user, link.id, candidate, &sent)
                 .await?;
             return Ok(Some(candidate.id.clone()));

@@ -22,6 +22,8 @@ This integration is not enabled or deployed yet. Existing Google Calendar sync i
 
 The current source implements shared field rules, incremental consent, bounded API transport, owner-scoped settings, dispatcher-connected reconciliation and Settings controls. The consent callback stores verified permission without enabling copying. List creation is separately journaled and never blindly retried; users can discover and choose a list after an uncertain outcome.
 
+An uncertain task creation is recovered by its unique durable provenance marker, even if the Google copy has since changed. Recovery only records identity and retains the originally sent baseline; subsequent reconciliation preserves independent edits or raises a conflict. Missing or duplicate markers stay paused without another POST or duplicate import. Manual recovery controls remain a release gate.
+
 Same-field conflicts are displayed in Settings with both snapshots. Users can keep either app's conflicting edits; unrelated field changes still merge. Choices are queued against the displayed conflict identity. The worker checks the local task version, both shared-field snapshots and Google's ETag again before applying them. Newer divergent edits require a fresh choice.
 
 Before release, complete uncertain-create recovery controls, bounded-work/concurrency/failure review and real-backend browser acceptance. Current tests use a fake provider and do not establish live Google behavior. Google list selection is explicit: it imports only the selected list; other lists are never automatically synchronized.

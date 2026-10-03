@@ -619,6 +619,51 @@ async fn uncertain_task_create_recovers_without_duplicate_posts_or_imports(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn uncertain_creation_never_retries_missing_or_duplicate_provenance(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    f.provider.ambiguous_create.store(true, Ordering::SeqCst);
+    sync(&f, "ambiguous").await?;
+    let remote = f.provider.tasks.lock().await.remove("remote-0").unwrap();
+    sync(&f, "missing").await?;
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    let mut duplicate = remote.clone();
+    duplicate["id"] = json!("duplicate");
+    {
+        let mut tasks = f.provider.tasks.lock().await;
+        tasks.insert("remote-0".into(), remote);
+        tasks.insert("duplicate".into(), duplicate);
+    }
+    sync(&f, "duplicate").await?;
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(f.provider.patches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 100)
+            .await?
+            .items
+            .len(),
+        1
+    );
+    let phase: String = sqlx::query_scalar("SELECT phase FROM google_task_links WHERE user_id=$1")
+        .bind(f.user)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(phase, "creating");
+    // Removing only the duplicate permits discovery without a new POST.
+    f.provider.tasks.lock().await.remove("duplicate");
+    sync(&f, "unique").await?;
+    let phase: String = sqlx::query_scalar("SELECT phase FROM google_task_links WHERE user_id=$1")
+        .bind(f.user)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(phase, "linked");
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn uncertain_creation_recovers_later_edits_without_overwriting_either_app(
     pool: PgPool,
 ) -> anyhow::Result<()> {
