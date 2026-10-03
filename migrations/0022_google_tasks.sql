@@ -49,22 +49,38 @@ CREATE TABLE google_task_links (
 );
 CREATE INDEX google_task_links_user_idx ON google_task_links(user_id, task_list_id);
 
+-- A pending job reads the whole current snapshot, so edits can share it.
+-- Claiming changes status to running and frees the slot: later edits must queue
+-- a follow-up, even while the earlier snapshot is still being processed.
+CREATE UNIQUE INDEX google_tasks_pending_change_idx ON sync_jobs(user_id)
+    WHERE kind='tasks_sync' AND status='pending' AND idempotency_key LIKE 'tasks-change:%';
+
 CREATE FUNCTION enqueue_google_tasks_change() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE
     owner UUID;
-    task UUID;
-    revision INTEGER;
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.title IS NOT DISTINCT FROM NEW.title
+            AND OLD.due_at IS NOT DISTINCT FROM NEW.due_at
+            AND (OLD.status='completed') IS NOT DISTINCT FROM (NEW.status='completed') THEN
+            RETURN NULL;
+        END IF;
+    END IF;
     IF TG_OP = 'DELETE' THEN
-        owner := OLD.user_id; task := OLD.id; revision := OLD.version;
+        owner := OLD.user_id;
     ELSE
-        owner := NEW.user_id; task := NEW.id; revision := NEW.version;
+        owner := NEW.user_id;
     END IF;
     IF EXISTS (SELECT 1 FROM google_task_connections WHERE user_id=owner AND enabled) THEN
         INSERT INTO sync_jobs(id,user_id,kind,idempotency_key)
         VALUES(gen_random_uuid(),owner,'tasks_sync',
-            'tasks-change:' || task::TEXT || ':' || revision::TEXT || ':' || TG_OP)
-        ON CONFLICT(user_id,idempotency_key) DO NOTHING;
+            'tasks-change:' || gen_random_uuid()::TEXT)
+        -- Lock the pending row until the task transaction commits. Otherwise
+        -- a worker could claim it and read an older task snapshot while this
+        -- uncommitted edit incorrectly assumes that job will cover its change.
+        ON CONFLICT(user_id) WHERE kind='tasks_sync' AND status='pending'
+            AND idempotency_key LIKE 'tasks-change:%'
+        DO UPDATE SET updated_at=sync_jobs.updated_at;
     END IF;
     RETURN NULL;
 END $$;

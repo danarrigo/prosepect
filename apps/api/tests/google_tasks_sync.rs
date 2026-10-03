@@ -404,6 +404,7 @@ async fn task_change_jobs_coalesce_without_losing_edits_during_running_sync(
     // Private fields and workflow-only states never change shared Tasks fields.
     let mut request = edit(&current(&f).await?);
     request.description = "Private draft".into();
+    request.status = TaskStatus::InProgress;
     f.store.update_task(f.user, f.task.id, request).await?;
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM sync_jobs WHERE user_id=$1 AND kind='tasks_sync' AND status='pending'")
         .bind(f.user).fetch_one(&pool).await?;
@@ -435,6 +436,49 @@ async fn task_change_jobs_coalesce_without_losing_edits_during_running_sync(
     assert_eq!(
         f.provider.tasks.lock().await["remote-0"]["title"],
         "Later edit"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn coalesced_task_change_cannot_be_claimed_before_its_writer_commits(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    let mut request = edit(&current(&f).await?);
+    request.title = "Committed edit".into();
+    f.store.update_task(f.user, f.task.id, request).await?;
+    let mut writer = pool.begin().await?;
+    sqlx::query(
+        "UPDATE tasks SET title='Uncommitted edit',version=version+1 WHERE id=$1 AND user_id=$2",
+    )
+    .bind(f.task.id)
+    .bind(f.user)
+    .execute(&mut *writer)
+    .await?;
+    assert!(
+        f.store.claim_sync_job().await?.is_none(),
+        "a coalesced pending job must remain locked until the task writer commits"
+    );
+    writer.commit().await?;
+    assert!(f.service.run_once().await?);
+    assert_eq!(
+        f.provider.tasks.lock().await["remote-0"]["title"],
+        "Uncommitted edit"
+    );
+    assert!(!f.service.run_once().await?);
+    let mut cancelled = pool.begin().await?;
+    sqlx::query(
+        "UPDATE tasks SET title='Rolled back edit',version=version+1 WHERE id=$1 AND user_id=$2",
+    )
+    .bind(f.task.id)
+    .bind(f.user)
+    .execute(&mut *cancelled)
+    .await?;
+    cancelled.rollback().await?;
+    assert!(
+        !f.service.run_once().await?,
+        "rolled-back edits must not leave queued jobs"
     );
     Ok(())
 }

@@ -26,7 +26,9 @@ An uncertain task creation is recovered by its unique durable provenance marker,
 
 Same-field conflicts are displayed in Settings with both snapshots. Users can keep either app's conflicting edits; unrelated field changes still merge. Choices are queued against the displayed conflict identity. The worker checks the local task version, both shared-field snapshots and Google's ETag again before applying them. Newer divergent edits require a fresh choice.
 
-Before release, complete uncertain-create recovery controls, bounded-work/concurrency/failure review and real-backend browser acceptance. Current tests use a fake provider and do not establish live Google behavior. Google list selection is explicit: it imports only the selected list; other lists are never automatically synchronized.
+Task edits share one pending change-triggered sync job per owner. Claiming that job frees the slot for a follow-up; edits made during a running sync are not discarded. The pending job remains locked until the editing transaction commits, so workers cannot read an older snapshot for an uncommitted edit. Private-field edits and changes between incomplete workflow states do not enqueue Tasks work. Manual, periodic and conflict-resolution requests retain their separate identities.
+
+Before release, complete uncertain-create recovery controls, overall per-job work bounds, concurrency/failure review and real-backend browser acceptance. Current tests use a fake provider and do not establish live Google behavior. Google list selection is explicit: it imports only the selected list; other lists are never automatically synchronized.
 
 ## Primary API references
 
