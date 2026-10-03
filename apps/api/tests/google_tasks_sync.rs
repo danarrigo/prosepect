@@ -484,6 +484,88 @@ async fn coalesced_task_change_cannot_be_claimed_before_its_writer_commits(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn tasks_sync_batches_resume_and_revisit_edits_behind_the_cursor(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    for number in 0..22 {
+        f.store
+            .create_task(
+                f.user,
+                serde_json::from_value(json!({"title":format!("Batch task {number}")}))?,
+            )
+            .await?;
+        let id = format!("incoming-{number:02}");
+        f.provider.tasks.lock().await.insert(id.clone(), json!({"id":id,"etag":"initial","title":format!("Incoming {number}"),"status":"needsAction"}));
+    }
+    assert!(f.service.run_once().await?);
+    assert!(
+        f.provider.creates.load(Ordering::SeqCst) <= 10,
+        "one job must not create every task"
+    );
+    assert!(
+        f.store
+            .list_tasks(f.user, None, None, 100)
+            .await?
+            .items
+            .len()
+            <= 33,
+        "one job must import at most ten tasks"
+    );
+    assert!(
+        f.store
+            .google_tasks_status(f.user)
+            .await?
+            .last_synced_at
+            .is_none(),
+        "partial progress is not a completed synchronization"
+    );
+    let mut edit_behind_cursor = edit(&current(&f).await?);
+    edit_behind_cursor.title = "Changed behind the cursor".into();
+    f.store
+        .update_task(f.user, f.task.id, edit_behind_cursor)
+        .await?;
+    let mut finished = false;
+    for _ in 0..40 {
+        let before = f.provider.creates.load(Ordering::SeqCst);
+        if !f.service.run_once().await? {
+            finished = true;
+            break;
+        }
+        assert!(f.provider.creates.load(Ordering::SeqCst) - before <= 10);
+    }
+    assert!(
+        finished,
+        "continuations must eventually drain, not loop forever"
+    );
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 23);
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 100)
+            .await?
+            .items
+            .len(),
+        45
+    );
+    assert!(
+        f.provider
+            .tasks
+            .lock()
+            .await
+            .values()
+            .any(|task| task["title"] == "Changed behind the cursor")
+    );
+    assert!(
+        f.store
+            .google_tasks_status(f.user)
+            .await?
+            .last_synced_at
+            .is_some()
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn tasks_sync_merges_both_directions_without_losing_deadline_time_or_private_fields(
     pool: PgPool,
 ) -> anyhow::Result<()> {
