@@ -384,6 +384,62 @@ async fn list_creation_after_saving_disabled_settings_is_claimed_once(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn task_change_jobs_coalesce_without_losing_edits_during_running_sync(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    for number in 0..8 {
+        let mut request = edit(&current(&f).await?);
+        request.title = format!("Edit {number}");
+        f.store.update_task(f.user, f.task.id, request).await?;
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM sync_jobs WHERE user_id=$1 AND kind='tasks_sync' AND status='pending'")
+        .bind(f.user).fetch_one(&pool).await?;
+    assert_eq!(
+        count, 1,
+        "a burst of edits needs one pending Tasks snapshot, not one per edit"
+    );
+    let running = f.store.claim_sync_job().await?.unwrap();
+    assert_eq!(running.kind, "tasks_sync");
+    // Private fields and workflow-only states never change shared Tasks fields.
+    let mut request = edit(&current(&f).await?);
+    request.description = "Private draft".into();
+    f.store.update_task(f.user, f.task.id, request).await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM sync_jobs WHERE user_id=$1 AND kind='tasks_sync' AND status='pending'")
+        .bind(f.user).fetch_one(&pool).await?;
+    assert_eq!(count, 0, "private edits should not enqueue Tasks work");
+    for number in 0..8 {
+        let mut request = edit(&current(&f).await?);
+        request.title = format!("During sync {number}");
+        f.store.update_task(f.user, f.task.id, request).await?;
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM sync_jobs WHERE user_id=$1 AND kind='tasks_sync' AND status='pending'")
+        .bind(f.user).fetch_one(&pool).await?;
+    assert_eq!(
+        count, 1,
+        "edits after claim must retain one follow-up even while a job runs"
+    );
+    f.store.complete_sync_job(running.id).await?;
+    assert!(f.service.run_once().await?);
+    assert_eq!(
+        f.provider.tasks.lock().await["remote-0"]["title"],
+        "During sync 7"
+    );
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    assert!(!f.service.run_once().await?);
+    // A later edit can enqueue again, even though earlier jobs succeeded.
+    let mut request = edit(&current(&f).await?);
+    request.title = "Later edit".into();
+    f.store.update_task(f.user, f.task.id, request).await?;
+    assert!(f.service.run_once().await?);
+    assert_eq!(
+        f.provider.tasks.lock().await["remote-0"]["title"],
+        "Later edit"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn tasks_sync_merges_both_directions_without_losing_deadline_time_or_private_fields(
     pool: PgPool,
 ) -> anyhow::Result<()> {
