@@ -147,12 +147,23 @@ async fn task_delete_undo_restore_failure_rolls_back_every_insert(
         .delete_task_with_undo(user, task.id, task.version)
         .await?;
     sqlx::raw_sql("CREATE FUNCTION reject_restored_note() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected restore failure'; END $$; CREATE TRIGGER reject_restored_note BEFORE INSERT ON notes FOR EACH ROW EXECUTE FUNCTION reject_restored_note();").execute(&pool).await?;
+    let mut observer = pool.begin().await?;
     assert!(
         store
             .undo_task_delete(user, receipt.id, None)
             .await
             .is_err()
     );
+    let released: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("prosepect-sync:{user}"))
+            .fetch_one(&mut *observer)
+            .await?;
+    assert!(
+        released,
+        "failed restoration must release owner exclusion before returning"
+    );
+    observer.rollback().await?;
     for table in ["tasks", "calendar_events", "notes"] {
         assert!(rows(&pool, table, user).await?.is_empty());
     }
@@ -206,6 +217,37 @@ async fn task_delete_undo_refuses_parent_stale_owner_expired_and_repeated_reques
     ));
     assert!(store.list_task_delete_undos(user).await?.items.is_empty());
     assert_eq!(rows(&pool, "tasks", user).await?.len(), 1);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn rejected_task_deletions_release_owner_exclusion_before_return(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, task) = fixture(&pool, false).await?;
+    for attempt in 0..64 {
+        let mut observer = pool.begin().await?;
+        assert!(matches!(
+            store
+                .delete_task_with_undo(user, task.id, task.version + 1)
+                .await,
+            Err(AppError::Conflict(_))
+        ));
+        let released: bool =
+            sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(format!("prosepect-sync:{user}"))
+                .fetch_one(&mut *observer)
+                .await?;
+        assert!(
+            released,
+            "rejected deletion {attempt} returned before releasing owner exclusion"
+        );
+        observer.rollback().await?;
+    }
+    let receipt = store
+        .delete_task_with_undo(user, task.id, task.version)
+        .await?;
+    store.undo_task_delete(user, receipt.id, None).await?;
     Ok(())
 }
 

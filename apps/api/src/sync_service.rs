@@ -18,8 +18,9 @@ const GOOGLE_CALENDAR_API: &str = "https://www.googleapis.com/calendar/v3";
 
 #[derive(Clone)]
 pub struct SyncService {
-    store: Store,
+    pub(crate) store: Store,
     google: GoogleOAuth,
+    pub(crate) tasks_client: crate::google_tasks_client::GoogleTasksClient,
     http: reqwest::Client,
     google_api_base: String,
     webhook_url: Option<String>,
@@ -30,6 +31,7 @@ impl SyncService {
         Ok(Self {
             store,
             google,
+            tasks_client: crate::google_tasks_client::GoogleTasksClient::new()?,
             http: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(45))
@@ -42,6 +44,11 @@ impl SyncService {
 
     pub fn with_api_base(mut self, base: String) -> Self {
         self.google_api_base = base;
+        self
+    }
+
+    pub fn with_tasks_api_base(mut self, base: Url) -> Self {
+        self.tasks_client = self.tasks_client.with_api_base(base);
         self
     }
 
@@ -130,6 +137,7 @@ impl SyncService {
     async fn execute(&self, job: &ClaimedSyncJob) -> Result<()> {
         match job.kind.as_str() {
             "calendar_discovery" => self.discover_calendars(job.user_id).await,
+            "tasks_sync" => self.sync_google_tasks(job.user_id).await,
             "calendar_sync" => self.sync_calendars(job.user_id, job.calendar_id).await,
             "calendar_watch" => {
                 let calendar_id = job
@@ -201,7 +209,7 @@ impl SyncService {
             .map_err(|_| unavailable())?
     }
 
-    async fn access_token(&self, user_id: Uuid) -> Result<String> {
+    pub(crate) async fn access_token(&self, user_id: Uuid) -> Result<String> {
         let credentials = self.store.google_credentials(user_id).await?;
         let access = self.google.access_token(&credentials).await?;
         if let Some(encrypted) = access.encrypted_token {

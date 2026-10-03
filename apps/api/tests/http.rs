@@ -609,6 +609,20 @@ async fn todoist_import_is_created_atomically_through_the_api(pool: PgPool) -> a
     Ok(())
 }
 
+#[test]
+fn openapi_operation_ids_are_unique() -> anyhow::Result<()> {
+    let document = serde_json::to_value(ApiDoc::openapi())?;
+    let mut seen = std::collections::HashSet::new();
+    for methods in document["paths"].as_object().unwrap().values() {
+        for operation in methods.as_object().unwrap().values() {
+            if let Some(id) = operation["operationId"].as_str() {
+                assert!(seen.insert(id), "duplicate OpenAPI operationId: {id}");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn extractor_failures_use_the_error_envelope(pool: PgPool) -> anyhow::Result<()> {
     let openapi = serde_json::to_value(ApiDoc::openapi())?;
@@ -1236,5 +1250,125 @@ async fn task_delete_undo_http_requires_authentication_and_cookie_csrf(
             .await?;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn google_tasks_settings_are_authenticated_and_do_not_infer_calendar_permission(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool);
+    store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let router = app::build(&test_config(), store)?;
+    let denied = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/integrations/google/tasks")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/integrations/google/tasks")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(status.status(), StatusCode::OK);
+    let status: serde_json::Value =
+        serde_json::from_slice(&to_bytes(status.into_body(), 65536).await?)?;
+    assert_eq!(status["authorized"], false);
+    assert_eq!(status["enabled"], false);
+    assert_eq!(status["version"], 0);
+    for path in [
+        "/api/v1/integrations/google/tasks/lists",
+        "/api/v1/integrations/google/tasks/sync",
+    ] {
+        let method = if path.ends_with("sync") {
+            "POST"
+        } else {
+            "GET"
+        };
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert!(matches!(
+            response.status(),
+            StatusCode::FORBIDDEN | StatusCode::CONFLICT
+        ));
+    }
+    let disabled = router
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/integrations/google/tasks")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"enabled":false,"expected_version":0}"#))?,
+        )
+        .await?;
+    assert_eq!(disabled.status(), StatusCode::OK);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn google_tasks_consent_requires_authentication_without_starting_sync(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let router = app::build(&test_config(), store)?;
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/google/tasks/start")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let session = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(session.status(), StatusCode::OK);
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/google/tasks/start")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM sync_jobs WHERE user_id=$1")
+        .bind(DEVELOPMENT_USER_ID)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(jobs, 0, "consent must not enqueue provider writes");
     Ok(())
 }

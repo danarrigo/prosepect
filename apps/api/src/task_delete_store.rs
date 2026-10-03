@@ -151,6 +151,7 @@ impl Store {
             ));
         }
         let mut tx = self.pool.begin().await?;
+        let result: AppResult<DeletePreparation> = async {
         lock(&mut tx, user).await?;
         let task = row(&mut tx, "tasks", user, task_id)
             .await?
@@ -323,7 +324,6 @@ impl Store {
                 .await?;
             mapping["base_fingerprint"] = json!(fingerprint);
         } else if legacy {
-            tx.rollback().await?;
             return Ok(DeletePreparation::Legacy(Box::new(snapshot)));
         }
         let value = encode(&snapshot)?;
@@ -349,8 +349,24 @@ impl Store {
             .bind(encode(&snapshot)?)
             .execute(&mut *tx)
             .await?;
-        tx.commit().await?;
         Ok(DeletePreparation::Deleted(receipt))
+        }.await;
+        match result {
+            Ok(prepared @ DeletePreparation::Deleted(_)) => {
+                tx.commit().await?;
+                Ok(prepared)
+            }
+            Ok(prepared @ DeletePreparation::Legacy(_)) => {
+                tx.rollback().await?;
+                Ok(prepared)
+            }
+            Err(error) => {
+                // A dropped transaction only queues rollback. Release owner
+                // exclusion before callers can retry on another connection.
+                tx.rollback().await?;
+                Err(error)
+            }
+        }
     }
 
     pub async fn undo_task_delete(
@@ -386,6 +402,7 @@ impl Store {
                 .await?;
         }
         let mut tx = self.pool.begin().await?;
+        let result: AppResult<()> = async {
         lock(&mut tx, user).await?;
         let current: Option<Value> = sqlx::query_scalar("SELECT snapshot FROM task_delete_undos WHERE id=$1 AND user_id=$2 AND expires_at > clock_timestamp() FOR UPDATE NOWAIT")
             .bind(receipt).bind(user).fetch_optional(&mut *tx).await?;
@@ -484,8 +501,18 @@ impl Store {
         if consumed.rows_affected() != 1 {
             return Err(changed());
         }
-        tx.commit().await?;
         Ok(())
+        }.await;
+        match result {
+            Ok(()) => {
+                tx.commit().await?;
+                Ok(())
+            }
+            Err(error) => {
+                tx.rollback().await?;
+                Err(error)
+            }
+        }
     }
 }
 

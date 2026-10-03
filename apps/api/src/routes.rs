@@ -331,6 +331,41 @@ pub async fn google_calendar_connect_start(
 
 #[utoipa::path(
     get,
+    path = "/api/v1/auth/google/tasks/start",
+    responses(
+        (status = 307, description = "Redirect to Google for incremental Tasks consent"),
+        (status = 401, body = ErrorResponse),
+        (status = 503, body = ErrorResponse)
+    ),
+    security(("session_cookie" = []), ("development_user" = [])),
+    tag = "authentication"
+)]
+pub async fn google_tasks_connect_start(
+    State(state): State<AppState>,
+    CurrentUser(user_id): CurrentUser,
+    headers: HeaderMap,
+    ClientAddress(peer): ClientAddress,
+) -> AppResult<Redirect> {
+    state
+        .login_rate_limiter
+        .check(&headers, peer, state.trust_proxy_headers)?;
+    let google = state
+        .google_oauth
+        .as_ref()
+        .ok_or(AppError::NotConfigured("Google OAuth"))?;
+    let login = google
+        .begin_tasks_connection()
+        .await
+        .map_err(AppError::Integration)?;
+    state
+        .store
+        .save_google_login_attempt(&login, Some(user_id), "tasks_connect", None)
+        .await?;
+    Ok(Redirect::temporary(&login.authorization_url))
+}
+
+#[utoipa::path(
+    get,
     path = "/api/v1/auth/google/callback",
     params(GoogleCallbackQuery),
     responses(
@@ -366,6 +401,30 @@ pub async fn google_auth_callback(
         .complete_login(code, attempt.nonce, attempt.pkce_verifier)
         .await
         .map_err(AppError::Integration)?;
+    if attempt.purpose == "tasks_connect" {
+        let user_id = attempt.user_id.ok_or(AppError::Forbidden(
+            "Google Tasks connection did not identify a user",
+        ))?;
+        if !login
+            .scopes
+            .iter()
+            .any(|scope| scope == crate::google_tasks::TASKS_SCOPE)
+        {
+            return Err(AppError::Forbidden(
+                "Google Tasks permission was not granted",
+            ));
+        }
+        // Consent alone must not enable copying tasks or create a provider list.
+        // The user explicitly enables the independent connection in Settings.
+        state
+            .store
+            .update_google_credentials(user_id, login)
+            .await?;
+        return Ok((
+            HeaderMap::new(),
+            Redirect::to(&format!("{}/settings", state.app_url.trim_end_matches('/'))),
+        ));
+    }
     if attempt.purpose == "calendar_connect" {
         let user_id = attempt.user_id.ok_or(AppError::Forbidden(
             "Google Calendar connection did not identify a user",

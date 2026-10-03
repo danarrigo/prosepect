@@ -17,6 +17,12 @@ import type {
   FileRecord,
   FileUsage,
   GoogleIntegrationStatus,
+  GoogleTasksStatus,
+  GoogleTaskConflict,
+  GoogleTaskRecovery,
+  GoogleTaskResolutionRequest,
+  GoogleTaskList,
+  GoogleTasksSettingsRequest,
   LabelList,
   Note,
   OperationsSnapshot,
@@ -501,6 +507,59 @@ export async function deleteTask(taskId: string, expectedVersion: number): Promi
       },
     }),
   )
+}
+
+export async function getGoogleTaskRecoveries(signal?: AbortSignal): Promise<GoogleTaskRecovery[]> {
+  return unwrap(await client.GET('/api/v1/integrations/google/tasks/recoveries', { signal }))
+}
+
+export async function leaveGoogleTaskUnlinked(linkId: string): Promise<void> {
+  unwrap(
+    await client.POST('/api/v1/integrations/google/tasks/recoveries/{link_id}/detach', {
+      params: { path: { link_id: linkId } },
+    }),
+  )
+}
+
+export async function getGoogleTaskConflicts(signal?: AbortSignal): Promise<GoogleTaskConflict[]> {
+  return unwrap(await client.GET('/api/v1/integrations/google/tasks/conflicts', { signal }))
+}
+
+export async function resolveGoogleTaskConflict(
+  linkId: string,
+  body: GoogleTaskResolutionRequest,
+): Promise<void> {
+  const result = await client.POST('/api/v1/integrations/google/tasks/conflicts/{link_id}', {
+    params: { path: { link_id: linkId } },
+    body,
+  })
+  if (!result.response.ok) unwrap(result)
+}
+
+export async function getGoogleTasksStatus(signal?: AbortSignal): Promise<GoogleTasksStatus> {
+  return unwrap(await client.GET('/api/v1/integrations/google/tasks', { signal }))
+}
+
+export async function listGoogleTaskLists(signal?: AbortSignal): Promise<GoogleTaskList[]> {
+  return unwrap(await client.GET('/api/v1/integrations/google/tasks/lists', { signal }))
+}
+
+export async function configureGoogleTasks(
+  body: GoogleTasksSettingsRequest,
+): Promise<GoogleTasksStatus> {
+  return unwrap(await client.PUT('/api/v1/integrations/google/tasks', { body }))
+}
+
+export async function createGoogleTaskList(expectedVersion: number): Promise<GoogleTaskList> {
+  return unwrap(
+    await client.POST('/api/v1/integrations/google/tasks/lists', {
+      body: { expected_version: expectedVersion },
+    }),
+  )
+}
+
+export async function syncGoogleTasks(): Promise<Synchronization> {
+  return unwrap(await client.POST('/api/v1/integrations/google/tasks/sync'))
 }
 
 function unwrap<T>({
