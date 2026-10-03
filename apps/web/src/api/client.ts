@@ -19,6 +19,7 @@ import type {
   GoogleIntegrationStatus,
   GoogleTasksStatus,
   GoogleTaskConflict,
+  GoogleTaskRecovery,
   GoogleTaskResolutionRequest,
   GoogleTaskList,
   GoogleTasksSettingsRequest,
@@ -504,6 +505,18 @@ export async function deleteTask(taskId: string, expectedVersion: number): Promi
         path: { task_id: taskId },
         query: { expected_version: expectedVersion },
       },
+    }),
+  )
+}
+
+export async function getGoogleTaskRecoveries(signal?: AbortSignal): Promise<GoogleTaskRecovery[]> {
+  return unwrap(await client.GET('/api/v1/integrations/google/tasks/recoveries', { signal }))
+}
+
+export async function leaveGoogleTaskUnlinked(linkId: string): Promise<void> {
+  unwrap(
+    await client.POST('/api/v1/integrations/google/tasks/recoveries/{link_id}/detach', {
+      params: { path: { link_id: linkId } },
     }),
   )
 }

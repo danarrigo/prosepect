@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as api from '../api/client'
 import type {
   GoogleTaskConflict,
+  GoogleTaskRecovery,
   GoogleTaskResolutionRequest,
   GoogleTaskList,
   GoogleTasksStatus,
@@ -12,6 +13,8 @@ const connectUrl = api.apiUrl('/api/v1/auth/google/tasks/start')
 const status = ref<GoogleTasksStatus | null>(null)
 const lists = ref<GoogleTaskList[]>([])
 const conflicts = ref<GoogleTaskConflict[]>([])
+const recoveries = ref<GoogleTaskRecovery[]>([])
+const refreshButton = ref<HTMLButtonElement | null>(null)
 const queuedChoices = ref(new Set<string>())
 const selectedList = ref('')
 const timezone = ref(Intl.DateTimeFormat().resolvedOptions().timeZone)
@@ -35,16 +38,19 @@ async function refresh() {
   loading.value = true
   try {
     const current = await api.getGoogleTasksStatus(controller.signal)
-    const available = current.authorized ? await api.listGoogleTaskLists(controller.signal) : []
     const unresolved = current.enabled ? await api.getGoogleTaskConflicts(controller.signal) : []
+    const uncertain = await api.getGoogleTaskRecoveries(controller.signal)
     if (!mounted || controller.signal.aborted) return
     status.value = current
-    lists.value = available
+    recoveries.value = uncertain
     conflicts.value = unresolved
     queuedChoices.value = new Set()
     if (!selectedList.value) selectedList.value = current.task_list_id ?? ''
     if (current.timezone) timezone.value = current.timezone
     error.value = ''
+    // Local recovery and disable controls remain available if Google is offline.
+    const available = current.authorized ? await api.listGoogleTaskLists(controller.signal) : []
+    if (mounted && !controller.signal.aborted) lists.value = available
   } catch (cause) {
     if (mounted && !controller.signal.aborted)
       error.value =
@@ -121,6 +127,29 @@ async function createList() {
       }
     }
   })
+}
+
+async function leaveUnlinked(recovery: GoogleTaskRecovery) {
+  if (
+    !window.confirm(
+      `Leave “${recovery.title}” unlinked? Both copies stay unchanged. This task will no longer sync, and no replacement will be created.`,
+    )
+  )
+    return
+  await perform(async () => {
+    await api.leaveGoogleTaskUnlinked(recovery.link_id)
+    if (!mounted) return
+    recoveries.value = recoveries.value.filter((item) => item.link_id !== recovery.link_id)
+    message.value = 'Task left unlinked. Both copies are kept; no replacement will be created.'
+  })
+  await nextTick()
+  if (
+    mounted &&
+    document.activeElement === document.body &&
+    !recoveries.value.some((item) => item.link_id === recovery.link_id)
+  ) {
+    refreshButton.value?.focus({ preventScroll: true })
+  }
 }
 
 async function syncNow() {
@@ -267,6 +296,40 @@ onBeforeUnmount(() => {
         </p>
       </template>
     </div>
+    <div v-if="recoveries.length" class="mt-6 space-y-4">
+      <h3 class="text-sm font-semibold">Unconfirmed task creation</h3>
+      <p class="max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+        Google may already have created these tasks. Check again to find their existing copies
+        without creating duplicates. Or leave them unlinked to stop syncing them. Keep the prosepect
+        reference in Google task notes so existing copies can still be recognized.
+      </p>
+      <button
+        type="button"
+        class="secondary-button"
+        :disabled="busy || !status?.enabled || !status.authorized"
+        @click="syncNow"
+      >
+        Check Google again
+      </button>
+      <article
+        v-for="recovery in recoveries"
+        :key="recovery.link_id"
+        class="rounded-lg border border-slate-200 p-4 dark:border-slate-800"
+      >
+        <h4 class="break-words text-sm font-semibold">{{ recovery.title }}</h4>
+        <button
+          type="button"
+          class="secondary-button mt-3"
+          :disabled="busy"
+          @click="leaveUnlinked(recovery)"
+        >
+          Leave unlinked
+        </button>
+      </article>
+      <p v-if="recoveries.length === 100" class="text-sm text-slate-500 dark:text-slate-400">
+        Showing the first 100 tasks. More will appear after these are handled.
+      </p>
+    </div>
     <div v-if="status?.enabled && conflicts.length" class="mt-6 space-y-4">
       <h3 class="text-sm font-semibold">Conflicting task edits</h3>
       <p class="text-sm text-slate-500 dark:text-slate-400">
@@ -322,6 +385,7 @@ onBeforeUnmount(() => {
       </p>
     </div>
     <button
+      ref="refreshButton"
       type="button"
       :disabled="busy"
       class="mt-4 text-sm font-medium underline underline-offset-4 disabled:opacity-50"

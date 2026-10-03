@@ -8,6 +8,8 @@ vi.mock('../api/client', async (original) => ({
   ...(await original<typeof api>()),
   getGoogleTasksStatus: vi.fn(),
   getGoogleTaskConflicts: vi.fn(),
+  getGoogleTaskRecoveries: vi.fn(),
+  leaveGoogleTaskUnlinked: vi.fn(),
   resolveGoogleTaskConflict: vi.fn(),
   listGoogleTaskLists: vi.fn(),
   configureGoogleTasks: vi.fn(),
@@ -39,10 +41,12 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(api.getGoogleTasksStatus).mockResolvedValue(initial)
   vi.mocked(api.getGoogleTaskConflicts).mockResolvedValue([])
+  vi.mocked(api.getGoogleTaskRecoveries).mockResolvedValue([])
   vi.mocked(api.listGoogleTaskLists).mockResolvedValue([{ id: 'list', title: 'prosepect' }])
 })
 afterEach(() => {
   for (const wrapper of wrappers.splice(0)) wrapper.unmount()
+  vi.restoreAllMocks()
 })
 
 describe('Google Tasks settings', () => {
@@ -151,6 +155,27 @@ describe('Google Tasks settings', () => {
     })
     expect(button(wrapper, 'Keep Google edits').attributes('disabled')).toBeDefined()
     expect(wrapper.get('[role="status"]').text()).toContain('checked again')
+  })
+
+  it('can leave uncertain creation unlinked while Google is unavailable, with confirmation', async () => {
+    vi.mocked(api.getGoogleTaskRecoveries).mockResolvedValue([
+      { link_id: 'uncertain', task_id: 'task', title: 'Unconfirmed task' },
+    ])
+    vi.mocked(api.listGoogleTaskLists).mockRejectedValue(new Error('Google is unavailable'))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    vi.mocked(api.leaveGoogleTaskUnlinked).mockResolvedValue(undefined)
+    const wrapper = panel()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Unconfirmed task')
+    await button(wrapper, 'Leave unlinked').trigger('click')
+    expect(api.leaveGoogleTaskUnlinked).not.toHaveBeenCalled()
+    confirm.mockReturnValue(true)
+    await button(wrapper, 'Leave unlinked').trigger('click')
+    await flushPromises()
+    expect(api.leaveGoogleTaskUnlinked).toHaveBeenCalledWith('uncertain')
+    expect(wrapper.get('[role="status"]').text()).toContain('no replacement')
+    expect(api.createGoogleTaskList).not.toHaveBeenCalled()
+    expect(api.syncGoogleTasks).not.toHaveBeenCalled()
   })
 
   it('aborts pending private reads when the panel unmounts', async () => {

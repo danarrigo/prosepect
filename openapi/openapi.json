@@ -2442,6 +2442,99 @@
         ]
       }
     },
+    "/api/v1/integrations/google/tasks/recoveries": {
+      "get": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "google_task_recoveries",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GoogleTaskRecovery"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/google/tasks/recoveries/{link_id}/detach": {
+      "post": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "leave_google_task_unlinked",
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
     "/api/v1/integrations/google/tasks/sync": {
       "post": {
         "tags": [
@@ -5252,6 +5345,27 @@
         "properties": {
           "id": {
             "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "GoogleTaskRecovery": {
+        "type": "object",
+        "required": [
+          "link_id",
+          "task_id",
+          "title"
+        ],
+        "properties": {
+          "link_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
           },
           "title": {
             "type": "string"

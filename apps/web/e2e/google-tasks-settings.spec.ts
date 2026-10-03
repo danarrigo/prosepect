@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import type { GoogleTaskConflict, GoogleTasksStatus } from '../src/api/types'
+import type { GoogleTaskConflict, GoogleTaskRecovery, GoogleTasksStatus } from '../src/api/types'
 
 async function settings(page: Page, authorized = true) {
   let status: GoogleTasksStatus = {
@@ -14,6 +14,7 @@ async function settings(page: Page, authorized = true) {
   }
   let ambiguous = false
   let conflicts: GoogleTaskConflict[] = []
+  let recoveries: GoogleTaskRecovery[] = []
   let staleChoice = false
   const lists: { id: string; title: string }[] = []
   const writes: string[] = []
@@ -66,6 +67,12 @@ async function settings(page: Page, authorized = true) {
         }
         body = list
       } else body = lists
+    } else if (path === '/integrations/google/tasks/recoveries') body = recoveries
+    else if (path === '/integrations/google/tasks/recoveries/uncertain/detach') {
+      writes.push(method + ' ' + path)
+      recoveries = []
+      await route.fulfill({ status: 204 })
+      return
     } else if (path === '/integrations/google/tasks/conflicts') body = conflicts
     else if (path === '/integrations/google/tasks/conflicts/link') {
       expect(route.request().postDataJSON()).toEqual({ conflict_id: 'snapshot', choice: 'google' })
@@ -92,6 +99,13 @@ async function settings(page: Page, authorized = true) {
   })
   return {
     writes,
+    uncertain: () => {
+      lists.push({ id: 'list', title: 'prosepect' })
+      status = { ...status, enabled: true, task_list_id: 'list', timezone: 'UTC' }
+      recoveries = [
+        { link_id: 'uncertain', task_id: 'task', title: 'A task with a lost creation response' },
+      ]
+    },
     conflict: (stale = false) => {
       status = { ...status, enabled: true, task_list_id: 'list', timezone: 'UTC' }
       staleChoice = stale
@@ -112,6 +126,35 @@ async function settings(page: Page, authorized = true) {
     },
   }
 }
+
+test('uncertain creation is checked without creating again and detachment requires confirmation', async ({
+  page,
+}) => {
+  const fixture = await settings(page)
+  fixture.uncertain()
+  await page.goto('/settings')
+  const panel = page.getByRole('region', { name: 'Google Tasks', exact: true })
+  await panel.getByRole('button', { name: 'Check Google again' }).click()
+  await expect(panel.getByRole('status')).toContainText('queued')
+  page.once('dialog', (dialog) => dialog.dismiss())
+  await panel.getByRole('button', { name: 'Leave unlinked' }).click()
+  expect(fixture.writes).toEqual(['POST /integrations/google/tasks/sync'])
+  await expect(panel.getByRole('button', { name: 'Leave unlinked' })).toBeVisible()
+  await page.setViewportSize({ width: 320, height: 900 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  )
+  await panel.locator('article').screenshot({ path: test.info().outputPath('recovery-320.png') })
+  page.once('dialog', (dialog) => dialog.accept())
+  await panel.getByRole('button', { name: 'Leave unlinked' }).click()
+  await expect(panel.getByRole('status')).toContainText('Both copies are kept')
+  await expect(panel.getByRole('button', { name: 'Leave unlinked' })).toHaveCount(0)
+  await expect(panel.getByRole('button', { name: 'Refresh Tasks status and lists' })).toBeFocused()
+  expect(fixture.writes).toEqual([
+    'POST /integrations/google/tasks/sync',
+    'POST /integrations/google/tasks/recoveries/uncertain/detach',
+  ])
+})
 
 test('conflict choice is explicit, snapshot-bound and honestly queued', async ({ page }) => {
   const fixture = await settings(page)
