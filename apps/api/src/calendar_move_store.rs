@@ -54,6 +54,7 @@ impl Store {
             ));
         }
         let mut transaction = self.pool.begin().await?;
+        let result: AppResult<CalendarMoveUndo> = async {
         lock_move(&mut transaction, user_id).await?;
         cleanup(&mut transaction, user_id).await?;
         let count: i64 =
@@ -125,12 +126,25 @@ impl Store {
             .bind(task.as_ref().and_then(|task| task.scheduled_end))
             .bind(updated.version).bind(task.as_ref().map(|task| task.version+1)).bind(guard)
             .fetch_one(&mut *transaction).await?;
-        transaction.commit().await?;
         Ok(receipt)
+        }.await;
+        match result {
+            Ok(receipt) => {
+                transaction.commit().await?;
+                Ok(receipt)
+            }
+            Err(error) => {
+                // Drop only queues rollback. Await it so an immediate retry on
+                // another connection cannot observe our owner exclusion lock.
+                transaction.rollback().await?;
+                Err(error)
+            }
+        }
     }
 
     pub async fn undo_calendar_move(&self, user_id: Uuid, receipt_id: Uuid) -> AppResult<()> {
         let mut transaction = self.pool.begin().await?;
+        let result: AppResult<()> = async {
         lock_move(&mut transaction, user_id).await?;
         // Read without locking the receipt first: cascaded task/event deletion locks those rows first.
         let inverse = sqlx::query_as::<_, InverseSchedule>(
@@ -184,8 +198,18 @@ impl Store {
             ));
         }
         cleanup(&mut transaction, user_id).await?;
-        transaction.commit().await?;
         Ok(())
+        }.await;
+        match result {
+            Ok(()) => {
+                transaction.commit().await?;
+                Ok(())
+            }
+            Err(error) => {
+                transaction.rollback().await?;
+                Err(error)
+            }
+        }
     }
 }
 
