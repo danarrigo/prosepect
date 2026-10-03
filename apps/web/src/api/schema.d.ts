@@ -484,6 +484,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/integrations/google/tasks/conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["conflicts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/google/tasks/conflicts/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolve_google_task_conflict"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integrations/google/tasks/lists": {
         parameters: {
             query?: never;
@@ -1157,9 +1189,27 @@ export interface components {
             pending_synchronization_count: number;
             scopes: string[];
         };
+        GoogleTaskConflict: {
+            google: components["schemas"]["TaskFields"];
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            link_id: string;
+            local: components["schemas"]["TaskFields"];
+            remote_etag: string;
+            /** Format: uuid */
+            task_id: string;
+            /** Format: int32 */
+            task_version: number;
+        };
         GoogleTaskList: {
             id: string;
             title: string;
+        };
+        GoogleTaskResolutionRequest: {
+            choice: components["schemas"]["TaskConflictChoice"];
+            /** Format: uuid */
+            conflict_id: string;
         };
         GoogleTasksCreateListRequest: {
             /** Format: int32 */
@@ -1399,6 +1449,8 @@ export interface components {
             /** Format: int32 */
             version: number;
         };
+        /** @enum {string} */
+        TaskConflictChoice: "google" | "prosepect";
         TaskDeleteUndo: {
             /** Format: date-time */
             expires_at: string;
@@ -1410,6 +1462,12 @@ export interface components {
         };
         TaskDeleteUndoList: {
             items: components["schemas"]["TaskDeleteUndo"][];
+        };
+        TaskFields: {
+            completed: boolean;
+            /** Format: date */
+            date?: string | null;
+            title: string;
         };
         TaskPage: {
             items: components["schemas"]["Task"][];
@@ -3011,6 +3069,72 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    conflicts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoogleTaskConflict"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    resolve_google_task_conflict: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoogleTaskResolutionRequest"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

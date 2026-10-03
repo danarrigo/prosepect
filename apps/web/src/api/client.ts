@@ -18,6 +18,8 @@ import type {
   FileUsage,
   GoogleIntegrationStatus,
   GoogleTasksStatus,
+  GoogleTaskConflict,
+  GoogleTaskResolutionRequest,
   GoogleTaskList,
   GoogleTasksSettingsRequest,
   LabelList,
@@ -504,6 +506,21 @@ export async function deleteTask(taskId: string, expectedVersion: number): Promi
       },
     }),
   )
+}
+
+export async function getGoogleTaskConflicts(signal?: AbortSignal): Promise<GoogleTaskConflict[]> {
+  return unwrap(await client.GET('/api/v1/integrations/google/tasks/conflicts', { signal }))
+}
+
+export async function resolveGoogleTaskConflict(
+  linkId: string,
+  body: GoogleTaskResolutionRequest,
+): Promise<void> {
+  const result = await client.POST('/api/v1/integrations/google/tasks/conflicts/{link_id}', {
+    params: { path: { link_id: linkId } },
+    body,
+  })
+  if (!result.response.ok) unwrap(result)
 }
 
 export async function getGoogleTasksStatus(signal?: AbortSignal): Promise<GoogleTasksStatus> {

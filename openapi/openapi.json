@@ -2202,6 +2202,109 @@
         ]
       }
     },
+    "/api/v1/integrations/google/tasks/conflicts": {
+      "get": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "conflicts",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GoogleTaskConflict"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/google/tasks/conflicts/{link_id}": {
+      "post": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "resolve_google_task_conflict",
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleTaskResolutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": ""
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
     "/api/v1/integrations/google/tasks/lists": {
       "get": {
         "tags": [
@@ -5101,6 +5204,45 @@
           }
         }
       },
+      "GoogleTaskConflict": {
+        "type": "object",
+        "required": [
+          "id",
+          "link_id",
+          "task_id",
+          "task_version",
+          "remote_etag",
+          "local",
+          "google"
+        ],
+        "properties": {
+          "google": {
+            "$ref": "#/components/schemas/TaskFields"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "link_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "local": {
+            "$ref": "#/components/schemas/TaskFields"
+          },
+          "remote_etag": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "GoogleTaskList": {
         "type": "object",
         "required": [
@@ -5113,6 +5255,22 @@
           },
           "title": {
             "type": "string"
+          }
+        }
+      },
+      "GoogleTaskResolutionRequest": {
+        "type": "object",
+        "required": [
+          "conflict_id",
+          "choice"
+        ],
+        "properties": {
+          "choice": {
+            "$ref": "#/components/schemas/TaskConflictChoice"
+          },
+          "conflict_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -5909,6 +6067,13 @@
           }
         }
       },
+      "TaskConflictChoice": {
+        "type": "string",
+        "enum": [
+          "google",
+          "prosepect"
+        ]
+      },
       "TaskDeleteUndo": {
         "type": "object",
         "required": [
@@ -5946,6 +6111,28 @@
             "items": {
               "$ref": "#/components/schemas/TaskDeleteUndo"
             }
+          }
+        }
+      },
+      "TaskFields": {
+        "type": "object",
+        "required": [
+          "title",
+          "completed"
+        ],
+        "properties": {
+          "completed": {
+            "type": "boolean"
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "title": {
+            "type": "string"
           }
         }
       },

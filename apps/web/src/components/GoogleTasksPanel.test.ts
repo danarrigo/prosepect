@@ -7,6 +7,8 @@ import GoogleTasksPanel from './GoogleTasksPanel.vue'
 vi.mock('../api/client', async (original) => ({
   ...(await original<typeof api>()),
   getGoogleTasksStatus: vi.fn(),
+  getGoogleTaskConflicts: vi.fn(),
+  resolveGoogleTaskConflict: vi.fn(),
   listGoogleTaskLists: vi.fn(),
   configureGoogleTasks: vi.fn(),
   createGoogleTaskList: vi.fn(),
@@ -36,6 +38,7 @@ function button(wrapper: VueWrapper, text: string) {
 beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(api.getGoogleTasksStatus).mockResolvedValue(initial)
+  vi.mocked(api.getGoogleTaskConflicts).mockResolvedValue([])
   vi.mocked(api.listGoogleTaskLists).mockResolvedValue([{ id: 'list', title: 'prosepect' }])
 })
 afterEach(() => {
@@ -121,6 +124,33 @@ describe('Google Tasks settings', () => {
       expected_version: 3,
     })
     expect(wrapper.text()).toContain('Calendar sync is unchanged')
+  })
+
+  it('queues the displayed conflict identity without claiming it is resolved', async () => {
+    vi.mocked(api.getGoogleTasksStatus).mockResolvedValue({ ...initial, enabled: true })
+    vi.mocked(api.getGoogleTaskConflicts).mockResolvedValue([
+      {
+        id: 'snapshot',
+        link_id: 'link',
+        task_id: 'task',
+        task_version: 3,
+        remote_etag: 'etag',
+        local: { title: 'Local rename', date: null, completed: false },
+        google: { title: 'Google rename', date: '2026-10-03', completed: false },
+      },
+    ])
+    vi.mocked(api.resolveGoogleTaskConflict).mockResolvedValue(undefined)
+    const wrapper = panel()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Google rename')
+    await button(wrapper, 'Keep prosepect edits').trigger('click')
+    await flushPromises()
+    expect(api.resolveGoogleTaskConflict).toHaveBeenCalledWith('link', {
+      conflict_id: 'snapshot',
+      choice: 'prosepect',
+    })
+    expect(button(wrapper, 'Keep Google edits').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[role="status"]').text()).toContain('checked again')
   })
 
   it('aborts pending private reads when the panel unmounts', async () => {

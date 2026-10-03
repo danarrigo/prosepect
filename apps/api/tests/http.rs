@@ -609,6 +609,20 @@ async fn todoist_import_is_created_atomically_through_the_api(pool: PgPool) -> a
     Ok(())
 }
 
+#[test]
+fn openapi_operation_ids_are_unique() -> anyhow::Result<()> {
+    let document = serde_json::to_value(ApiDoc::openapi())?;
+    let mut seen = std::collections::HashSet::new();
+    for methods in document["paths"].as_object().unwrap().values() {
+        for operation in methods.as_object().unwrap().values() {
+            if let Some(id) = operation["operationId"].as_str() {
+                assert!(seen.insert(id), "duplicate OpenAPI operationId: {id}");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn extractor_failures_use_the_error_envelope(pool: PgPool) -> anyhow::Result<()> {
     let openapi = serde_json::to_value(ApiDoc::openapi())?;

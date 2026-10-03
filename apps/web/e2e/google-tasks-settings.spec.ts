@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import type { GoogleTasksStatus } from '../src/api/types'
+import type { GoogleTaskConflict, GoogleTasksStatus } from '../src/api/types'
 
 async function settings(page: Page, authorized = true) {
   let status: GoogleTasksStatus = {
@@ -13,6 +13,8 @@ async function settings(page: Page, authorized = true) {
     version: 0,
   }
   let ambiguous = false
+  let conflicts: GoogleTaskConflict[] = []
+  let staleChoice = false
   const lists: { id: string; title: string }[] = []
   const writes: string[] = []
   await page.route('**/api/v1/**', async (route) => {
@@ -64,6 +66,24 @@ async function settings(page: Page, authorized = true) {
         }
         body = list
       } else body = lists
+    } else if (path === '/integrations/google/tasks/conflicts') body = conflicts
+    else if (path === '/integrations/google/tasks/conflicts/link') {
+      expect(route.request().postDataJSON()).toEqual({ conflict_id: 'snapshot', choice: 'google' })
+      writes.push(method + ' ' + path)
+      await route.fulfill(
+        staleChoice
+          ? {
+              status: 409,
+              json: {
+                error: {
+                  code: 'conflict',
+                  message: 'This conflict changed. Refresh before choosing.',
+                },
+              },
+            }
+          : { status: 202 },
+      )
+      return
     } else if (path === '/integrations/google/tasks/sync') {
       writes.push(method + ' ' + path)
       body = { id: 'sync', kind: 'tasks_sync', status: 'pending', attempt_count: 0 }
@@ -72,11 +92,54 @@ async function settings(page: Page, authorized = true) {
   })
   return {
     writes,
+    conflict: (stale = false) => {
+      status = { ...status, enabled: true, task_list_id: 'list', timezone: 'UTC' }
+      staleChoice = stale
+      conflicts = [
+        {
+          id: 'snapshot',
+          link_id: 'link',
+          task_id: 'task',
+          task_version: 3,
+          remote_etag: 'etag',
+          local: { title: 'Local proposal title', date: null, completed: false },
+          google: { title: 'Revised Google proposal title', date: '2026-10-03', completed: false },
+        },
+      ]
+    },
     ambiguous: () => {
       ambiguous = true
     },
   }
 }
+
+test('conflict choice is explicit, snapshot-bound and honestly queued', async ({ page }) => {
+  const fixture = await settings(page)
+  fixture.conflict()
+  await page.goto('/settings')
+  const panel = page.getByRole('region', { name: 'Google Tasks', exact: true })
+  await expect(panel.getByText('Revised Google proposal title', { exact: true })).toBeVisible()
+  await panel.getByRole('button', { name: 'Keep Google edits' }).click()
+  await expect(panel.getByRole('status')).toContainText('checked again')
+  await expect(panel.getByRole('button', { name: 'Keep prosepect edits' })).toBeDisabled()
+  expect(fixture.writes).toEqual(['POST /integrations/google/tasks/conflicts/link'])
+  await page.setViewportSize({ width: 320, height: 900 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  )
+  await panel.locator('article').screenshot({ path: test.info().outputPath('conflict-320.png') })
+})
+
+test('stale conflict choice stays visible instead of claiming success', async ({ page }) => {
+  const fixture = await settings(page)
+  fixture.conflict(true)
+  await page.goto('/settings')
+  const panel = page.getByRole('region', { name: 'Google Tasks', exact: true })
+  await panel.getByRole('button', { name: 'Keep Google edits' }).click()
+  await expect(panel.getByRole('alert')).toContainText('Refresh before choosing')
+  await expect(panel.getByRole('status')).toHaveCount(0)
+  await expect(panel.getByText('Revised Google proposal title', { exact: true })).toBeVisible()
+})
 
 test('Tasks consent is separate and never starts copying automatically', async ({ page }) => {
   const fixture = await settings(page, false)

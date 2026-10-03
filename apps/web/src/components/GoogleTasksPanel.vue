@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import * as api from '../api/client'
-import type { GoogleTaskList, GoogleTasksStatus } from '../api/types'
+import type {
+  GoogleTaskConflict,
+  GoogleTaskResolutionRequest,
+  GoogleTaskList,
+  GoogleTasksStatus,
+} from '../api/types'
 
 const connectUrl = api.apiUrl('/api/v1/auth/google/tasks/start')
 const status = ref<GoogleTasksStatus | null>(null)
 const lists = ref<GoogleTaskList[]>([])
+const conflicts = ref<GoogleTaskConflict[]>([])
+const queuedChoices = ref(new Set<string>())
 const selectedList = ref('')
 const timezone = ref(Intl.DateTimeFormat().resolvedOptions().timeZone)
 const loading = ref(true)
@@ -29,9 +36,12 @@ async function refresh() {
   try {
     const current = await api.getGoogleTasksStatus(controller.signal)
     const available = current.authorized ? await api.listGoogleTaskLists(controller.signal) : []
+    const unresolved = current.enabled ? await api.getGoogleTaskConflicts(controller.signal) : []
     if (!mounted || controller.signal.aborted) return
     status.value = current
     lists.value = available
+    conflicts.value = unresolved
+    queuedChoices.value = new Set()
     if (!selectedList.value) selectedList.value = current.task_list_id ?? ''
     if (current.timezone) timezone.value = current.timezone
     error.value = ''
@@ -117,6 +127,19 @@ async function syncNow() {
   await perform(async () => {
     await api.syncGoogleTasks()
     if (mounted) message.value = 'Google Tasks synchronization queued; changes are not applied yet.'
+  })
+}
+
+async function resolveConflict(
+  conflict: GoogleTaskConflict,
+  choice: GoogleTaskResolutionRequest['choice'],
+) {
+  await perform(async () => {
+    await api.resolveGoogleTaskConflict(conflict.link_id, { conflict_id: conflict.id, choice })
+    if (!mounted) return
+    queuedChoices.value.add(conflict.id)
+    message.value =
+      'Conflict choice queued. Both copies will be checked again before changes are applied.'
   })
 }
 
@@ -243,6 +266,60 @@ onBeforeUnmount(() => {
           {{ status.last_error }}
         </p>
       </template>
+    </div>
+    <div v-if="status?.enabled && conflicts.length" class="mt-6 space-y-4">
+      <h3 class="text-sm font-semibold">Conflicting task edits</h3>
+      <p class="text-sm text-slate-500 dark:text-slate-400">
+        Choose which app to keep for conflicting fields only. Changes to other fields are preserved.
+      </p>
+      <article
+        v-for="conflict in conflicts"
+        :key="conflict.id"
+        class="rounded-lg border border-slate-200 p-4 dark:border-slate-800"
+      >
+        <h4 class="break-words text-sm font-semibold">{{ conflict.local.title }}</h4>
+        <dl class="mt-3 grid min-w-0 gap-3 text-sm sm:grid-cols-2">
+          <div class="min-w-0">
+            <dt class="font-medium">prosepect</dt>
+            <dd class="mt-1 break-words">{{ conflict.local.title }}</dd>
+            <dd>Deadline date: {{ conflict.local.date ?? 'None' }}</dd>
+            <dd>{{ conflict.local.completed ? 'Completed' : 'Not completed' }}</dd>
+          </div>
+          <div class="min-w-0">
+            <dt class="font-medium">Google Tasks</dt>
+            <dd class="mt-1 break-words">{{ conflict.google.title }}</dd>
+            <dd>Deadline date: {{ conflict.google.date ?? 'None' }}</dd>
+            <dd>{{ conflict.google.completed ? 'Completed' : 'Not completed' }}</dd>
+          </div>
+        </dl>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="secondary-button"
+            :disabled="busy || !status.authorized || queuedChoices.has(conflict.id)"
+            @click="resolveConflict(conflict, 'prosepect')"
+          >
+            Keep prosepect edits
+          </button>
+          <button
+            type="button"
+            class="secondary-button"
+            :disabled="busy || !status.authorized || queuedChoices.has(conflict.id)"
+            @click="resolveConflict(conflict, 'google')"
+          >
+            Keep Google edits
+          </button>
+        </div>
+        <p
+          v-if="queuedChoices.has(conflict.id)"
+          class="mt-2 text-sm text-slate-500 dark:text-slate-400"
+        >
+          Choice queued
+        </p>
+      </article>
+      <p v-if="conflicts.length === 100" class="text-sm text-slate-500 dark:text-slate-400">
+        Showing the first 100 conflicts. More will appear after these are resolved.
+      </p>
     </div>
     <button
       type="button"

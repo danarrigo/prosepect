@@ -478,8 +478,30 @@ async fn conflict_choices_merge_independent_edits_and_reject_stale_snapshots(
             .await
             .is_err()
     );
+    let mut local_edit = edit(&current(&f).await?);
+    local_edit.description = "New private details".into();
+    f.store.update_task(f.user, f.task.id, local_edit).await?;
+    assert!(
+        f.store
+            .resolve_google_task_conflict(
+                f.user,
+                newer.link_id,
+                newer.id,
+                TaskConflictChoice::Google
+            )
+            .await
+            .is_err()
+    );
+    sync(&f, "new-local-version").await?;
+    let newest = f.store.google_task_conflicts(f.user).await?.remove(0);
+    assert_ne!(newest.id, newer.id);
     f.store
-        .resolve_google_task_conflict(f.user, newer.link_id, newer.id, TaskConflictChoice::Google)
+        .resolve_google_task_conflict(
+            f.user,
+            newest.link_id,
+            newest.id,
+            TaskConflictChoice::Google,
+        )
         .await?;
     sync(&f, "fresh-resolution").await?;
     assert_eq!(current(&f).await?.title, "Newer Google rename");
