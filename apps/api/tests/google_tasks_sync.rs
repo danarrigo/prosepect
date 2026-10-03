@@ -305,6 +305,85 @@ async fn tasks_settings_routes_verify_provider_list_and_claim_creation_once(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn list_creation_after_saving_disabled_settings_is_claimed_once(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    use prosepect_api::{
+        auth::CurrentUser,
+        extract::ApiJson,
+        google_tasks_routes::{self, GoogleTasksCreateListRequest, GoogleTasksSettingsRequest},
+    };
+    let f = fixture(&pool).await?;
+    sqlx::query("DELETE FROM google_task_connections WHERE user_id=$1")
+        .bind(f.user)
+        .execute(&pool)
+        .await?;
+    let state = app_state(&f)?;
+    let disabled = google_tasks_routes::configure(
+        State(state.clone()),
+        CurrentUser(f.user),
+        ApiJson(GoogleTasksSettingsRequest {
+            enabled: false,
+            task_list_id: None,
+            timezone: None,
+            expected_version: 0,
+        }),
+    )
+    .await?
+    .0;
+    assert_eq!(disabled.version, 1);
+    assert!(!disabled.list_create_attempted);
+    let stale = google_tasks_routes::create_list(
+        State(state.clone()),
+        CurrentUser(f.user),
+        ApiJson(GoogleTasksCreateListRequest {
+            expected_version: 0,
+        }),
+    )
+    .await;
+    assert!(stale.is_err());
+    assert_eq!(f.provider.list_creates.load(Ordering::SeqCst), 0);
+    let (first, concurrent) = tokio::join!(
+        google_tasks_routes::create_list(
+            State(state.clone()),
+            CurrentUser(f.user),
+            ApiJson(GoogleTasksCreateListRequest {
+                expected_version: 1
+            })
+        ),
+        google_tasks_routes::create_list(
+            State(state.clone()),
+            CurrentUser(f.user),
+            ApiJson(GoogleTasksCreateListRequest {
+                expected_version: 1
+            })
+        ),
+    );
+    assert_eq!(
+        usize::from(first.is_ok()) + usize::from(concurrent.is_ok()),
+        1,
+        "one current-version request must create the list: {first:?}, {concurrent:?}"
+    );
+    assert_eq!(f.provider.list_creates.load(Ordering::SeqCst), 1);
+    let current = f.store.google_tasks_status(f.user).await?;
+    assert!(current.list_create_attempted);
+    assert_eq!(current.version, 2);
+    assert!(
+        google_tasks_routes::create_list(
+            State(state),
+            CurrentUser(f.user),
+            ApiJson(GoogleTasksCreateListRequest {
+                expected_version: 2
+            })
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(f.provider.list_creates.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn tasks_sync_merges_both_directions_without_losing_deadline_time_or_private_fields(
     pool: PgPool,
 ) -> anyhow::Result<()> {
