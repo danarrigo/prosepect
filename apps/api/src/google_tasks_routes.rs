@@ -123,8 +123,13 @@ pub async fn create_list(
     let token = token(&state, user).await?;
     // Claim is durable before POST. If its result is lost, list discovery (not a
     // repeated POST) lets the user choose the already-created list explicitly.
-    let claimed = sqlx::query("INSERT INTO google_task_connections(user_id,list_create_attempted) SELECT $1,TRUE WHERE $2=0 ON CONFLICT(user_id) DO UPDATE SET list_create_attempted=TRUE,version=google_task_connections.version+1 WHERE NOT google_task_connections.list_create_attempted AND google_task_connections.version=$2")
-        .bind(user).bind(request.expected_version).execute(&state.store.pool).await?;
+    let claimed = if request.expected_version == 0 {
+        sqlx::query("INSERT INTO google_task_connections(user_id,list_create_attempted) VALUES($1,TRUE) ON CONFLICT(user_id) DO NOTHING")
+            .bind(user).execute(&state.store.pool).await?
+    } else {
+        sqlx::query("UPDATE google_task_connections SET list_create_attempted=TRUE,version=version+1 WHERE user_id=$1 AND version=$2 AND NOT list_create_attempted AND NOT enabled AND task_list_id IS NULL")
+            .bind(user).bind(request.expected_version).execute(&state.store.pool).await?
+    };
     if claimed.rows_affected() != 1 {
         return Err(AppError::Conflict("Refresh the lists and choose an existing list. An earlier creation may already have succeeded.".into()));
     }

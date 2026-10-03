@@ -619,6 +619,50 @@ async fn uncertain_task_create_recovers_without_duplicate_posts_or_imports(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn uncertain_creation_recovers_later_edits_without_overwriting_either_app(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    f.provider.ambiguous_create.store(true, Ordering::SeqCst);
+    sync(&f, "ambiguous").await?;
+    let mut request = edit(&current(&f).await?);
+    request.title = "Edited locally after lost response".into();
+    f.store.update_task(f.user, f.task.id, request).await?;
+    f.provider.tasks.lock().await.get_mut("remote-0").unwrap()["title"] =
+        json!("Edited on Google after creation");
+    sync(&f, "recover-edited").await?;
+    let phase: String = sqlx::query_scalar("SELECT phase FROM google_task_links WHERE user_id=$1")
+        .bind(f.user)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(
+        phase, "linked",
+        "a unique provenance marker should recover identity, not require unchanged content"
+    );
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(f.provider.patches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 100)
+            .await?
+            .items
+            .len(),
+        1
+    );
+    sync(&f, "reconcile-recovered").await?;
+    let conflicts = f.store.google_task_conflicts(f.user).await?;
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(
+        conflicts[0].local.title,
+        "Edited locally after lost response"
+    );
+    assert_eq!(conflicts[0].google.title, "Edited on Google after creation");
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(f.provider.patches.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn tasks_import_is_atomic_and_deletion_does_not_resurrect_or_destroy_either_copy(
     pool: PgPool,
 ) -> anyhow::Result<()> {
