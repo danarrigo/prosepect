@@ -719,6 +719,84 @@ async fn uncertain_task_create_recovers_without_duplicate_posts_or_imports(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn uncertain_creation_can_be_left_unlinked_without_writes_or_reimport(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let f = fixture(&pool).await?;
+    f.provider.ambiguous_create.store(true, Ordering::SeqCst);
+    sync(&f, "ambiguous").await?;
+    let remote = f.provider.tasks.lock().await.remove("remote-0").unwrap();
+    let recoveries = f.store.google_task_recoveries(f.user).await?;
+    assert_eq!(recoveries.len(), 1);
+    let recovery = &recoveries[0];
+    assert_eq!(recovery.task_id, f.task.id);
+    assert!(
+        f.store
+            .google_task_recoveries(Uuid::now_v7())
+            .await?
+            .is_empty()
+    );
+    assert!(
+        f.store
+            .leave_google_task_unlinked(Uuid::now_v7(), recovery.link_id)
+            .await
+            .is_err()
+    );
+    let mut worker = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(format!("prosepect-sync:{}", f.user))
+        .execute(&mut *worker)
+        .await?;
+    assert!(
+        f.store
+            .leave_google_task_unlinked(f.user, recovery.link_id)
+            .await
+            .is_err()
+    );
+    worker.rollback().await?;
+    let receipt = f
+        .store
+        .delete_task_with_undo(f.user, f.task.id, f.task.version)
+        .await?;
+    assert!(
+        f.store
+            .leave_google_task_unlinked(f.user, recovery.link_id)
+            .await
+            .is_err()
+    );
+    f.store.undo_task_delete(f.user, receipt.id, None).await?;
+    f.store
+        .leave_google_task_unlinked(f.user, recovery.link_id)
+        .await?;
+    assert!(
+        f.store
+            .leave_google_task_unlinked(f.user, recovery.link_id)
+            .await
+            .is_err()
+    );
+    assert!(f.store.google_task_recoveries(f.user).await?.is_empty());
+    // A delayed Google copy retains the marker. Do not recreate or import it.
+    f.provider
+        .tasks
+        .lock()
+        .await
+        .insert("remote-0".into(), remote);
+    sync(&f, "after-detach").await?;
+    assert_eq!(f.provider.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(f.provider.patches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        f.store
+            .list_tasks(f.user, None, None, 100)
+            .await?
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(current(&f).await?.title, f.task.title);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn uncertain_creation_never_retries_missing_or_duplicate_provenance(
     pool: PgPool,
 ) -> anyhow::Result<()> {

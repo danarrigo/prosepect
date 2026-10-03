@@ -149,6 +149,8 @@ pub struct AppState {
         google_tasks_routes::synchronize,
         google_tasks_routes::conflicts,
         google_tasks_routes::resolve_conflict,
+        google_tasks_routes::recoveries,
+        google_tasks_routes::leave_unlinked,
         sync_routes::google_status,
         sync_routes::discover_google_calendars,
         sync_routes::revoke_google,
@@ -160,6 +162,7 @@ pub struct AppState {
     ),
     components(schemas(
         crate::google_tasks_store::GoogleTasksStatus,
+        crate::google_tasks_store::GoogleTaskRecovery,
         crate::google_tasks::GoogleTaskConflict,
         crate::google_tasks::TaskConflictChoice,
         crate::google_tasks::TaskFields,
@@ -421,6 +424,14 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         .route(
             "/integrations/google/tasks/lists",
             get(google_tasks_routes::lists).post(google_tasks_routes::create_list),
+        )
+        .route(
+            "/integrations/google/tasks/recoveries",
+            get(google_tasks_routes::recoveries),
+        )
+        .route(
+            "/integrations/google/tasks/recoveries/{link_id}/detach",
+            post(google_tasks_routes::leave_unlinked),
         )
         .route(
             "/integrations/google/tasks/conflicts",

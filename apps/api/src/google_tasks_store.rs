@@ -22,7 +22,45 @@ pub struct GoogleTasksStatus {
     pub version: i32,
 }
 
+#[derive(Debug, Serialize, FromRow, ToSchema)]
+pub struct GoogleTaskRecovery {
+    pub link_id: Uuid,
+    pub task_id: Uuid,
+    pub title: String,
+}
+
 impl Store {
+    pub async fn google_task_recoveries(&self, user: Uuid) -> AppResult<Vec<GoogleTaskRecovery>> {
+        Ok(sqlx::query_as("SELECT id AS link_id,task_id,baseline->>'title' AS title FROM google_task_links WHERE user_id=$1 AND phase='creating' ORDER BY id LIMIT 100")
+            .bind(user).fetch_all(&self.pool).await?)
+    }
+
+    /// Detach only an uncertain creation. Keep its provenance marker permanently
+    /// so discovery cannot import that same marked copy as an unrelated task.
+    pub async fn leave_google_task_unlinked(&self, user: Uuid, link: Uuid) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        let result: AppResult<()> = async {
+            sqlx::query("SET LOCAL lock_timeout = '100ms'").execute(&mut *tx).await?;
+            let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(format!("prosepect-sync:{user}")).fetch_one(&mut *tx).await?;
+            if !acquired { return Err(AppError::Conflict("Synchronization is active. Try again shortly.".into())); }
+            let changed = sqlx::query("UPDATE google_task_links l SET phase='detached',last_error=NULL,conflict=NULL,resolution=NULL,updated_at=NOW() WHERE user_id=$1 AND id=$2 AND phase='creating' AND NOT EXISTS(SELECT 1 FROM task_delete_undos u WHERE u.user_id=l.user_id AND u.task_id=l.task_id AND u.expires_at>clock_timestamp())")
+                .bind(user).bind(link).execute(&mut *tx).await.map_err(config_error)?;
+            if changed.rows_affected() != 1 {
+                return Err(AppError::Conflict("Recovery changed or deletion Undo is active. Refresh before choosing.".into()));
+            }
+            Ok(())
+        }.await;
+        match result {
+            Ok(()) => tx.commit().await?,
+            Err(error) => {
+                tx.rollback().await?;
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
     pub async fn google_tasks_status(&self, user: Uuid) -> AppResult<GoogleTasksStatus> {
         sqlx::query_as(
             "SELECT EXISTS(SELECT 1 FROM google_accounts g WHERE g.user_id=u.id AND $2=ANY(g.scopes)) AS authorized,

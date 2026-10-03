@@ -14,7 +14,7 @@ use crate::{
     extract::ApiJson,
     google_tasks::{GoogleTaskConflict, TaskConflictChoice},
     google_tasks_client::GoogleTaskList,
-    google_tasks_store::GoogleTasksStatus,
+    google_tasks_store::{GoogleTaskRecovery, GoogleTasksStatus},
     models::Synchronization,
 };
 
@@ -205,6 +205,27 @@ pub async fn resolve_conflict(
         .await?;
     state.sync_dispatcher.wake();
     Ok(StatusCode::ACCEPTED)
+}
+
+#[utoipa::path(get,operation_id="google_task_recoveries",path="/api/v1/integrations/google/tasks/recoveries",responses((status=200,body=Vec<GoogleTaskRecovery>),(status=401,body=ErrorResponse)),security(("session_cookie"=[]),("development_user"=[])),tag="synchronization")]
+pub async fn recoveries(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> AppResult<Json<Vec<GoogleTaskRecovery>>> {
+    Ok(Json(state.store.google_task_recoveries(user).await?))
+}
+
+#[utoipa::path(post,operation_id="leave_google_task_unlinked",path="/api/v1/integrations/google/tasks/recoveries/{link_id}/detach",params(("link_id"=Uuid,Path)),responses((status=204),(status=401,body=ErrorResponse),(status=409,body=ErrorResponse)),security(("session_cookie"=[]),("development_user"=[])),tag="synchronization")]
+pub async fn leave_unlinked(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(link): Path<Uuid>,
+) -> AppResult<StatusCode> {
+    state
+        .action_rate_limiter
+        .check_key(&format!("tasks-recovery:{user}"))?;
+    state.store.leave_google_task_unlinked(user, link).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn token(state: &AppState, user: Uuid) -> AppResult<String> {
