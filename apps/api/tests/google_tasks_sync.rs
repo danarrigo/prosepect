@@ -379,6 +379,115 @@ async fn tasks_sync_preserves_same_field_conflicts_and_conditional_write_rejecti
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn conflict_choices_merge_independent_edits_and_reject_stale_snapshots(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    use prosepect_api::google_tasks::TaskConflictChoice;
+    let f = fixture(&pool).await?;
+    sync(&f, "initial").await?;
+    let mut request = edit(&current(&f).await?);
+    request.title = "Local rename".into();
+    f.store.update_task(f.user, f.task.id, request).await?;
+    {
+        let mut remote = f.provider.tasks.lock().await;
+        remote.get_mut("remote-0").unwrap()["title"] = json!("Google rename");
+        remote.get_mut("remote-0").unwrap()["due"] = json!("2026-10-03T00:00:00.000Z");
+    }
+    sync(&f, "conflict").await?;
+    let conflicts = f.store.google_task_conflicts(f.user).await?;
+    assert_eq!(conflicts.len(), 1);
+    let conflict = &conflicts[0];
+    assert!(
+        f.store
+            .google_task_conflicts(Uuid::now_v7())
+            .await?
+            .is_empty()
+    );
+    assert!(
+        f.store
+            .resolve_google_task_conflict(
+                Uuid::now_v7(),
+                conflict.link_id,
+                conflict.id,
+                TaskConflictChoice::Prosepect
+            )
+            .await
+            .is_err()
+    );
+    f.store
+        .resolve_google_task_conflict(
+            f.user,
+            conflict.link_id,
+            conflict.id,
+            TaskConflictChoice::Prosepect,
+        )
+        .await?;
+    assert!(
+        f.store
+            .resolve_google_task_conflict(
+                f.user,
+                conflict.link_id,
+                conflict.id,
+                TaskConflictChoice::Google
+            )
+            .await
+            .is_err()
+    );
+    sync(&f, "resolve").await?;
+    assert_eq!(current(&f).await?.title, "Local rename");
+    assert_eq!(
+        current(&f).await?.due_at,
+        Some("2026-10-03T08:30:00Z".parse()?)
+    );
+    assert_eq!(
+        f.provider.tasks.lock().await["remote-0"]["title"],
+        "Local rename"
+    );
+    assert!(f.store.google_task_conflicts(f.user).await?.is_empty());
+
+    let mut request = edit(&current(&f).await?);
+    request.title = "Second local rename".into();
+    f.store.update_task(f.user, f.task.id, request).await?;
+    f.provider.tasks.lock().await.get_mut("remote-0").unwrap()["title"] =
+        json!("Second Google rename");
+    sync(&f, "second-conflict").await?;
+    let conflict = f.store.google_task_conflicts(f.user).await?.remove(0);
+    f.store
+        .resolve_google_task_conflict(
+            f.user,
+            conflict.link_id,
+            conflict.id,
+            TaskConflictChoice::Google,
+        )
+        .await?;
+    f.provider.tasks.lock().await.get_mut("remote-0").unwrap()["title"] =
+        json!("Newer Google rename");
+    sync(&f, "stale-resolution").await?;
+    assert_eq!(current(&f).await?.title, "Second local rename");
+    let newer = f.store.google_task_conflicts(f.user).await?.remove(0);
+    assert_ne!(newer.id, conflict.id);
+    assert_eq!(newer.google.title, "Newer Google rename");
+    assert!(
+        f.store
+            .resolve_google_task_conflict(
+                f.user,
+                conflict.link_id,
+                conflict.id,
+                TaskConflictChoice::Google
+            )
+            .await
+            .is_err()
+    );
+    f.store
+        .resolve_google_task_conflict(f.user, newer.link_id, newer.id, TaskConflictChoice::Google)
+        .await?;
+    sync(&f, "fresh-resolution").await?;
+    assert_eq!(current(&f).await?.title, "Newer Google rename");
+    assert!(f.store.google_task_conflicts(f.user).await?.is_empty());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn uncertain_task_create_recovers_without_duplicate_posts_or_imports(
     pool: PgPool,
 ) -> anyhow::Result<()> {

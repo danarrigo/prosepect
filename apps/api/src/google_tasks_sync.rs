@@ -8,7 +8,9 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::{
-    google_tasks::{TaskFields, reconcile},
+    google_tasks::{
+        GoogleTaskConflict, TaskConflictChoice, TaskFields, reconcile, resolve_conflicting_fields,
+    },
     google_tasks_client::{GoogleTask, TasksError},
     models::{Task, TaskStatus, UpdateTaskRequest},
     store::Store,
@@ -23,6 +25,8 @@ struct Link {
     baseline: Option<Value>,
     phase: String,
     create_reference: Option<String>,
+    conflict: Option<Value>,
+    resolution: Option<String>,
 }
 
 struct TaskSyncContext<'a> {
@@ -82,7 +86,7 @@ impl SyncService {
                 .bind(id).bind(user).bind(&list).bind(task.id).bind(serde_json::to_value(fields)?)
                 .bind(format!("prosepect task reference: {id}")).execute(&self.store.pool).await?;
         }
-        let links: Vec<Link> = sqlx::query_as("SELECT id,task_id,external_task_id,baseline,phase,create_reference FROM google_task_links WHERE user_id=$1 AND task_list_id=$2 ORDER BY id")
+        let links: Vec<Link> = sqlx::query_as("SELECT id,task_id,external_task_id,baseline,phase,create_reference,conflict,resolution FROM google_task_links WHERE user_id=$1 AND task_list_id=$2 ORDER BY id")
             .bind(user).bind(&list).fetch_all(&self.store.pool).await?;
         let mut known: HashSet<String> = links
             .iter()
@@ -273,8 +277,59 @@ impl SyncService {
         let remote_fields = remote.fields()?;
         let baseline: TaskFields =
             serde_json::from_value(link.baseline.clone().context("Missing baseline")?)?;
-        let merged = reconcile(&baseline, &local, &remote_fields)
-            .map_err(|_| anyhow::anyhow!("Both apps changed the same task field"))?;
+        let merged = match reconcile(&baseline, &local, &remote_fields) {
+            Ok(merged) => merged,
+            Err(_) => {
+                let previous = link
+                    .conflict
+                    .as_ref()
+                    .map(|value| serde_json::from_value::<GoogleTaskConflict>(value.clone()))
+                    .transpose()?;
+                let current = previous.as_ref().is_some_and(|conflict| {
+                    conflict.task_version == task.version
+                        && conflict.local == local
+                        && conflict.google == remote_fields
+                        && Some(conflict.remote_etag.as_str()) == remote.etag.as_deref()
+                });
+                let choice = if current {
+                    link.resolution.as_deref()
+                } else {
+                    None
+                };
+                match choice {
+                    Some("google" | "prosepect") => resolve_conflicting_fields(
+                        &baseline,
+                        &local,
+                        &remote_fields,
+                        if choice == Some("google") {
+                            TaskConflictChoice::Google
+                        } else {
+                            TaskConflictChoice::Prosepect
+                        },
+                    ),
+                    _ => {
+                        if !current {
+                            let conflict = GoogleTaskConflict {
+                                id: Uuid::now_v7(),
+                                link_id: link.id,
+                                task_id: task.id,
+                                task_version: task.version,
+                                remote_etag: remote
+                                    .etag
+                                    .clone()
+                                    .context("Missing conflict ETag")?,
+                                local,
+                                google: remote_fields,
+                            };
+                            sqlx::query("UPDATE google_task_links SET conflict=$3,resolution=NULL,updated_at=NOW() WHERE user_id=$1 AND id=$2")
+                                .bind(user).bind(link.id).bind(serde_json::to_value(conflict)?)
+                                .execute(&self.store.pool).await?;
+                        }
+                        bail!("Both apps changed the same task field");
+                    }
+                }
+            }
+        };
         let mut acknowledged = remote.clone();
         if merged != remote_fields {
             let etag = remote.etag.as_deref().context("Missing provider ETag")?;
@@ -342,13 +397,13 @@ impl SyncService {
             .as_deref()
             .filter(|etag| !etag.is_empty())
             .context("Missing acknowledged ETag")?;
-        sqlx::query("UPDATE google_task_links SET phase='linked',external_task_id=$3,external_etag=$4,baseline=$5,last_error=NULL,updated_at=NOW() WHERE id=$1 AND user_id=$2")
+        sqlx::query("UPDATE google_task_links SET phase='linked',external_task_id=$3,external_etag=$4,baseline=$5,conflict=NULL,resolution=NULL,last_error=NULL,updated_at=NOW() WHERE id=$1 AND user_id=$2")
             .bind(link).bind(user).bind(&task.id).bind(etag).bind(serde_json::to_value(fields)?).execute(&self.store.pool).await?;
         Ok(())
     }
 
     async fn detach_google_task(&self, user: Uuid, link: Uuid) -> Result<()> {
-        sqlx::query("UPDATE google_task_links SET phase='detached',last_error=NULL,updated_at=NOW() WHERE id=$1 AND user_id=$2")
+        sqlx::query("UPDATE google_task_links SET phase='detached',conflict=NULL,resolution=NULL,last_error=NULL,updated_at=NOW() WHERE id=$1 AND user_id=$2")
             .bind(link).bind(user).execute(&self.store.pool).await?;
         Ok(())
     }

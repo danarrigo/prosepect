@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub const TASKS_SCOPE: &str = "https://www.googleapis.com/auth/tasks";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct TaskFields {
     pub title: String,
     pub date: Option<NaiveDate>,
@@ -35,6 +35,44 @@ pub fn reconcile(
         completed: merge(&baseline.completed, &local.completed, &remote.completed)
             .ok_or(ConflictField::Completion)?,
     })
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskConflictChoice {
+    Google,
+    Prosepect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct GoogleTaskConflict {
+    pub id: uuid::Uuid,
+    pub link_id: uuid::Uuid,
+    pub task_id: uuid::Uuid,
+    pub task_version: i32,
+    pub remote_etag: String,
+    pub local: TaskFields,
+    pub google: TaskFields,
+}
+
+/// Resolve only divergent fields; independent edits still merge normally.
+pub fn resolve_conflicting_fields(
+    baseline: &TaskFields,
+    local: &TaskFields,
+    remote: &TaskFields,
+    choice: TaskConflictChoice,
+) -> TaskFields {
+    let preferred = match choice {
+        TaskConflictChoice::Google => remote,
+        TaskConflictChoice::Prosepect => local,
+    };
+    TaskFields {
+        title: merge(&baseline.title, &local.title, &remote.title)
+            .unwrap_or_else(|| preferred.title.clone()),
+        date: merge(&baseline.date, &local.date, &remote.date).unwrap_or(preferred.date),
+        completed: merge(&baseline.completed, &local.completed, &remote.completed)
+            .unwrap_or(preferred.completed),
+    }
 }
 
 fn merge<T: Clone + PartialEq>(baseline: &T, local: &T, remote: &T) -> Option<T> {

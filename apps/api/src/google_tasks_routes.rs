@@ -1,4 +1,8 @@
-use axum::{extract::State, http::StatusCode, response::Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::Json,
+};
 use serde::Deserialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -8,6 +12,7 @@ use crate::{
     auth::CurrentUser,
     error::{AppError, AppResult, ErrorResponse},
     extract::ApiJson,
+    google_tasks::{GoogleTaskConflict, TaskConflictChoice},
     google_tasks_client::GoogleTaskList,
     google_tasks_store::GoogleTasksStatus,
     models::Synchronization,
@@ -163,6 +168,38 @@ pub async fn synchronize(
         .await?;
     state.sync_dispatcher.wake();
     Ok((StatusCode::ACCEPTED, Json(job)))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct GoogleTaskResolutionRequest {
+    pub conflict_id: Uuid,
+    pub choice: TaskConflictChoice,
+}
+
+#[utoipa::path(get,path="/api/v1/integrations/google/tasks/conflicts",responses((status=200,body=Vec<GoogleTaskConflict>),(status=401,body=ErrorResponse)),security(("session_cookie"=[]),("development_user"=[])),tag="synchronization")]
+pub async fn conflicts(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> AppResult<Json<Vec<GoogleTaskConflict>>> {
+    Ok(Json(state.store.google_task_conflicts(user).await?))
+}
+
+#[utoipa::path(post,path="/api/v1/integrations/google/tasks/conflicts/{link_id}",params(("link_id"=Uuid,Path)),request_body=GoogleTaskResolutionRequest,responses((status=202),(status=401,body=ErrorResponse),(status=409,body=ErrorResponse)),security(("session_cookie"=[]),("development_user"=[])),tag="synchronization")]
+pub async fn resolve_conflict(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(link): Path<Uuid>,
+    ApiJson(request): ApiJson<GoogleTaskResolutionRequest>,
+) -> AppResult<StatusCode> {
+    state
+        .action_rate_limiter
+        .check_key(&format!("tasks-resolve:{user}"))?;
+    state
+        .store
+        .resolve_google_task_conflict(user, link, request.conflict_id, request.choice)
+        .await?;
+    state.sync_dispatcher.wake();
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn token(state: &AppState, user: Uuid) -> AppResult<String> {

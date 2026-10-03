@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    google_tasks::TASKS_SCOPE,
+    google_tasks::{GoogleTaskConflict, TASKS_SCOPE, TaskConflictChoice},
     store::Store,
 };
 
@@ -98,6 +98,54 @@ impl Store {
             }
         }
         self.google_tasks_status(user).await
+    }
+
+    pub async fn google_task_conflicts(&self, user: Uuid) -> AppResult<Vec<GoogleTaskConflict>> {
+        let rows: Vec<serde_json::Value> = sqlx::query_scalar(
+            "SELECT conflict FROM google_task_links WHERE user_id=$1 AND conflict IS NOT NULL AND resolution IS NULL ORDER BY id LIMIT 100"
+        ).bind(user).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(|row| {
+                serde_json::from_value(row).map_err(|error| AppError::Integration(error.into()))
+            })
+            .collect()
+    }
+
+    /// Queue a choice, never apply a stale browser snapshot. The worker checks
+    /// both app snapshots again before making an ETag-conditional provider write.
+    pub async fn resolve_google_task_conflict(
+        &self,
+        user: Uuid,
+        link: Uuid,
+        conflict: Uuid,
+        choice: TaskConflictChoice,
+    ) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        let result: AppResult<()> = async {
+            sqlx::query("SET LOCAL lock_timeout = '100ms'").execute(&mut *tx).await?;
+            let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(format!("prosepect-sync:{user}")).fetch_one(&mut *tx).await?;
+            if !acquired { return Err(AppError::Conflict("Synchronization is active. Try again shortly.".into())); }
+            let changed = sqlx::query("UPDATE google_task_links l SET resolution=$4,updated_at=NOW() FROM google_task_connections c, tasks t WHERE l.id=$1 AND l.user_id=$2 AND l.conflict->>'id'=$3 AND l.resolution IS NULL AND l.phase='linked' AND c.user_id=l.user_id AND c.enabled AND c.task_list_id=l.task_list_id AND t.id=l.task_id AND t.user_id=l.user_id AND t.version=(l.conflict->>'task_version')::INTEGER AND EXISTS(SELECT 1 FROM google_accounts g WHERE g.user_id=l.user_id AND $5=ANY(g.scopes))")
+                .bind(link).bind(user).bind(conflict.to_string())
+                .bind(match choice { TaskConflictChoice::Google => "google", TaskConflictChoice::Prosepect => "prosepect" })
+                .bind(TASKS_SCOPE).execute(&mut *tx).await.map_err(config_error)?;
+            if changed.rows_affected() != 1 {
+                return Err(AppError::Conflict("This conflict changed or Tasks sync is disabled. Refresh before choosing.".into()));
+            }
+            sqlx::query("INSERT INTO sync_jobs(id,user_id,kind,idempotency_key) VALUES($1,$2,'tasks_sync',$3) ON CONFLICT(user_id,idempotency_key) DO NOTHING")
+                .bind(Uuid::now_v7()).bind(user).bind(format!("tasks-conflict:{conflict}"))
+                .execute(&mut *tx).await?;
+            Ok(())
+        }.await;
+        match result {
+            Ok(()) => tx.commit().await?,
+            Err(error) => {
+                tx.rollback().await?;
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 
     /// Convert a remote calendar day without replacing an existing deadline's
