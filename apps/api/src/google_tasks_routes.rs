@@ -184,7 +184,7 @@ pub async fn conflicts(
     Ok(Json(state.store.google_task_conflicts(user).await?))
 }
 
-#[utoipa::path(post,path="/api/v1/integrations/google/tasks/conflicts/{link_id}",params(("link_id"=Uuid,Path)),request_body=GoogleTaskResolutionRequest,responses((status=202),(status=401,body=ErrorResponse),(status=409,body=ErrorResponse)),security(("session_cookie"=[]),("development_user"=[])),tag="synchronization")]
+#[utoipa::path(post,operation_id="resolve_google_task_conflict",path="/api/v1/integrations/google/tasks/conflicts/{link_id}",params(("link_id"=Uuid,Path)),request_body=GoogleTaskResolutionRequest,responses((status=202),(status=401,body=ErrorResponse),(status=409,body=ErrorResponse)),security(("session_cookie"=[]),("development_user"=[])),tag="synchronization")]
 pub async fn resolve_conflict(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
