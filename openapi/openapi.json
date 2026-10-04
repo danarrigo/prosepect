@@ -278,6 +278,47 @@
         }
       }
     },
+    "/api/v1/auth/google/tasks/start": {
+      "get": {
+        "tags": [
+          "authentication"
+        ],
+        "operationId": "google_tasks_connect_start",
+        "responses": {
+          "307": {
+            "description": "Redirect to Google for incremental Tasks consent"
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
     "/api/v1/calendar-move-undos": {
       "get": {
         "tags": [
@@ -2037,6 +2078,491 @@
             }
           },
           "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/google/tasks": {
+      "get": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleTasksStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "configure",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleTasksSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleTasksStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/google/tasks/conflicts": {
+      "get": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "conflicts",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GoogleTaskConflict"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/google/tasks/conflicts/{link_id}": {
+      "post": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "resolve_google_task_conflict",
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleTaskResolutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": ""
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/google/tasks/lists": {
+      "get": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "lists",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GoogleTaskList"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "create_list",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleTasksCreateListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleTaskList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/google/tasks/recoveries": {
+      "get": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "google_task_recoveries",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GoogleTaskRecovery"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/google/tasks/recoveries/{link_id}/detach": {
+      "post": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "leave_google_task_unlinked",
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          },
+          {
+            "development_user": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/google/tasks/sync": {
+      "post": {
+        "tags": [
+          "synchronization"
+        ],
+        "operationId": "synchronize",
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Synchronization"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
             "description": "",
             "content": {
               "application/json": {
@@ -4771,6 +5297,186 @@
           }
         }
       },
+      "GoogleTaskConflict": {
+        "type": "object",
+        "required": [
+          "id",
+          "link_id",
+          "task_id",
+          "task_version",
+          "remote_etag",
+          "local",
+          "google"
+        ],
+        "properties": {
+          "google": {
+            "$ref": "#/components/schemas/TaskFields"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "link_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "local": {
+            "$ref": "#/components/schemas/TaskFields"
+          },
+          "remote_etag": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "GoogleTaskList": {
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "GoogleTaskRecovery": {
+        "type": "object",
+        "required": [
+          "link_id",
+          "task_id",
+          "title"
+        ],
+        "properties": {
+          "link_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "GoogleTaskResolutionRequest": {
+        "type": "object",
+        "required": [
+          "conflict_id",
+          "choice"
+        ],
+        "properties": {
+          "choice": {
+            "$ref": "#/components/schemas/TaskConflictChoice"
+          },
+          "conflict_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "GoogleTasksCreateListRequest": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "GoogleTasksSettingsRequest": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "expected_version"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "task_list_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "GoogleTasksStatus": {
+        "type": "object",
+        "required": [
+          "authorized",
+          "enabled",
+          "list_create_attempted",
+          "version"
+        ],
+        "properties": {
+          "authorized": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_synced_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "list_create_attempted": {
+            "type": "boolean"
+          },
+          "task_list_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "HealthResponse": {
         "type": "object",
         "required": [
@@ -5475,6 +6181,13 @@
           }
         }
       },
+      "TaskConflictChoice": {
+        "type": "string",
+        "enum": [
+          "google",
+          "prosepect"
+        ]
+      },
       "TaskDeleteUndo": {
         "type": "object",
         "required": [
@@ -5512,6 +6225,28 @@
             "items": {
               "$ref": "#/components/schemas/TaskDeleteUndo"
             }
+          }
+        }
+      },
+      "TaskFields": {
+        "type": "object",
+        "required": [
+          "title",
+          "completed"
+        ],
+        "properties": {
+          "completed": {
+            "type": "boolean"
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "title": {
+            "type": "string"
           }
         }
       },

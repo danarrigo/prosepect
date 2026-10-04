@@ -88,14 +88,22 @@ impl GoogleOAuth {
     }
 
     pub async fn begin_login(&self) -> Result<GoogleLoginStart> {
-        self.begin_authorization(false).await
+        self.begin_authorization(false, false).await
     }
 
     pub async fn begin_calendar_connection(&self) -> Result<GoogleLoginStart> {
-        self.begin_authorization(true).await
+        self.begin_authorization(true, false).await
     }
 
-    async fn begin_authorization(&self, calendar_access: bool) -> Result<GoogleLoginStart> {
+    pub async fn begin_tasks_connection(&self) -> Result<GoogleLoginStart> {
+        self.begin_authorization(false, true).await
+    }
+
+    async fn begin_authorization(
+        &self,
+        calendar_access: bool,
+        tasks_access: bool,
+    ) -> Result<GoogleLoginStart> {
         let metadata = self.provider_metadata().await?.clone();
         let client = CoreClient::from_provider_metadata(
             metadata,
@@ -122,6 +130,18 @@ impl GoogleOAuth {
                 .add_scope(Scope::new(
                     "https://www.googleapis.com/auth/calendar.calendarlist.readonly".to_owned(),
                 ))
+        } else {
+            request
+        };
+        let request = if tasks_access {
+            request.add_scope(Scope::new(crate::google_tasks::TASKS_SCOPE.to_owned()))
+        } else {
+            request
+        };
+        let request = if calendar_access || tasks_access {
+            // Incremental consent must not discard the other enabled integration.
+            request
+                .add_extra_param("include_granted_scopes", "true")
                 .add_extra_param("prompt", "consent")
         } else {
             request
@@ -329,4 +349,67 @@ impl GoogleOAuth {
 struct RefreshTokenResponse {
     access_token: String,
     expires_in: i64,
+}
+
+#[cfg(test)]
+mod consent_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn offline_google() -> GoogleOAuth {
+        let google = GoogleOAuth::new(GoogleOAuthConfig {
+            client_id: "test-client".into(),
+            client_secret: "test-secret".into(),
+            redirect_uri: "http://localhost/callback".into(),
+            token_encryption_key: STANDARD.encode([7_u8; 32]),
+        })
+        .unwrap();
+        // Seed discovery, so consent tests cannot make live provider requests.
+        let metadata = serde_json::from_value(serde_json::json!({
+            "issuer": GOOGLE_ISSUER,
+            "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_endpoint": "https://oauth2.googleapis.com/token",
+            "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"]
+        }))
+        .unwrap();
+        google.inner.provider_metadata.set(metadata).unwrap();
+        google
+    }
+
+    fn params(start: GoogleLoginStart) -> HashMap<String, String> {
+        reqwest::Url::parse(&start.authorization_url)
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn tasks_consent_is_incremental_and_not_requested_at_sign_in() {
+        let google = offline_google();
+        let login = params(google.begin_login().await.unwrap());
+        assert!(!login["scope"].contains(crate::google_tasks::TASKS_SCOPE));
+        assert!(!login["scope"].contains("calendar"));
+        let tasks = params(google.begin_tasks_connection().await.unwrap());
+        assert!(
+            tasks["scope"]
+                .split_whitespace()
+                .any(|scope| scope == crate::google_tasks::TASKS_SCOPE)
+        );
+        assert!(!tasks["scope"].contains("calendar"));
+        assert_eq!(tasks["include_granted_scopes"], "true");
+        assert_eq!(tasks["prompt"], "consent");
+        assert_eq!(tasks["code_challenge_method"], "S256");
+    }
+
+    #[tokio::test]
+    async fn reconnecting_calendar_preserves_previously_granted_tasks_scope() {
+        let calendar = params(offline_google().begin_calendar_connection().await.unwrap());
+        assert_eq!(calendar["include_granted_scopes"], "true");
+        assert!(calendar["scope"].contains("calendar.events"));
+        assert!(!calendar["scope"].contains(crate::google_tasks::TASKS_SCOPE));
+    }
 }

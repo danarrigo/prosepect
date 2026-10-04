@@ -28,6 +28,16 @@ const disconnecting = computed(
 )
 const disabled = computed(() => loading.value || busy.value || disconnecting.value)
 
+function disconnectGoogle() {
+  if (
+    !window.confirm(
+      'Disconnect Google? This revokes both Calendar and Tasks access. Existing Google Tasks copies and prosepect tasks are kept.',
+    )
+  )
+    return
+  void queue(api.revokeGoogleIntegration)
+}
+
 function scheduleRefresh() {
   clearTimeout(timer)
   if (mounted && !document.hidden) timer = setTimeout(() => void refresh(), 3000)
@@ -287,9 +297,9 @@ onBeforeUnmount(() => {
         class="text-rose-600 hover:underline"
         type="button"
         :disabled="disabled"
-        @click="queue(api.revokeGoogleIntegration)"
+        @click="disconnectGoogle"
       >
-        Disconnect Google Calendar
+        Disconnect Google
       </button>
     </div>
   </section>

@@ -24,7 +24,7 @@ use crate::{
     export_routes, file_routes,
     file_storage::FileStorage,
     google_auth::GoogleOAuth,
-    import_routes,
+    google_tasks_routes, import_routes,
     models::{
         ActivityEntry, ActivityList, Calendar, CalendarEvent, CalendarEventList, CalendarList,
         CalendarSource, CompleteDailyReviewRequest, CreateCalendarEventRequest,
@@ -102,6 +102,7 @@ pub struct AppState {
         routes::record_reminder_delivery,
         routes::google_auth_start,
         routes::google_calendar_connect_start,
+        routes::google_tasks_connect_start,
         routes::google_auth_callback,
         routes::get_daily_plan,
         routes::update_daily_focus,
@@ -141,6 +142,15 @@ pub struct AppState {
         file_routes::upload_file,
         file_routes::download_file,
         file_routes::delete_file,
+        google_tasks_routes::status,
+        google_tasks_routes::lists,
+        google_tasks_routes::configure,
+        google_tasks_routes::create_list,
+        google_tasks_routes::synchronize,
+        google_tasks_routes::conflicts,
+        google_tasks_routes::resolve_conflict,
+        google_tasks_routes::recoveries,
+        google_tasks_routes::leave_unlinked,
         sync_routes::google_status,
         sync_routes::discover_google_calendars,
         sync_routes::revoke_google,
@@ -151,6 +161,15 @@ pub struct AppState {
         sync_routes::activity
     ),
     components(schemas(
+        crate::google_tasks_store::GoogleTasksStatus,
+        crate::google_tasks_store::GoogleTaskRecovery,
+        crate::google_tasks::GoogleTaskConflict,
+        crate::google_tasks::TaskConflictChoice,
+        crate::google_tasks::TaskFields,
+        crate::google_tasks_routes::GoogleTaskResolutionRequest,
+        crate::google_tasks_client::GoogleTaskList,
+        crate::google_tasks_routes::GoogleTasksSettingsRequest,
+        crate::google_tasks_routes::GoogleTasksCreateListRequest,
         crate::models::DeleteTaskWithUndoRequest,
         crate::models::TaskDeleteUndo,
         crate::models::TaskDeleteUndoList,
@@ -342,6 +361,10 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
             "/auth/google/calendar/start",
             get(routes::google_calendar_connect_start),
         )
+        .route(
+            "/auth/google/tasks/start",
+            get(routes::google_tasks_connect_start),
+        )
         .route("/auth/google/callback", get(routes::google_auth_callback))
         .route("/daily-plans/{date}", get(routes::get_daily_plan))
         .route("/daily-plans/{date}/focus", put(routes::update_daily_focus))
@@ -393,6 +416,34 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         .route(
             "/integrations/google",
             get(sync_routes::google_status).delete(sync_routes::revoke_google),
+        )
+        .route(
+            "/integrations/google/tasks",
+            get(google_tasks_routes::status).put(google_tasks_routes::configure),
+        )
+        .route(
+            "/integrations/google/tasks/lists",
+            get(google_tasks_routes::lists).post(google_tasks_routes::create_list),
+        )
+        .route(
+            "/integrations/google/tasks/recoveries",
+            get(google_tasks_routes::recoveries),
+        )
+        .route(
+            "/integrations/google/tasks/recoveries/{link_id}/detach",
+            post(google_tasks_routes::leave_unlinked),
+        )
+        .route(
+            "/integrations/google/tasks/conflicts",
+            get(google_tasks_routes::conflicts),
+        )
+        .route(
+            "/integrations/google/tasks/conflicts/{link_id}",
+            post(google_tasks_routes::resolve_conflict),
+        )
+        .route(
+            "/integrations/google/tasks/sync",
+            post(google_tasks_routes::synchronize),
         )
         .route(
             "/integrations/google/calendars/discover",

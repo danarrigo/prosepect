@@ -184,6 +184,50 @@ async fn calendar_move_undo_is_owner_scoped_and_expiry_is_atomic(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn rejected_calendar_moves_release_owner_exclusion_before_return(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, event) = fixture(&pool).await?;
+    for attempt in 0..64 {
+        // Reserve a different connection before the request so its queued
+        // transaction rollback cannot be flushed by reusing that connection.
+        let mut observer = pool.begin().await?;
+        let result = if attempt % 2 == 0 {
+            store.undo_calendar_move(user, Uuid::now_v7()).await
+        } else {
+            store
+                .move_calendar_item(
+                    user,
+                    Uuid::now_v7(),
+                    false,
+                    MoveCalendarItemRequest {
+                        starts_at: event.starts_at,
+                        ends_at: event.ends_at,
+                        expected_version: 1,
+                    },
+                )
+                .await
+                .map(|_| ())
+        };
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "unexpected rejection: {result:?}"
+        );
+        let released: bool =
+            sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(format!("prosepect-sync:{user}"))
+                .fetch_one(&mut *observer)
+                .await?;
+        assert!(
+            released,
+            "rejected request {attempt} returned before releasing owner exclusion"
+        );
+        observer.rollback().await?;
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn calendar_move_undo_allows_provider_push_ack_but_not_provider_pull(
     pool: PgPool,
 ) -> anyhow::Result<()> {
