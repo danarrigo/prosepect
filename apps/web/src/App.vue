@@ -78,6 +78,7 @@ watch(dueReminders, (tasks) => {
 })
 
 const pageTitle = computed(() => {
+  if (route.name === 'inbox') return 'Inbox'
   if (route.name === 'calendar') return 'Calendar'
   if (route.name === 'projects') return 'Projects'
   if (route.name === 'notes') return 'Notes'
@@ -137,6 +138,9 @@ async function executeCommand(command: KeyboardCommandId) {
   paletteMode.value = null
   if (command === 'navigate-today') {
     await router.push('/')
+    await focusMainContent()
+  } else if (command === 'navigate-inbox') {
+    await router.push('/inbox')
     await focusMainContent()
   } else if (command === 'navigate-projects') {
     store.selectProject(null)
@@ -263,7 +267,10 @@ onBeforeUnmount(() => {
         >
         <div class="ml-auto flex items-center gap-1 sm:gap-2">
           <GlobalSearch ref="globalSearch" />
-          <CreateTaskDialog ref="createTaskDialog" />
+          <CreateTaskDialog
+            ref="createTaskDialog"
+            :default-project-id="route.name === 'inbox' ? null : undefined"
+          />
           <button
             v-if="store.settings && !sidebarVisible"
             class="icon-button"

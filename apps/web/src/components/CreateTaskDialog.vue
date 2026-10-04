@@ -12,6 +12,8 @@ import {
 import SchedulingHelp from './SchedulingHelp.vue'
 import QuickTaskForm from './QuickTaskForm.vue'
 
+defineProps<{ defaultProjectId?: string | null }>()
+
 const open = ref(false)
 const taskForm = ref<InstanceType<typeof QuickTaskForm> | null>(null)
 const draftKey = ref(0)
@@ -56,6 +58,7 @@ defineExpose({ open: openTaskDialog })
             v-if="open"
             :key="draftKey"
             ref="taskForm"
+            :default-project-id="defaultProjectId"
             autofocus
             @created="open = false"
           />

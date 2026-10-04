@@ -7,6 +7,7 @@ import {
   FileText,
   FolderKanban,
   LayoutDashboard,
+  Inbox,
   Settings,
   X,
 } from '@lucide/vue'
@@ -73,6 +74,14 @@ function showAllProjects() {
     </div>
 
     <nav class="mt-3 space-y-1">
+      <RouterLink
+        class="nav-item"
+        :class="{ active: route.name === 'inbox' }"
+        to="/inbox"
+        @click="emit('close')"
+      >
+        <Inbox :size="16" /> Inbox
+      </RouterLink>
       <RouterLink
         class="nav-item"
         :class="{ active: route.name === 'today' }"

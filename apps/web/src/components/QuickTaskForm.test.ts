@@ -15,6 +15,22 @@ function setup() {
 afterEach(() => vi.useRealTimers())
 
 describe('QuickTaskForm creation', () => {
+  it('can capture unassigned tasks without changing the selected project context', async () => {
+    const pinia = createPinia()
+    const store = useWorkspaceStore(pinia)
+    store.selectedProjectId = 'previous-project'
+    const addTask = vi.spyOn(store, 'addTask').mockResolvedValue(undefined as never)
+    const wrapper = mount(QuickTaskForm, {
+      props: { defaultProjectId: null },
+      global: { plugins: [pinia] },
+    })
+    await wrapper.get('input[type=text]').setValue('Inbox capture')
+    await wrapper.get('form').trigger('submit')
+    expect(addTask).toHaveBeenCalledWith(expect.objectContaining({ project_id: null }))
+    expect(store.selectedProjectId).toBe('previous-project')
+    wrapper.unmount()
+  })
+
   it('creates with only a title and no optional values', async () => {
     const { wrapper, addTask } = setup()
     expect(wrapper.text()).not.toContain('Enter a task title')

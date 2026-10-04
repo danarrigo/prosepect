@@ -15,6 +15,7 @@ const props = withDefaults(
   { projects: () => [], emptyMessage: '', reorderable: true, focusable: false },
 )
 
+const emit = defineEmits<{ focusLost: [] }>()
 const store = useWorkspaceStore()
 const draggedTaskId = ref<string | null>(null)
 const announcement = ref('')
@@ -23,17 +24,26 @@ const focusTaskIds = computed(() =>
   store.dailyPlan ? store.dailyPlan.focus_tasks.map((task) => task.id) : [],
 )
 
+async function restoreFilteredFocus(focused: Element | null) {
+  await nextTick()
+  if (focused && !focused.isConnected && document.activeElement === document.body) emit('focusLost')
+}
+
 async function changeStatus(task: Task, status: TaskStatus) {
+  const focused = document.activeElement
   try {
     await store.setTaskStatus(task, status)
+    await restoreFilteredFocus(focused)
   } catch {
     // The store presents the API error globally.
   }
 }
 
 async function edit(task: Task, fields: EditableTaskFields) {
+  const focused = document.activeElement
   try {
     await store.editTask(task, fields)
+    await restoreFilteredFocus(focused)
   } catch {
     // The store presents the API error globally.
   }
