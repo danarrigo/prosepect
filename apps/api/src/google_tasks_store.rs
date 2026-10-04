@@ -124,6 +124,7 @@ impl Store {
              enabled=EXCLUDED.enabled,
              task_list_id=COALESCE(EXCLUDED.task_list_id,google_task_connections.task_list_id),
              timezone=COALESCE(EXCLUDED.timezone,google_task_connections.timezone),
+             scan_revision=NULL,scan_link_cursor=NULL,scan_import_cursor=NULL,scan_had_errors=FALSE,
              version=google_task_connections.version+1"
         ).bind(user).bind(enabled).bind(list).bind(timezone).execute(&mut *tx).await.map_err(config_error)?;
         Ok(())
@@ -171,6 +172,9 @@ impl Store {
             if changed.rows_affected() != 1 {
                 return Err(AppError::Conflict("This conflict changed or Tasks sync is disabled. Refresh before choosing.".into()));
             }
+            // A choice may target an already-visited link in a partial scan.
+            sqlx::query("UPDATE google_task_connections SET change_revision=change_revision+1 WHERE user_id=$1")
+                .bind(user).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO sync_jobs(id,user_id,kind,idempotency_key) VALUES($1,$2,'tasks_sync',$3) ON CONFLICT(user_id,idempotency_key) DO NOTHING")
                 .bind(Uuid::now_v7()).bind(user).bind(format!("tasks-conflict:{conflict}"))
                 .execute(&mut *tx).await?;

@@ -17,6 +17,25 @@ use crate::{
     sync_service::SyncService,
 };
 
+const BATCH_SIZE: usize = 10;
+
+#[derive(FromRow)]
+struct BatchState {
+    change_revision: i64,
+    scan_revision: Option<i64>,
+    scan_link_cursor: Option<Uuid>,
+    scan_import_cursor: Option<String>,
+    scan_had_errors: bool,
+}
+
+struct BatchProgress {
+    revision: i64,
+    link_cursor: Option<Uuid>,
+    import_cursor: Option<String>,
+    more: bool,
+    had_errors: bool,
+}
+
 #[derive(FromRow)]
 struct Link {
     id: Uuid,
@@ -45,15 +64,15 @@ impl SyncService {
         let message = result.as_ref().err().map(
             |_| "Google Tasks sync needs attention. Check permission, task conflicts, and retry.",
         );
-        sqlx::query("UPDATE google_task_connections SET last_error=$2,last_synced_at=CASE WHEN $2::TEXT IS NULL THEN NOW() ELSE last_synced_at END WHERE user_id=$1")
-            .bind(user).bind(message).execute(&self.store.pool).await?;
-        result
+        sqlx::query("UPDATE google_task_connections SET last_error=$2,last_synced_at=CASE WHEN $3 THEN NOW() ELSE last_synced_at END WHERE user_id=$1")
+            .bind(user).bind(message).bind(matches!(result, Ok(true))).execute(&self.store.pool).await?;
+        result.map(|_| ())
     }
 
-    async fn sync_google_tasks_inner(&self, user: Uuid) -> Result<()> {
+    async fn sync_google_tasks_inner(&self, user: Uuid) -> Result<bool> {
         let connection = self.store.google_tasks_status(user).await?;
         if !connection.enabled {
-            return Ok(());
+            return Ok(false);
         }
         if !connection.authorized {
             bail!("Google Tasks permission is required");
@@ -69,35 +88,39 @@ impl SyncService {
         // never be interpreted as remote deletion or a missing create outcome.
         let remote = self.tasks_client.tasks(&token, &list).await?;
         let by_id: HashMap<_, _> = remote.iter().map(|task| (task.id.as_str(), task)).collect();
-        let local: Vec<Task> =
-            sqlx::query_as("SELECT * FROM tasks WHERE user_id=$1 ORDER BY id LIMIT 20001")
-                .bind(user)
-                .fetch_all(&self.store.pool)
-                .await?;
-        if local.len() > 20_000 {
-            bail!("Too many tasks to synchronize safely");
-        }
+        let batch: BatchState = sqlx::query_as("SELECT change_revision,scan_revision,scan_link_cursor,scan_import_cursor,scan_had_errors FROM google_task_connections WHERE user_id=$1")
+            .bind(user).fetch_one(&self.store.pool).await?;
+        let local: Vec<Task> = sqlx::query_as("SELECT t.* FROM tasks t WHERE t.user_id=$1 AND NOT EXISTS(SELECT 1 FROM google_task_links l WHERE l.user_id=t.user_id AND l.task_id=t.id AND l.task_list_id=$2) ORDER BY t.id LIMIT $3")
+            .bind(user).bind(&list).bind((BATCH_SIZE + 1) as i64).fetch_all(&self.store.pool).await?;
+        let preparation_remaining = local.len() > BATCH_SIZE;
         // Prepare durably BEFORE sending POST. Existing creating intents are never
         // blindly retried; recovery first looks for the exact provenance marker.
-        for task in &local {
+        for task in local.iter().take(BATCH_SIZE) {
             let fields = self.store.google_task_fields(task, &timezone).await?;
             let id = Uuid::now_v7();
             sqlx::query("INSERT INTO google_task_links(id,user_id,task_list_id,task_id,baseline,phase,create_reference) VALUES($1,$2,$3,$4,$5,'prepared',$6) ON CONFLICT(user_id,task_list_id,task_id) DO NOTHING")
                 .bind(id).bind(user).bind(&list).bind(task.id).bind(serde_json::to_value(fields)?)
                 .bind(format!("prosepect task reference: {id}")).execute(&self.store.pool).await?;
         }
-        let links: Vec<Link> = sqlx::query_as("SELECT id,task_id,external_task_id,baseline,phase,create_reference,conflict,resolution FROM google_task_links WHERE user_id=$1 AND task_list_id=$2 ORDER BY id")
+        let links: Vec<Link> = sqlx::query_as("SELECT id,task_id,external_task_id,baseline,phase,create_reference,conflict,resolution FROM google_task_links WHERE user_id=$1 AND task_list_id=$2 AND phase<>'detached' AND ($3::UUID IS NULL OR id>$3) ORDER BY id LIMIT $4")
+            .bind(user).bind(&list).bind(batch.scan_link_cursor).bind((BATCH_SIZE + 1) as i64).fetch_all(&self.store.pool).await?;
+        // Import exclusion must include ALL identities, including detached links
+        // and intents not visited in this batch. Never infer deletion from a slice.
+        let identities: Vec<(Option<String>, Option<String>)> = sqlx::query_as("SELECT external_task_id,create_reference FROM google_task_links WHERE user_id=$1 AND task_list_id=$2 LIMIT 20001")
             .bind(user).bind(&list).fetch_all(&self.store.pool).await?;
-        let mut known: HashSet<String> = links
-            .iter()
-            .filter_map(|link| link.external_task_id.clone())
-            .collect();
-        let mut unresolved = false;
+        if identities.len() > 20_000 {
+            bail!("Too many retained Tasks identities to synchronize safely");
+        }
+        let mut known: HashSet<String> =
+            identities.iter().filter_map(|row| row.0.clone()).collect();
+        let mut unresolved = batch.scan_had_errors;
+        let mut link_cursor = batch.scan_link_cursor;
+        let mut import_cursor = batch.scan_import_cursor.clone();
         // Any provenance-bearing remote must be reconciled as an intent, never
         // silently imported if the outgoing mapping's final INSERT failed.
-        let references: HashSet<_> = links
+        let references: HashSet<_> = identities
             .iter()
-            .filter_map(|link| link.create_reference.as_deref())
+            .filter_map(|row| row.1.as_deref())
             .collect();
         let context = TaskSyncContext {
             user,
@@ -107,7 +130,8 @@ impl SyncService {
             snapshot: &by_id,
             remote: &remote,
         };
-        for link in &links {
+        for link in links.iter().take(BATCH_SIZE) {
+            link_cursor = Some(link.id);
             let outcome = self.sync_google_task_link(&context, link).await;
             match outcome {
                 Ok(Some(id)) => {
@@ -121,17 +145,25 @@ impl SyncService {
                 }
             }
         }
-        for task in &remote {
-            if task.deleted
-                || task.assignment_info.is_some()
-                || known.contains(&task.id)
-                || task
-                    .notes
-                    .as_deref()
-                    .is_some_and(|notes| references.contains(notes))
-            {
-                continue;
-            }
+        let mut candidates: Vec<_> = remote
+            .iter()
+            .filter(|task| {
+                !task.deleted
+                    && task.assignment_info.is_none()
+                    && !known.contains(&task.id)
+                    && !task
+                        .notes
+                        .as_deref()
+                        .is_some_and(|notes| references.contains(notes))
+                    && batch
+                        .scan_import_cursor
+                        .as_ref()
+                        .is_none_or(|cursor| task.id > *cursor)
+            })
+            .collect();
+        candidates.sort_by(|a, b| a.id.cmp(&b.id));
+        for task in candidates.iter().take(BATCH_SIZE) {
+            import_cursor = Some(task.id.clone());
             // Validate BEFORE import; never coerce unsupported titles/statuses.
             let fields = match task.fields() {
                 Ok(fields) => fields,
@@ -148,10 +180,25 @@ impl SyncService {
                 .import_google_task(user, &list, &timezone, task, etag, &fields)
                 .await?;
         }
-        if unresolved {
+        let more =
+            preparation_remaining || links.len() > BATCH_SIZE || candidates.len() > BATCH_SIZE;
+        let complete = self
+            .store
+            .finish_google_tasks_batch(
+                user,
+                BatchProgress {
+                    revision: batch.scan_revision.unwrap_or(batch.change_revision),
+                    link_cursor,
+                    import_cursor,
+                    more,
+                    had_errors: unresolved,
+                },
+            )
+            .await?;
+        if complete && unresolved {
             bail!("Google Tasks has unresolved task changes or uncertain creations");
         }
-        Ok(())
+        Ok(complete)
     }
 
     async fn sync_google_task_link(
@@ -412,6 +459,33 @@ impl SyncService {
 }
 
 impl Store {
+    async fn finish_google_tasks_batch(&self, user: Uuid, progress: BatchProgress) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let revision: i64 = sqlx::query_scalar(
+            "SELECT change_revision FROM google_task_connections WHERE user_id=$1 FOR UPDATE",
+        )
+        .bind(user)
+        .fetch_one(&mut *tx)
+        .await?;
+        let follow_up = progress.more || revision != progress.revision;
+        sqlx::query("UPDATE google_task_connections SET scan_revision=$2,scan_link_cursor=$3,scan_import_cursor=$4,scan_had_errors=$5 WHERE user_id=$1")
+            .bind(user)
+            .bind(progress.more.then_some(progress.revision))
+            .bind(if progress.more { progress.link_cursor } else { None })
+            .bind(if progress.more { progress.import_cursor } else { None })
+            .bind(progress.more && progress.had_errors)
+            .execute(&mut *tx).await?;
+        if follow_up {
+            // Reuse the same bounded pending slot as task edits. Checkpoint and
+            // continuation commit together, so a crash cannot strand a cursor.
+            sqlx::query("INSERT INTO sync_jobs(id,user_id,kind,idempotency_key) VALUES($1,$2,'tasks_sync',$3) ON CONFLICT(user_id) WHERE kind='tasks_sync' AND status='pending' AND idempotency_key LIKE 'tasks-change:%' DO UPDATE SET updated_at=sync_jobs.updated_at")
+                .bind(Uuid::now_v7()).bind(user).bind(format!("tasks-change:continue:{}", Uuid::now_v7()))
+                .execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(!follow_up)
+    }
+
     async fn google_task_fields(&self, task: &Task, timezone: &str) -> Result<TaskFields> {
         let date = sqlx::query_scalar("SELECT ($1::TIMESTAMPTZ AT TIME ZONE $2)::DATE")
             .bind(task.due_at)

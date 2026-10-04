@@ -17,6 +17,11 @@ CREATE TABLE google_task_connections (
     list_create_attempted BOOLEAN NOT NULL DEFAULT FALSE,
     last_synced_at TIMESTAMPTZ,
     last_error TEXT,
+    change_revision BIGINT NOT NULL DEFAULT 0,
+    scan_revision BIGINT,
+    scan_link_cursor UUID,
+    scan_import_cursor TEXT,
+    scan_had_errors BOOLEAN NOT NULL DEFAULT FALSE,
     version INTEGER NOT NULL DEFAULT 1,
     CHECK (NOT enabled OR (task_list_id IS NOT NULL AND timezone IS NOT NULL)),
     CHECK (task_list_id IS NULL OR length(task_list_id) BETWEEN 1 AND 2048)
@@ -71,7 +76,9 @@ BEGIN
     ELSE
         owner := NEW.user_id;
     END IF;
-    IF EXISTS (SELECT 1 FROM google_task_connections WHERE user_id=owner AND enabled) THEN
+    UPDATE google_task_connections SET change_revision=change_revision+1
+        WHERE user_id=owner AND enabled;
+    IF FOUND THEN
         INSERT INTO sync_jobs(id,user_id,kind,idempotency_key)
         VALUES(gen_random_uuid(),owner,'tasks_sync',
             'tasks-change:' || gen_random_uuid()::TEXT)
