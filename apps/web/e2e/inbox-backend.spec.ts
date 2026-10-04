@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import type { Task } from '../src/api/types'
 
 // Real isolated CI API and database. No intercepted responses or provider access.
 test('real backend: Inbox capture, assignment and completion persist after reload', async ({
@@ -58,11 +59,22 @@ test('real backend: Inbox capture, assignment and completion persist after reloa
     await expect(inbox.getByText(`Assign ${suffix}`, { exact: true })).toHaveCount(0)
     await expect(inbox.getByText(`Finish ${suffix}`, { exact: true })).toHaveCount(0)
   } finally {
+    const remaining = await page.request.get('/api/v1/tasks?limit=100')
+    expect(remaining.status()).toBe(200)
+    const { items }: { items: Task[] } = await remaining.json()
     for (const id of createdIds) {
-      expect((await page.request.delete(`/api/v1/tasks/${id}`, { headers })).status()).toBe(204)
+      const task = items.find((item) => item.id === id)
+      if (!task) continue
+      const deleted = await page.request.delete(`/api/v1/tasks/${id}`, {
+        headers,
+        params: { expected_version: task.version },
+      })
+      expect(deleted.status(), await deleted.text()).toBe(204)
     }
-    expect(
-      (await page.request.delete(`/api/v1/projects/${project.id}`, { headers })).status(),
-    ).toBe(204)
+    const deletedProject = await page.request.delete(`/api/v1/projects/${project.id}`, {
+      headers,
+      params: { expected_version: project.version },
+    })
+    expect(deletedProject.status(), await deletedProject.text()).toBe(204)
   }
 })
