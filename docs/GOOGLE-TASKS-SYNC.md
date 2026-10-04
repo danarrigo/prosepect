@@ -28,7 +28,11 @@ Same-field conflicts are displayed in Settings with both snapshots. Users can ke
 
 Task edits share one pending change-triggered sync job per owner. Claiming that job frees the slot for a follow-up; edits made during a running sync are not discarded. The pending job remains locked until the editing transaction commits, so workers cannot read an older snapshot for an uncommitted edit. Private-field edits and changes between incomplete workflow states do not enqueue Tasks work. Manual, periodic and conflict-resolution requests retain their separate identities.
 
-Before release, complete overall per-job work bounds, concurrency/failure review, privacy disclosures and real-backend browser acceptance. Current tests use a fake provider and do not establish live Google behavior. Google list selection is explicit: it imports only the selected list; other lists are never automatically synchronized.
+Each reconciliation job prepares at most ten missing mappings, processes ten links, and attempts ten imports. It reads a complete provider snapshot within the transport's existing page/byte/item/time limits; import exclusion covers retained identities and provenance outside the current batch. Link/import cursors and a coalesced continuation job commit atomically. A local change revision forces another pass for edits or conflict choices behind a saved cursor. Partial progress does not advance the last-synchronized timestamp. This bounds work counts, not a universal wall-clock deadline across database contention and all provider calls.
+
+The October 4, 2026 Terms and Privacy Policy disclose optional Tasks access, shared fields, transient note processing, recovery metadata retention, and independent disable versus shared Google revocation. New sign-in acceptance uses those versions; historical acceptances remain unchanged. Existing users see the linked data-use notice before opting into Tasks. These implementation disclosures are not independent legal review.
+
+Before release, complete final concurrency/failure review and real-backend browser acceptance, followed by operator-enabled live Google testing. Current tests use a fake provider and do not establish live Google behavior. Google list selection is explicit: it imports only the selected list; other lists are never automatically synchronized.
 
 ## Primary API references
 

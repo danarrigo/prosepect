@@ -25,8 +25,8 @@ use crate::{
     rate_limit::ClientAddress,
 };
 
-const CURRENT_TERMS_VERSION: &str = "2026-09-04";
-const CURRENT_PRIVACY_VERSION: &str = "2026-09-04";
+const CURRENT_TERMS_VERSION: &str = "2026-10-04";
+const CURRENT_PRIVACY_VERSION: &str = "2026-10-04";
 
 #[utoipa::path(
     get,

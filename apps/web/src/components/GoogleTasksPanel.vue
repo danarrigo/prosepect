@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import * as api from '../api/client'
 import type {
   GoogleTaskConflict,
@@ -203,6 +204,12 @@ onBeforeUnmount(() => {
       Sync titles, deadline dates, and completion both ways. Precise deadline times stay in
       prosepect; scheduled work blocks still use Calendar. Deleting in either app keeps the other
       copy.
+    </p>
+    <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+      Google Tasks is optional. We use its data only for sync, not advertising or AI training.
+      Enabling sync shares the fields above with your chosen list. See the
+      <RouterLink class="underline underline-offset-4" to="/privacy">Privacy Policy</RouterLink>
+      and <RouterLink class="underline underline-offset-4" to="/terms">Terms</RouterLink>.
     </p>
     <p v-if="error" role="alert" class="mt-3 text-sm text-red-600 dark:text-red-400">{{ error }}</p>
     <p v-if="message" role="status" class="mt-3 text-sm text-slate-600 dark:text-slate-300">

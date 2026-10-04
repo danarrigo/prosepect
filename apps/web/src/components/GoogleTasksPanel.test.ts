@@ -28,7 +28,7 @@ const initial: GoogleTasksStatus = {
 }
 const wrappers: VueWrapper[] = []
 function panel() {
-  const wrapper = mount(GoogleTasksPanel)
+  const wrapper = mount(GoogleTasksPanel, { global: { stubs: { RouterLink: true } } })
   wrappers.push(wrapper)
   return wrapper
 }

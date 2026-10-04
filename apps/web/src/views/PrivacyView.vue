@@ -6,7 +6,7 @@ import PublicPageShell from '../components/PublicPageShell.vue'
   <PublicPageShell
     title="Privacy Policy"
     summary="How Prosepect collects, uses, stores, and protects personal data, including information received through Google APIs."
-    last-updated="September 4, 2026"
+    last-updated="October 4, 2026"
   >
     <section>
       <h2>1. Who operates Prosepect</h2>
@@ -51,6 +51,24 @@ import PublicPageShell from '../components/PublicPageShell.vue'
         payloads.
       </p>
 
+      <h3>Google Tasks data</h3>
+      <p>
+        Google Tasks is a separate, optional connection. Granting its permission does not start
+        copying tasks: you choose a list and enable synchronization in Settings. Prosepect reads
+        your task-list names and identifiers to let you select a list, then reads and synchronizes
+        task titles, calendar dates, and completion states in that list. It may create the prosepect
+        list and task copies you request. Exact deadline times and scheduled Calendar work blocks
+        remain separate.
+      </p>
+      <p>
+        Prosepect stores task identifiers, synchronization baselines, recovery references, and
+        conflicting versions of these shared fields to avoid duplicate creation and unintended
+        overwrites. Google task notes are read transiently to recognize recovery references;
+        Prosepect adds a reference to newly created copies but does not synchronize your private
+        descriptions, notes, or attachments to Google Tasks. These data are used only for the
+        synchronization you enable, not advertising, sale, or AI training.
+      </p>
+
       <h3>Technical and security information</h3>
       <p>
         Prosepect and its hosting providers process request information needed to deliver and secure
@@ -76,7 +94,7 @@ import PublicPageShell from '../components/PublicPageShell.vue'
         <li>
           provide tasks, projects, notes, calendars, attachments, exports, and daily planning;
         </li>
-        <li>perform the Google Calendar synchronization you enable;</li>
+        <li>perform the Google Calendar and Google Tasks synchronization you enable;</li>
         <li>
           protect accounts, prevent abuse, diagnose failures, and maintain service reliability;
         </li>
@@ -86,17 +104,17 @@ import PublicPageShell from '../components/PublicPageShell.vue'
       <p>
         Depending on the processing, the legal basis is performance of the service you request, your
         consent, compliance with legal obligations, or the legitimate interest in operating a secure
-        and reliable service while respecting your rights. You may withdraw optional Google Calendar
-        access at any time.
+        and reliable service while respecting your rights. You may stop optional synchronization in
+        Settings or revoke Google access at any time.
       </p>
     </section>
 
     <section>
       <h2>4. How Google user data is used</h2>
       <p>
-        Prosepect uses Google user data only to provide prominent, user-facing account and calendar
-        functionality. Prosepect's use and transfer to any other app of information received from
-        Google APIs adheres to the
+        Prosepect uses Google user data only to provide prominent, user-facing account, calendar,
+        and task functionality. Prosepect's use and transfer to any other app of information
+        received from Google APIs adheres to the
         <a href="https://developers.google.com/terms/api-services-user-data-policy"
           >Google API Services User Data Policy</a
         >, including the Limited Use requirements.
@@ -120,7 +138,8 @@ import PublicPageShell from '../components/PublicPageShell.vue'
       <p>Prosepect does not sell personal data. Data is shared only:</p>
       <ul>
         <li>
-          with Google when you sign in or direct Prosepect to synchronize calendar information;
+          with Google when you sign in or direct Prosepect to synchronize calendar or task
+          information;
         </li>
         <li>
           with infrastructure providers that host or deliver the service: Vercel for the web
@@ -147,9 +166,17 @@ import PublicPageShell from '../components/PublicPageShell.vue'
         required.
       </p>
       <p>
-        You can disconnect Google Calendar in Settings. Once the queued disconnection completes,
-        Prosepect revokes its Google authorization and removes stored Google credentials and
-        Google-sourced calendar records. You can also revoke access from your Google Account.
+        You can disable Google Tasks sync in Settings without revoking Calendar access. Disabling or
+        unlinking keeps existing tasks in both apps and retains mapping and recovery metadata to
+        prevent unintended duplicate creation or reimport. Deleting a task in either app does not
+        delete its Google Tasks counterpart.
+      </p>
+      <p>
+        Disconnect Google in Settings revokes the shared Google authorization once the queued
+        disconnection completes. This stops both Calendar and Tasks access and removes stored Google
+        credentials and Google-sourced calendar records. It does not delete your Google Tasks copies
+        or imported prosepect tasks. You can also revoke access from your Google Account. Retained
+        task mappings and recovery data are removed when your prosepect account is deleted.
       </p>
       <p>
         You can delete your Prosepect account from Settings. Account deletion revokes stored Google

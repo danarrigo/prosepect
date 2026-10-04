@@ -7,7 +7,7 @@ import PublicPageShell from '../components/PublicPageShell.vue'
   <PublicPageShell
     title="Terms of Service"
     summary="The rules that apply when you access or use the hosted Prosepect service."
-    last-updated="September 4, 2026"
+    last-updated="October 4, 2026"
   >
     <section>
       <h2>1. Agreement</h2>
@@ -57,11 +57,18 @@ import PublicPageShell from '../components/PublicPageShell.vue'
         features you use.
       </p>
       <p>
+        Google Tasks is separately optional. After additional permission and explicit enablement,
+        you instruct Prosepect to synchronize titles, calendar dates, and completion states with
+        your selected list. Precise local deadlines and Calendar work blocks remain separate.
+        Deleting a task in either app preserves its Google Tasks counterpart. You can disable Tasks
+        synchronization without revoking Calendar access.
+      </p>
+      <p>
         Your use of Google services remains subject to Google's terms and policies. You can
-        disconnect Google Calendar in Prosepect Settings or revoke authorization from your Google
-        Account. Changes made in Prosepect may change or delete synchronized events in Google, and
-        changes made in Google may change Prosepect records according to your synchronization
-        settings.
+        disconnect Google in Prosepect Settings or revoke authorization from your Google Account;
+        this revokes shared Calendar and Tasks access. Changes made in Prosepect may change or
+        delete synchronized events in Google, and changes made in Google may change Prosepect
+        records according to your synchronization settings.
       </p>
     </section>
 
@@ -128,10 +135,10 @@ import PublicPageShell from '../components/PublicPageShell.vue'
     <section>
       <h2>9. Suspension and termination</h2>
       <p>
-        You may stop using Prosepect, disconnect Google Calendar, export data, or delete your
-        account through Settings. Prosepect may restrict or suspend access when reasonably necessary
-        to address abuse, security risks, legal requirements, serious or repeated violations of
-        these Terms, or service-capacity limits.
+        You may stop using Prosepect, disconnect Google, export data, or delete your account through
+        Settings. Prosepect may restrict or suspend access when reasonably necessary to address
+        abuse, security risks, legal requirements, serious or repeated violations of these Terms, or
+        service-capacity limits.
       </p>
       <p>
         When practical, notice and an opportunity to export data will be provided before a

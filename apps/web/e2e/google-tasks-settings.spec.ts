@@ -36,9 +36,12 @@ async function settings(page: Page, authorized = true) {
         version: 1,
       }
     else if (path.startsWith('/daily-plans')) body = { focus_tasks: [], focus_task_ids: [] }
-    else if (path === '/integrations/google')
-      body = { connected: true, calendar_authorized: true, latest_synchronization: null }
-    else if (path === '/integrations/google/tasks') {
+    else if (path === '/integrations/google') {
+      if (method === 'DELETE') {
+        writes.push(method + ' ' + path)
+        body = { id: 'revoke', kind: 'credential_revoke', status: 'pending', attempt_count: 0 }
+      } else body = { connected: true, calendar_authorized: true, latest_synchronization: null }
+    } else if (path === '/integrations/google/tasks') {
       if (method === 'PUT') {
         writes.push(method + ' ' + path)
         const input = route.request().postDataJSON()
@@ -126,6 +129,37 @@ async function settings(page: Page, authorized = true) {
     },
   }
 }
+
+test('shared Google disconnection explains both integrations before confirmation', async ({
+  page,
+}) => {
+  const fixture = await settings(page)
+  await page.goto('/settings')
+  const button = page.getByRole('button', { name: 'Disconnect Google', exact: true })
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('both Calendar and Tasks access')
+    await dialog.dismiss()
+  })
+  await button.click()
+  expect(fixture.writes).toEqual([])
+  page.once('dialog', (dialog) => dialog.accept())
+  await button.click()
+  await expect.poll(() => fixture.writes).toEqual(['DELETE /integrations/google'])
+})
+
+test('Tasks data-use notice links to the updated public disclosures', async ({ page }) => {
+  await settings(page, false)
+  await page.goto('/settings')
+  const panel = page.getByRole('region', { name: 'Google Tasks', exact: true })
+  await expect(panel).toContainText('not advertising or AI training')
+  await panel.getByRole('link', { name: 'Privacy Policy' }).click()
+  await expect(page.getByRole('heading', { name: 'Google Tasks data' })).toBeVisible()
+  await expect(page.getByText('October 4, 2026', { exact: false })).toBeVisible()
+  await page.goto('/terms')
+  await expect(
+    page.getByText('Google Tasks is separately optional.', { exact: false }),
+  ).toBeVisible()
+})
 
 test('uncertain creation is checked without creating again and detachment requires confirmation', async ({
   page,
