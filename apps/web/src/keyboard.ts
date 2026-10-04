@@ -1,5 +1,6 @@
 export type KeyboardCommandId =
   | 'navigate-today'
+  | 'navigate-inbox'
   | 'navigate-projects'
   | 'navigate-calendar'
   | 'navigate-notes'
@@ -17,6 +18,13 @@ export interface KeyboardCommand {
 }
 
 export const keyboardCommands: KeyboardCommand[] = [
+  {
+    id: 'navigate-inbox',
+    label: 'Go to Inbox',
+    group: 'Navigation',
+    shortcut: ['G', 'I'],
+    keywords: 'inbox capture unassigned tasks',
+  },
   {
     id: 'navigate-today',
     label: 'Go to Today',
@@ -85,6 +93,7 @@ export interface ShortcutResolution {
 
 const goCommands: Partial<Record<string, KeyboardCommandId>> = {
   t: 'navigate-today',
+  i: 'navigate-inbox',
   p: 'navigate-projects',
   c: 'navigate-calendar',
   n: 'navigate-notes',

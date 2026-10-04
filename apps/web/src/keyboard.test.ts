@@ -26,6 +26,8 @@ function key(
 describe('keyboard shortcuts', () => {
   it('resolves navigation sequences', () => {
     expect(key('g')).toEqual({ action: null, awaitingGo: true, handled: true })
+    expect(key('i', {}, true).action).toBe('navigate-inbox')
+    expect(key('i', {}, true, true).handled).toBe(false)
     expect(key('c', {}, true)).toEqual({
       action: 'navigate-calendar',
       awaitingGo: false,

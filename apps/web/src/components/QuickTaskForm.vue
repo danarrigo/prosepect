@@ -5,7 +5,10 @@ import { useWorkspaceStore } from '../stores/workspace'
 import type { TaskPriority, TaskRecurrence } from '../api/types'
 import { analyzeQuickCapture } from '../quick-capture'
 
-const props = withDefaults(defineProps<{ autofocus?: boolean }>(), { autofocus: false })
+const props = withDefaults(
+  defineProps<{ autofocus?: boolean; defaultProjectId?: string | null }>(),
+  { autofocus: false, defaultProjectId: undefined },
+)
 const emit = defineEmits<{ created: [] }>()
 const store = useWorkspaceStore()
 const componentId = useId()
@@ -86,10 +89,12 @@ watch(deadlineSuggestion, (suggestion) => {
 })
 
 watch(
-  () => [store.selectedProjectId, store.projects] as const,
+  () => [props.defaultProjectId, store.selectedProjectId, store.projects] as const,
   () => {
-    if (store.selectedProjectId) {
-      projectId.value = store.selectedProjectId
+    const defaultProject =
+      props.defaultProjectId === undefined ? store.selectedProjectId : props.defaultProjectId
+    if (defaultProject) {
+      projectId.value = defaultProject
     } else if (
       projectId.value &&
       !store.projects.some((project) => project.id === projectId.value)
