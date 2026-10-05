@@ -1,5 +1,7 @@
 import type { components } from './schema'
 
+export type SavedTaskView = components['schemas']['SavedTaskView']
+export type CreateSavedTaskView = components['schemas']['CreateSavedTaskView']
 export type SessionResponse = components['schemas']['SessionResponse']
 export type UserProfile = components['schemas']['UserProfile']
 export type DailyPlan = components['schemas']['DailyPlan']

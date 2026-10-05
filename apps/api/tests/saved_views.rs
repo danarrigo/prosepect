@@ -48,6 +48,11 @@ async fn views_are_private_and_project_deletion_never_broadens_scope(
     assert_eq!(view.project_id, Some(project));
     assert_eq!(store.saved_task_views(owner).await?.len(), 1);
     assert!(store.saved_task_views(other).await?.is_empty());
+    let exported: serde_json::Value = serde_json::from_slice(&store.export_json(owner).await?)?;
+    assert_eq!(exported["saved_task_views"][0]["id"], view.id.to_string());
+    let foreign_export: serde_json::Value =
+        serde_json::from_slice(&store.export_json(other).await?)?;
+    assert_eq!(foreign_export["saved_task_views"], serde_json::json!([]));
     assert!(matches!(
         store.delete_saved_task_view(other, view.id).await,
         Err(AppError::NotFound(_))

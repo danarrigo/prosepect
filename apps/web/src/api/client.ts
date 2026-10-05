@@ -2,6 +2,7 @@ import createClient from 'openapi-fetch'
 import type { paths } from './schema'
 import type {
   ActivityEntry,
+  CreateSavedTaskView,
   Calendar,
   CalendarEvent,
   CalendarMoveUndo,
@@ -84,6 +85,23 @@ export class ApiError extends Error {
     this.status = status
     this.code = code
   }
+}
+
+export async function listSavedTaskViews(signal?: AbortSignal) {
+  return unwrap(await client.GET('/api/v1/saved-task-views', { signal }))
+}
+
+export async function createSavedTaskView(body: CreateSavedTaskView, signal?: AbortSignal) {
+  return unwrap(await client.POST('/api/v1/saved-task-views', { body, signal }))
+}
+
+export async function deleteSavedTaskView(viewId: string, signal?: AbortSignal) {
+  return unwrap(
+    await client.DELETE('/api/v1/saved-task-views/{view_id}', {
+      params: { path: { view_id: viewId } },
+      signal,
+    }),
+  )
 }
 
 export async function startDevelopmentSession(signal?: AbortSignal): Promise<SessionResponse> {

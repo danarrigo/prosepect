@@ -692,6 +692,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/saved-task-views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_saved_task_views"];
+        put?: never;
+        post: operations["create_saved_task_view"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/saved-task-views/{view_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["delete_saved_task_view"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -1116,6 +1148,16 @@ export interface components {
             /** Format: date */
             target_date?: string | null;
         };
+        CreateSavedTaskView: {
+            label?: string | null;
+            name: string;
+            priority?: null | components["schemas"]["TaskPriority"];
+            /** Format: uuid */
+            project_id?: string | null;
+            search: string;
+            sort: components["schemas"]["SavedTaskSort"];
+            status: components["schemas"]["SavedTaskStatus"];
+        };
         CreateSynchronizationRequest: {
             /** Format: uuid */
             calendar_id?: string | null;
@@ -1397,6 +1439,24 @@ export interface components {
             due_at?: string | null;
             /** Format: uuid */
             task_id: string;
+        };
+        /** @enum {string} */
+        SavedTaskSort: "manual" | "due" | "priority" | "title";
+        /** @enum {string} */
+        SavedTaskStatus: "open" | "all" | "todo" | "in_progress" | "blocked" | "completed";
+        SavedTaskView: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            label?: string | null;
+            name: string;
+            priority?: null | components["schemas"]["TaskPriority"];
+            /** Format: uuid */
+            project_id?: string | null;
+            search: string;
+            sort: components["schemas"]["SavedTaskSort"];
+            status: components["schemas"]["SavedTaskStatus"];
         };
         SearchResult: {
             excerpt: string;
@@ -3820,6 +3880,123 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_saved_task_views: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedTaskView"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_saved_task_view: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSavedTaskView"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedTaskView"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_saved_task_view: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                view_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

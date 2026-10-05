@@ -11,8 +11,15 @@ const props = withDefaults(
     emptyMessage?: string
     reorderable?: boolean
     focusable?: boolean
+    preserveOrder?: boolean
   }>(),
-  { projects: () => [], emptyMessage: '', reorderable: true, focusable: false },
+  {
+    projects: () => [],
+    emptyMessage: '',
+    reorderable: true,
+    focusable: false,
+    preserveOrder: false,
+  },
 )
 
 const emit = defineEmits<{ focusLost: [] }>()
@@ -129,9 +136,9 @@ async function reorder(task: Task, target: Task) {
 }
 
 function flattenTasks(tasks: Task[]): Array<{ task: Task; depth: number }> {
-  const sorted = [...tasks].sort(
-    (first, second) => Number(first.position) - Number(second.position),
-  )
+  const sorted = props.preserveOrder
+    ? [...tasks]
+    : [...tasks].sort((first, second) => Number(first.position) - Number(second.position))
   const included = new Set(sorted.map((task) => task.id))
   const children = new Map<string, Task[]>()
   for (const task of sorted) {

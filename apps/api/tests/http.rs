@@ -15,6 +15,85 @@ use tower::ServiceExt;
 use utoipa::OpenApi;
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn saved_view_routes_require_authentication_and_validate_filters(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let router = app::build(&test_config(), Store::from_pool(pool))?;
+    let anonymous = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/saved-task-views")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response.headers()[header::SET_COOKIE]
+        .to_str()?
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let session: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 65536).await?)?;
+    let csrf = session["csrf_token"].as_str().unwrap();
+    let valid = r#"{"name":"Reports","search":"report","status":"open","sort":"due"}"#;
+    let rejected = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/saved-task-views")
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(valid))?,
+        )
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+    for body in [
+        r#"{"name":"Bad","search":"","status":"unknown","sort":"due"}"#,
+        r#"{"name":"Bad","search":"","status":"open","sort":"due","user_id":"foreign"}"#,
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/saved-task-views")
+                    .header(header::COOKIE, &cookie)
+                    .header("x-csrf-token", csrf)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/saved-task-views")
+                .header(header::COOKIE, cookie)
+                .header("x-csrf-token", csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(valid))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn development_session_uses_an_http_only_cookie_and_csrf_token(
     pool: PgPool,
 ) -> anyhow::Result<()> {
