@@ -16,4 +16,4 @@ Deleting a view never deletes tasks. Deleting its project also deletes that proj
 - `apps/web/src/views/ProjectsView.vue`: existing filters applied after project selection settles; missing projects fail closed.
 - `apps/web/src/components/TaskList.vue`: opt-in preservation of externally selected sort order.
 
-API routes are `/api/v1/saved-task-views` (GET/POST) and `/api/v1/saved-task-views/{view_id}` (DELETE). Definitions are immutable, so delete needs no optimistic version. Create capacity checks are serialized per account with a nonblocking transaction lock; rejected operations await rollback before returning. Database lock contention is bounded, but this is not a universal request-time deadline.
+API routes are `/api/v1/saved-task-views` (GET/POST) and `/api/v1/saved-task-views/{view_id}` (DELETE). Definitions are immutable, so delete needs no optimistic version. Create capacity checks are serialized per account with a nonblocking transaction lock; rejected operations await rollback before returning. Create operations cap database lock waits, but this is not a universal request-time deadline.

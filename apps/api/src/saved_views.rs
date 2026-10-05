@@ -79,6 +79,14 @@ impl Store {
         let name = request.name.trim();
         let search = request.search.trim();
         let label = request.label.as_deref().map(str::trim);
+        if name.contains('\0')
+            || search.contains('\0')
+            || label.is_some_and(|label| label.contains('\0'))
+        {
+            return Err(AppError::Validation(
+                "Saved views cannot contain null characters.".into(),
+            ));
+        }
         if name.is_empty()
             || name.chars().count() > 80
             || search.chars().count() > 500

@@ -63,13 +63,22 @@ async fn views_are_private_and_project_deletion_never_broadens_scope(
         store.create_saved_task_view(other, foreign).await,
         Err(AppError::NotFound(_))
     ));
+    let mut observer = pool.acquire().await?;
     assert!(matches!(
         store
             .create_saved_task_view(owner, request("reports"))
             .await,
         Err(AppError::Conflict(_))
     ));
-    // A rejected duplicate must release its transaction's lock before return.
+    // Probe through a connection held before the rejected operation, not a
+    // recycled connection that could flush its own queued rollback first.
+    let released: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("saved-views:{owner}"))
+            .fetch_one(&mut *observer)
+            .await?;
+    assert!(released);
+    drop(observer);
     let independent = Store::from_pool(pool.clone());
     let global = independent
         .create_saved_task_view(owner, request("Global"))
@@ -90,7 +99,11 @@ async fn views_are_private_and_project_deletion_never_broadens_scope(
 async fn view_validation_and_concurrent_capacity_are_bounded(pool: PgPool) -> anyhow::Result<()> {
     let owner = user(&pool).await?;
     let store = Store::from_pool(pool.clone());
-    for invalid in [request(" "), request(&"x".repeat(81))] {
+    for invalid in [
+        request(" "),
+        request(&"x".repeat(81)),
+        request("null\0name"),
+    ] {
         assert!(matches!(
             store.create_saved_task_view(owner, invalid).await,
             Err(AppError::Validation(_))

@@ -29,6 +29,7 @@ onMounted(load)
 
 async function load() {
   if (busy.value) return
+  const focused = document.activeElement
   loading.value = true
   error.value = ''
   try {
@@ -42,6 +43,9 @@ async function load() {
       error.value = cause instanceof Error ? cause.message : 'Saved views could not be loaded.'
   } finally {
     loading.value = false
+    await nextTick()
+    if (loaded.value && focused && !focused.isConnected && document.activeElement === document.body)
+      saveButton.value?.focus()
   }
 }
 
@@ -78,6 +82,8 @@ async function save() {
       error.value = cause instanceof Error ? cause.message : 'The view could not be saved.'
   } finally {
     busy.value = false
+    await nextTick()
+    if (error.value && document.activeElement === document.body) nameInput.value?.focus()
   }
 }
 
@@ -103,6 +109,14 @@ async function remove(view: SavedTaskView) {
       error.value = cause instanceof Error ? cause.message : 'The saved view could not be deleted.'
   } finally {
     busy.value = false
+    await nextTick()
+    if (
+      error.value &&
+      focused instanceof HTMLElement &&
+      focused.isConnected &&
+      document.activeElement === document.body
+    )
+      focused.focus()
   }
 }
 </script>
