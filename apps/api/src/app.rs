@@ -43,7 +43,7 @@ use crate::{
     },
     note_routes, observability, operations,
     rate_limit::LoginRateLimiter,
-    routes,
+    routes, saved_views,
     store::Store,
     sync_dispatcher::SyncDispatcher,
     sync_routes,
@@ -82,6 +82,9 @@ pub struct AppState {
         description = "Personal productivity API for Prosepect"
     ),
     paths(
+        saved_views::list,
+        saved_views::create,
+        saved_views::delete,
         task_delete_routes::delete_task_with_undo,
         task_delete_routes::list_task_delete_undos,
         task_delete_routes::undo_task_delete,
@@ -402,6 +405,14 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
             put(note_routes::update_note).delete(note_routes::delete_note),
         )
         .route("/search", get(note_routes::global_search))
+        .route(
+            "/saved-task-views",
+            get(saved_views::list).post(saved_views::create),
+        )
+        .route(
+            "/saved-task-views/{view_id}",
+            axum::routing::delete(saved_views::delete),
+        )
         .route("/exports/json", get(export_routes::export_json))
         .route("/exports/tasks.csv", get(export_routes::export_tasks_csv))
         .route("/imports/todoist", post(import_routes::import_todoist))

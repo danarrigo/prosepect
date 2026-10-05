@@ -25,6 +25,7 @@ pub mod observability;
 pub mod operations;
 pub mod rate_limit;
 pub mod routes;
+pub mod saved_views;
 pub mod store;
 pub mod sync_dispatcher;
 pub mod sync_routes;
