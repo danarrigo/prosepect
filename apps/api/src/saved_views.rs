@@ -105,10 +105,10 @@ impl Store {
             let count: i64 = sqlx::query_scalar("SELECT count(*) FROM saved_task_views WHERE user_id=$1")
                 .bind(user).fetch_one(&mut *tx).await?;
             if count>=50 { return Err(AppError::Validation("You can save up to 50 views. Delete one before adding another.".into())); }
-            Ok(sqlx::query_as("INSERT INTO saved_task_views(id,user_id,project_id,name,search,status,priority,label,sort) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,project_id,name,search,status,priority,label,sort,created_at")
+            sqlx::query_as("INSERT INTO saved_task_views(id,user_id,project_id,name,search,status,priority,label,sort) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,project_id,name,search,status,priority,label,sort,created_at")
                 .bind(Uuid::now_v7()).bind(user).bind(request.project_id).bind(name).bind(search)
                 .bind(request.status).bind(request.priority).bind(label).bind(request.sort)
-                .fetch_one(&mut *tx).await.map_err(saved_view_error)?)
+                .fetch_one(&mut *tx).await.map_err(saved_view_error)
         }.await;
         match result {
             Ok(view) => {
