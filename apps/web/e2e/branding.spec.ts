@@ -7,7 +7,7 @@ async function mockWorkspace(page: Page, signedIn: boolean, sidebarVisible = tru
       await route.fulfill({ status: 401, json: { error: 'unauthorized' } })
       return
     }
-    let body: unknown = { items: [] }
+    let body: unknown = path === '/saved-task-views' ? [] : { items: [] }
     if (path === '/session')
       body = {
         csrf_token: 'mock-csrf',
@@ -226,7 +226,7 @@ for (const sidebarVisible of [true, false]) {
     await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible()
     for (const width of [640, 320, 375, 768, 1024, 1280]) {
       await page.setViewportSize({ width, height: 900 })
-      const search = page.getByRole('searchbox')
+      const search = page.locator('header').getByRole('searchbox')
       if (width >= 640) {
         await search.focus()
         await expect(search).toHaveCSS('width', '256px')

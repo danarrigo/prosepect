@@ -57,7 +57,7 @@ async function mockMoves(page: Page) {
     const path = new URL(route.request().url()).pathname.replace('/api/v1', '')
     const method = route.request().method()
     requests.push(`${method} ${path}`)
-    let body: unknown = { items: [] }
+    let body: unknown = path === '/saved-task-views' ? [] : { items: [] }
     if (path === '/session')
       body = {
         csrf_token: 'mock-csrf',

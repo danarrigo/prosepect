@@ -10,7 +10,7 @@ async function mockWorkspace(page: Page, initialEvents: Record<string, unknown>[
   const receipts: CalendarMoveUndo[] = []
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname.replace('/api/v1', '')
-    let body: unknown = { items: [] }
+    let body: unknown = path === '/saved-task-views' ? [] : { items: [] }
     if (path === '/session')
       body = {
         csrf_token: 'mock-csrf',
