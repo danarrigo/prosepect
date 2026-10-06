@@ -4212,7 +4212,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateTaskRequest"
+                "$ref": "#/components/schemas/ScopedTaskUpdateRequest"
               }
             }
           },
@@ -6028,6 +6028,13 @@
           "archived"
         ]
       },
+      "RecurrenceEditScope": {
+        "type": "string",
+        "enum": [
+          "this_occurrence",
+          "this_and_future"
+        ]
+      },
       "ReorderTasksRequest": {
         "type": "object",
         "required": [
@@ -6160,6 +6167,28 @@
             "$ref": "#/components/schemas/SavedTaskStatus"
           }
         }
+      },
+      "ScopedTaskUpdateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/UpdateTaskRequest"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "recurrence_scope": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RecurrenceEditScope"
+                  }
+                ]
+              }
+            }
+          }
+        ]
       },
       "SearchResult": {
         "type": "object",

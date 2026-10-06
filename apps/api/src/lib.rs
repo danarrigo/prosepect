@@ -37,3 +37,4 @@ mod calendar_move_store;
 
 pub mod task_delete_routes;
 pub mod task_delete_store;
+pub mod task_recurrence;

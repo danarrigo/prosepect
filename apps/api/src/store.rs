@@ -1108,6 +1108,17 @@ impl Store {
         task_id: Uuid,
         request: UpdateTaskRequest,
     ) -> AppResult<Task> {
+        self.update_task_scoped(user_id, task_id, request, None)
+            .await
+    }
+
+    pub async fn update_task_scoped(
+        &self,
+        user_id: Uuid,
+        task_id: Uuid,
+        request: UpdateTaskRequest,
+        scope: Option<crate::task_recurrence::RecurrenceEditScope>,
+    ) -> AppResult<Task> {
         validate_task_fields(
             &request.title,
             &request.description,
@@ -1117,7 +1128,7 @@ impl Store {
             request.recurrence,
             request.parent_task_id,
         )?;
-        let labels = validate_labels(request.labels)?;
+        let labels = validate_labels(request.labels.clone())?;
         if request.expected_version < 1 {
             return Err(AppError::Validation(
                 "expected_version must be greater than zero".to_owned(),
@@ -1129,39 +1140,40 @@ impl Store {
             ));
         }
         let mut transaction = self.pool.begin().await?;
-        Self::lock_task_graph(&mut transaction, user_id).await?;
-        self.validate_task_relationships(
-            &mut transaction,
-            user_id,
-            request.project_id,
-            request.parent_task_id,
-        )
-        .await?;
-        self.validate_task_update_relationships(
-            &mut transaction,
-            user_id,
-            task_id,
-            request.project_id,
-            request.parent_task_id,
-            request.recurrence,
-        )
-        .await?;
+        let result: AppResult<Task> = async {
+            Self::lock_task_graph(&mut transaction, user_id).await?;
+            self.validate_task_relationships(
+                &mut transaction,
+                user_id,
+                request.project_id,
+                request.parent_task_id,
+            )
+            .await?;
+            self.validate_task_update_relationships(
+                &mut transaction,
+                user_id,
+                task_id,
+                request.project_id,
+                request.parent_task_id,
+                request.recurrence,
+            )
+            .await?;
 
-        let previous_status = sqlx::query_scalar::<_, TaskStatus>(
-            "SELECT status FROM tasks WHERE id = $1 AND user_id = $2",
-        )
-        .bind(task_id)
-        .bind(user_id)
-        .fetch_optional(&mut *transaction)
-        .await?
-        .ok_or(AppError::NotFound("task"))?;
-        if previous_status == TaskStatus::Completed && request.status != TaskStatus::Completed {
-            Self::remove_next_occurrence_for_reopen(&mut transaction, user_id, task_id).await?;
-        }
-        let completed_at = (request.status == TaskStatus::Completed).then(Utc::now);
-        let remind_at = request.remind_at;
-        let task = sqlx::query_as::<_, Task>(
-            r#"
+            let mut recurring = crate::task_recurrence::RecurringTaskState::load(
+                &mut transaction,
+                user_id,
+                task_id,
+            )
+            .await?;
+            recurring.prepare(&request, scope)?;
+            let previous_status = recurring.task.status;
+            if previous_status == TaskStatus::Completed && request.status != TaskStatus::Completed {
+                Self::remove_next_occurrence_for_reopen(&mut transaction, user_id, task_id).await?;
+            }
+            let completed_at = (request.status == TaskStatus::Completed).then(Utc::now);
+            let remind_at = request.remind_at;
+            let task = sqlx::query_as::<_, Task>(
+                r#"
             UPDATE tasks
             SET
                 project_id = $3,
@@ -1174,6 +1186,8 @@ impl Store {
                 status = $10,
                 priority = $11,
                 recurrence = $12,
+                recurrence_defaults = $17,
+                recurrence_project_id = $18,
                 labels = $13,
                 remind_at = $14,
                 completed_at = CASE
@@ -1203,53 +1217,66 @@ impl Store {
                 updated_at,
                 version
             "#,
-        )
-        .bind(task_id)
-        .bind(user_id)
-        .bind(request.project_id)
-        .bind(request.parent_task_id)
-        .bind(request.title.trim())
-        .bind(request.description.trim())
-        .bind(request.due_at)
-        .bind(request.scheduled_start)
-        .bind(request.scheduled_end)
-        .bind(request.status)
-        .bind(request.priority)
-        .bind(request.recurrence)
-        .bind(labels)
-        .bind(remind_at)
-        .bind(completed_at)
-        .bind(request.expected_version)
-        .fetch_optional(&mut *transaction)
-        .await?;
+            )
+            .bind(task_id)
+            .bind(user_id)
+            .bind(request.project_id)
+            .bind(request.parent_task_id)
+            .bind(request.title.trim())
+            .bind(request.description.trim())
+            .bind(request.due_at)
+            .bind(request.scheduled_start)
+            .bind(request.scheduled_end)
+            .bind(request.status)
+            .bind(request.priority)
+            .bind(request.recurrence)
+            .bind(labels)
+            .bind(remind_at)
+            .bind(completed_at)
+            .bind(request.expected_version)
+            .bind(recurring.recurrence_defaults)
+            .bind(recurring.recurrence_project_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
 
-        if let Some(task) = task {
-            Self::ensure_labels(&mut transaction, user_id, &task.labels).await?;
-            Self::sync_task_calendar_event(&mut transaction, user_id, &task).await?;
-            if previous_status != TaskStatus::Completed
-                && task.status == TaskStatus::Completed
-                && task.recurrence != TaskRecurrence::None
-            {
-                Self::create_next_recurring_task(&mut transaction, user_id, &task).await?;
+            if let Some(task) = task {
+                Self::ensure_labels(&mut transaction, user_id, &task.labels).await?;
+                Self::sync_task_calendar_event(&mut transaction, user_id, &task).await?;
+                if previous_status != TaskStatus::Completed
+                    && task.status == TaskStatus::Completed
+                    && task.recurrence != TaskRecurrence::None
+                {
+                    Self::create_next_recurring_task(&mut transaction, user_id, &task).await?;
+                }
+                return Ok(task);
             }
-            transaction.commit().await?;
-            return Ok(task);
+
+            let current_version = sqlx::query_scalar::<_, i32>(
+                "SELECT version FROM tasks WHERE id = $1 AND user_id = $2",
+            )
+            .bind(task_id)
+            .bind(user_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
+
+            match current_version {
+                Some(version) => Err(AppError::Conflict(format!(
+                    "task changed since version {}; current version is {version}",
+                    request.expected_version
+                ))),
+                None => Err(AppError::NotFound("task")),
+            }
         }
-
-        let current_version = sqlx::query_scalar::<_, i32>(
-            "SELECT version FROM tasks WHERE id = $1 AND user_id = $2",
-        )
-        .bind(task_id)
-        .bind(user_id)
-        .fetch_optional(&mut *transaction)
-        .await?;
-
-        match current_version {
-            Some(version) => Err(AppError::Conflict(format!(
-                "task changed since version {}; current version is {version}",
-                request.expected_version
-            ))),
-            None => Err(AppError::NotFound("task")),
+        .await;
+        match result {
+            Ok(task) => {
+                transaction.commit().await?;
+                Ok(task)
+            }
+            Err(error) => {
+                transaction.rollback().await?;
+                Err(error)
+            }
         }
     }
 
@@ -1406,6 +1433,11 @@ impl Store {
         user_id: Uuid,
         task: &Task,
     ) -> AppResult<()> {
+        let source = crate::task_recurrence::RecurringTaskState::load(connection, user_id, task.id)
+            .await?
+            .successor_source();
+        let task = &source;
+        Self::ensure_labels(connection, user_id, &task.labels).await?;
         let due_at = task.due_at.ok_or_else(|| {
             AppError::Validation("a recurring task must have a deadline".to_owned())
         })?;

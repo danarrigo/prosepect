@@ -211,12 +211,14 @@ impl Store {
             google_account: None,
             revisions: vec![],
         };
-        if let Some(project) = optional_id(&snapshot.task, "project_id")? {
-            snapshot.projects.push(
-                row(&mut tx, "projects", user, project)
-                    .await?
-                    .ok_or_else(changed)?,
-            );
+        for field in ["project_id", "recurrence_project_id"] {
+            if let Some(project) = optional_id(&snapshot.task, field)? {
+                snapshot.projects.push(
+                    row(&mut tx, "projects", user, project)
+                        .await?
+                        .ok_or_else(changed)?,
+                );
+            }
         }
         for field in ["parent_task_id", "recurrence_source_id"] {
             if let Some(dep) = optional_id(&snapshot.task, field)? {

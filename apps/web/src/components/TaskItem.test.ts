@@ -30,6 +30,41 @@ function mountTask(props: InstanceType<typeof TaskItem>['$props']) {
 }
 
 describe('TaskItem', () => {
+  it('defaults recurring edits to one occurrence and explicitly enables forward edits', async () => {
+    const recurring: Task = { ...task, recurrence: 'daily', due_at: '2030-01-01T12:00:00Z' }
+    const wrapper = mountTask({ task: recurring })
+    await wrapper.get('button[aria-label="Edit Write PRD"]').trigger('click')
+    const scope = wrapper.get<HTMLSelectElement>('select[aria-label="Apply changes to"]')
+    expect(scope.element.value).toBe('this_occurrence')
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('edit')?.[0]?.[1]).toMatchObject({
+      recurrence_scope: 'this_occurrence',
+      recurrence: 'daily',
+    })
+    await scope.setValue('this_and_future')
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('edit')?.[1]?.[1]).toMatchObject({ recurrence_scope: 'this_and_future' })
+  })
+
+  it('does not offer series edits for completed history or nonrecurring tasks', async () => {
+    for (const entry of [
+      task,
+      {
+        ...task,
+        recurrence: 'daily' as const,
+        status: 'completed' as const,
+        due_at: '2030-01-01T12:00:00Z',
+      },
+    ]) {
+      const wrapper = mountTask({ task: entry })
+      await wrapper.get('button[aria-label="Edit Write PRD"]').trigger('click')
+      expect(wrapper.find('select[aria-label="Apply changes to"]').exists()).toBe(false)
+      await wrapper.get('form').trigger('submit')
+      expect(wrapper.emitted('edit')?.[0]?.[1]).not.toHaveProperty('recurrence_scope')
+      wrapper.unmount()
+    }
+  })
+
   it('requests completion without mutating the task', async () => {
     const wrapper = mountTask({ task })
 
