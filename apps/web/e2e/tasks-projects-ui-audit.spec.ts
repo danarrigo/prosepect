@@ -55,7 +55,7 @@ async function mockWorkspace(page: Page, populated = true) {
     }
     if (!url.pathname.startsWith('/api/v1/')) return route.fallback()
     const path = url.pathname.replace('/api/v1', '')
-    let body: unknown = { items: [] }
+    let body: unknown = path === '/saved-task-views' ? [] : { items: [] }
     if (path === '/session')
       body = {
         csrf_token: 'mock-csrf',

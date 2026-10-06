@@ -187,7 +187,9 @@ impl Store {
         .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
+        let saved_task_views = self.saved_task_views(user_id).await?;
         Ok(AccountExport {
+            saved_task_views,
             user,
             projects,
             tasks,
@@ -216,6 +218,7 @@ impl Store {
 
 #[derive(Serialize)]
 struct AccountExport {
+    saved_task_views: Vec<crate::saved_views::SavedTaskView>,
     user: UserProfile,
     projects: Vec<Project>,
     tasks: Vec<Task>,

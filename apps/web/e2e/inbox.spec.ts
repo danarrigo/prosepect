@@ -40,7 +40,7 @@ async function fixture(page: Page) {
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname.replace('/api/v1', '')
     const method = route.request().method()
-    let body: unknown = { items: [] }
+    let body: unknown = path === '/saved-task-views' ? [] : { items: [] }
     if (path === '/session')
       body = {
         csrf_token: 'mock',

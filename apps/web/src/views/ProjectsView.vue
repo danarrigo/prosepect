@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { Archive, ArrowLeft, Pencil, RotateCcw, Search, X } from '@lucide/vue'
 import { useRoute } from 'vue-router'
-import type { Project, ProjectStatus, TaskPriority, TaskStatus } from '../api/types'
+import type { Project, ProjectStatus, TaskPriority, TaskStatus, SavedTaskView } from '../api/types'
 import AttachmentPanel from '../components/AttachmentPanel.vue'
 import CreateProjectDialog from '../components/CreateProjectDialog.vue'
 import QuickTaskForm from '../components/QuickTaskForm.vue'
 import TaskList from '../components/TaskList.vue'
+import SavedTaskViews from '../components/SavedTaskViews.vue'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const store = useWorkspaceStore()
@@ -20,6 +21,24 @@ const projectOutcome = ref('')
 const projectTargetDate = ref('')
 const projectStatus = ref<ProjectStatus>('active')
 const search = ref('')
+const searchInput = ref<HTMLInputElement | null>(null)
+const viewError = ref('')
+async function openSavedView(view: SavedTaskView) {
+  if (view.project_id && !store.projects.some((project) => project.id === view.project_id)) {
+    viewError.value = 'This view’s project is unavailable. Reload the page before trying again.'
+    return
+  }
+  viewError.value = ''
+  store.selectProject(view.project_id ?? null)
+  await nextTick()
+  search.value = view.search
+  statusFilter.value = view.status
+  priorityFilter.value = view.priority ?? 'all'
+  labelFilter.value = view.label ?? 'all'
+  sortBy.value = view.sort
+  await nextTick()
+  searchInput.value?.focus()
+}
 const statusFilter = ref<'open' | 'all' | TaskStatus>('open')
 const priorityFilter = ref<'all' | TaskPriority>('all')
 const labelFilter = ref('all')
@@ -158,7 +177,12 @@ async function removeProject() {
 
   const taskCount = baseTasks.value.length
   const contents = taskCount ? ` and ${taskCount} ${taskCount === 1 ? 'task' : 'tasks'}` : ''
-  if (!window.confirm(`Delete “${project.name}”${contents}? This cannot be undone.`)) return
+  if (
+    !window.confirm(
+      `Delete “${project.name}”${contents}? Its saved views will also be deleted. This cannot be undone.`,
+    )
+  )
+    return
 
   try {
     await store.removeProject(project)
@@ -363,7 +387,20 @@ function priorityRank(priority: TaskPriority) {
       </p>
     </template>
 
-    <section v-if="store.tasks.length || selected" class="mt-14">
+    <SavedTaskViews
+      :projects="store.projects"
+      :filters="{
+        project_id: selected?.id ?? null,
+        search,
+        status: statusFilter,
+        priority: priorityFilter === 'all' ? null : priorityFilter,
+        label: labelFilter === 'all' ? null : labelFilter,
+        sort: sortBy,
+      }"
+      @open="openSavedView"
+    />
+    <p v-if="viewError" role="alert" class="text-sm">{{ viewError }}</p>
+    <section class="mt-14">
       <div
         class="flex flex-col gap-3 border-b border-slate-200 pb-4 dark:border-slate-800 sm:flex-row sm:items-end sm:justify-between"
       >
@@ -388,6 +425,7 @@ function priorityRank(priority: TaskPriority) {
           <Search :size="14" class="pointer-events-none absolute left-2.5 top-2.5 text-slate-400" />
           <span class="sr-only">Search tasks</span>
           <input
+            ref="searchInput"
             v-model="search"
             class="filter-control w-full pl-8"
             type="search"
@@ -415,6 +453,12 @@ function priorityRank(priority: TaskPriority) {
         </select>
         <select v-model="labelFilter" class="filter-control w-full" aria-label="Filter by label">
           <option value="all">All labels</option>
+          <option
+            v-if="labelFilter !== 'all' && !labels.includes(labelFilter)"
+            :value="labelFilter"
+          >
+            {{ labelFilter }}
+          </option>
           <option v-for="label in labels" :key="label" :value="label">{{ label }}</option>
         </select>
         <select v-model="sortBy" class="filter-control w-full" aria-label="Sort tasks">
@@ -429,8 +473,10 @@ function priorityRank(priority: TaskPriority) {
         :tasks="visibleTasks"
         :projects="store.projects"
         :reorderable="sortBy === 'manual'"
+        :preserve-order="sortBy !== 'manual'"
         focusable
         empty-message="No tasks match these filters."
+        @focus-lost="searchInput?.focus()"
       />
     </section>
 

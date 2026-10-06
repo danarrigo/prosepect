@@ -102,7 +102,7 @@ async function mockCalendar(page: Page, populated = true) {
       return
     }
     const path = url.pathname.replace('/api/v1', '')
-    let body: unknown = { items: [] }
+    let body: unknown = path === '/saved-task-views' ? [] : { items: [] }
     if (path === '/session')
       body = {
         csrf_token: 'mock-csrf',
