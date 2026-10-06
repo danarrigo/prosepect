@@ -1425,6 +1425,8 @@ export interface components {
         };
         /** @enum {string} */
         ProjectStatus: "planned" | "active" | "paused" | "completed" | "archived";
+        /** @enum {string} */
+        RecurrenceEditScope: "this_occurrence" | "this_and_future";
         ReorderTasksRequest: {
             task_ids: string[];
         };
@@ -1457,6 +1459,9 @@ export interface components {
             search: string;
             sort: components["schemas"]["SavedTaskSort"];
             status: components["schemas"]["SavedTaskStatus"];
+        };
+        ScopedTaskUpdateRequest: components["schemas"]["UpdateTaskRequest"] & {
+            recurrence_scope?: null | components["schemas"]["RecurrenceEditScope"];
         };
         SearchResult: {
             excerpt: string;
@@ -4558,7 +4563,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateTaskRequest"];
+                "application/json": components["schemas"]["ScopedTaskUpdateRequest"];
             };
         };
         responses: {

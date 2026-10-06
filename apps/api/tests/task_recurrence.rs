@@ -300,3 +300,90 @@ async fn recurring_scopes_validate_rules_versions_ownership_and_release_locks(
     assert!(successor(&pool, &completed).await?.project_id.is_none());
     Ok(())
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn stopping_a_series_clears_one_off_defaults_and_creates_no_successor(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, original) = fixture(&pool).await?;
+    let once = store
+        .update_task_scoped(
+            user,
+            original.id,
+            edit(&original),
+            Some(RecurrenceEditScope::ThisOccurrence),
+        )
+        .await?;
+    let mut stop = edit(&once);
+    stop.recurrence = TaskRecurrence::None;
+    let stopped = store
+        .update_task_scoped(
+            user,
+            once.id,
+            stop,
+            Some(RecurrenceEditScope::ThisAndFuture),
+        )
+        .await?;
+    let has_defaults: bool =
+        sqlx::query_scalar("SELECT recurrence_defaults IS NOT NULL FROM tasks WHERE id=$1")
+            .bind(stopped.id)
+            .fetch_one(&pool)
+            .await?;
+    assert!(!has_defaults);
+    let mut complete = edit(&stopped);
+    complete.status = TaskStatus::Completed;
+    store.update_task(user, stopped.id, complete).await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tasks WHERE recurrence_source_id=$1")
+        .bind(stopped.id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(count, 0);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn monthly_exception_keeps_calendar_anchor_and_can_be_reopened(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let (store, user, original) = fixture(&pool).await?;
+    let mut monthly = edit(&original);
+    monthly.recurrence = TaskRecurrence::Monthly;
+    monthly.due_at = Some("2030-01-31T12:00:00Z".parse()?);
+    let monthly = store
+        .update_task_scoped(
+            user,
+            original.id,
+            monthly,
+            Some(RecurrenceEditScope::ThisAndFuture),
+        )
+        .await?;
+    let mut exception = edit(&monthly);
+    exception.due_at = Some("2030-02-02T12:00:00Z".parse()?);
+    let exception = store
+        .update_task_scoped(
+            user,
+            monthly.id,
+            exception,
+            Some(RecurrenceEditScope::ThisOccurrence),
+        )
+        .await?;
+    let mut finish = edit(&exception);
+    finish.status = TaskStatus::Completed;
+    let done = store.update_task(user, exception.id, finish).await?;
+    let next = successor(&pool, &done).await?;
+    assert_eq!(next.due_at, Some("2030-02-28T12:00:00Z".parse()?));
+    let mut reopen = edit(&done);
+    reopen.status = TaskStatus::Todo;
+    let reopened = store.update_task(user, done.id, reopen).await?;
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tasks WHERE recurrence_source_id=$1")
+            .bind(done.id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(remaining, 0);
+    let mut finish = edit(&reopened);
+    finish.status = TaskStatus::Completed;
+    let done_again = store.update_task(user, reopened.id, finish).await?;
+    assert_eq!(successor(&pool, &done_again).await?.due_at, next.due_at);
+    Ok(())
+}

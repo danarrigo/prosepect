@@ -17,6 +17,7 @@ import {
 } from '@lucide/vue'
 import type {
   EditableTaskFields,
+  RecurrenceEditScope,
   Project,
   Task,
   TaskPriority,
@@ -60,7 +61,10 @@ const emit = defineEmits<{
 }>()
 
 const labelListId = `task-labels-${useId()}`
+const recurrenceScopeHelpId = `${labelListId}-recurrence-scope`
 const editing = ref(false)
+const editBase = ref<Task | null>(null)
+const editorTask = computed(() => (editing.value ? (editBase.value ?? props.task) : props.task))
 const addingSubtask = ref(false)
 const submittedVersion = ref<number | null>(null)
 const title = ref('')
@@ -72,6 +76,16 @@ const autoDueDate = ref<string | null>(null)
 const priority = ref<TaskPriority>('medium')
 const status = ref<TaskStatus>('todo')
 const recurrence = ref<TaskRecurrence>('none')
+const recurrenceScope = ref<RecurrenceEditScope>('this_occurrence')
+const hasRecurrenceScope = computed(
+  () => editorTask.value.recurrence !== 'none' && editorTask.value.status !== 'completed',
+)
+watch(recurrenceScope, (scope) => {
+  if (scope === 'this_occurrence' && hasRecurrenceScope.value) {
+    recurrence.value = editorTask.value.recurrence
+    parentTaskId.value = ''
+  }
+})
 const labels = ref('')
 const remindAt = ref('')
 const subtaskTitle = ref('')
@@ -183,7 +197,9 @@ function populateEditor() {
 }
 
 function beginEditing() {
+  editBase.value = { ...props.task, labels: [...props.task.labels] }
   populateEditor()
+  recurrenceScope.value = 'this_occurrence'
   submittedVersion.value = null
   autoDueDate.value = null
   addingSubtask.value = false
@@ -203,8 +219,9 @@ function markDeadlineManual() {
 
 function submitEdit() {
   if (!canSave.value) return
-  submittedVersion.value = props.task.version
-  emit('edit', props.task, editableFields())
+  const base = editBase.value ?? props.task
+  submittedVersion.value = base.version
+  emit('edit', base, editableFields())
 }
 
 function editableFields(): EditableTaskFields {
@@ -214,11 +231,12 @@ function editableFields(): EditableTaskFields {
     title: editedTitle.value,
     description: description.value.trim(),
     due_at: editedDueAt(dueDate.value || deadlineSuggestion.value?.dueDate || ''),
-    scheduled_start: props.task.scheduled_start ?? null,
-    scheduled_end: props.task.scheduled_end ?? null,
+    scheduled_start: editorTask.value.scheduled_start ?? null,
+    scheduled_end: editorTask.value.scheduled_end ?? null,
     status: status.value,
     priority: priority.value,
     recurrence: recurrence.value,
+    ...(hasRecurrenceScope.value ? { recurrence_scope: recurrenceScope.value } : {}),
     labels: labels.value
       .split(',')
       .map((label) => label.trim())
@@ -229,8 +247,8 @@ function editableFields(): EditableTaskFields {
 
 function editedDueAt(value: string) {
   if (!value) return null
-  if (props.task.due_at && localDateKey(new Date(props.task.due_at)) === value) {
-    return props.task.due_at
+  if (editorTask.value.due_at && localDateKey(new Date(editorTask.value.due_at)) === value) {
+    return editorTask.value.due_at
   }
   return new Date(`${value}T23:59:00`).toISOString()
 }
@@ -443,6 +461,29 @@ function submitSubtask() {
     @submit.prevent="submitEdit"
   >
     <div class="grid gap-4 @lg/task:grid-cols-2">
+      <label v-if="hasRecurrenceScope" class="field-label @lg/task:col-span-2">
+        Apply changes to
+        <select
+          v-model="recurrenceScope"
+          class="field-input"
+          aria-label="Apply changes to"
+          :aria-describedby="recurrenceScopeHelpId"
+          :disabled="busy"
+        >
+          <option value="this_occurrence">This occurrence</option>
+          <option value="this_and_future">This and future occurrences</option>
+        </select>
+        <span
+          :id="recurrenceScopeHelpId"
+          class="text-xs font-normal text-slate-500 dark:text-slate-400"
+        >
+          {{
+            recurrenceScope === 'this_occurrence'
+              ? 'Future tasks keep their original values and schedule.'
+              : 'Future tasks use these details and timing.'
+          }}
+        </span>
+      </label>
       <label class="field-label @lg/task:col-span-2">
         Task title
         <input v-model="title" class="field-input" maxlength="240" required autofocus />
@@ -522,7 +563,11 @@ function submitSubtask() {
         <select
           v-model="recurrence"
           class="field-input"
-          :disabled="Boolean(parentTaskId) || (hasSubtasks && task.recurrence === 'none')"
+          :disabled="
+            Boolean(parentTaskId) ||
+            (hasSubtasks && task.recurrence === 'none') ||
+            (hasRecurrenceScope && recurrenceScope === 'this_occurrence')
+          "
         >
           <option value="none">Does not repeat</option>
           <option value="daily">Daily</option>
