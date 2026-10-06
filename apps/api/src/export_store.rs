@@ -188,7 +188,9 @@ impl Store {
         .fetch_all(&self.pool)
         .await?;
         let saved_task_views = self.saved_task_views(user_id).await?;
+        let recurrence_templates = self.recurrence_templates(user_id).await?;
         Ok(AccountExport {
+            recurrence_templates,
             saved_task_views,
             user,
             projects,
@@ -218,6 +220,7 @@ impl Store {
 
 #[derive(Serialize)]
 struct AccountExport {
+    recurrence_templates: Vec<crate::task_recurrence::RecurrenceTemplateExport>,
     saved_task_views: Vec<crate::saved_views::SavedTaskView>,
     user: UserProfile,
     projects: Vec<Project>,

@@ -19,8 +19,8 @@ use crate::{
         DailyReview, DailyReviewResponse, ExpectedVersionQuery, GoogleCallbackQuery,
         GoogleLoginQuery, HealthResponse, LabelList, PageQuery, Project, ProjectPage,
         ReorderTasksRequest, SessionResponse, StartDailyReviewRequest, Task, TaskListQuery,
-        TaskPage, UpdateDailyFocusRequest, UpdateProjectRequest, UpdateTaskRequest,
-        UpdateUserSettingsRequest, UserSettings,
+        TaskPage, UpdateDailyFocusRequest, UpdateProjectRequest, UpdateUserSettingsRequest,
+        UserSettings,
     },
     rate_limit::ClientAddress,
 };
@@ -821,7 +821,7 @@ pub async fn reorder_tasks(
     put,
     path = "/api/v1/tasks/{task_id}",
     params(("task_id" = Uuid, Path, description = "Task identifier")),
-    request_body = UpdateTaskRequest,
+    request_body = crate::task_recurrence::ScopedTaskUpdateRequest,
     responses(
         (status = 200, description = "Task updated", body = Task),
         (status = 401, body = ErrorResponse),
@@ -836,9 +836,12 @@ pub async fn update_task(
     State(state): State<AppState>,
     CurrentUser(user_id): CurrentUser,
     ApiPath(task_id): ApiPath<Uuid>,
-    ApiJson(request): ApiJson<UpdateTaskRequest>,
+    ApiJson(request): ApiJson<crate::task_recurrence::ScopedTaskUpdateRequest>,
 ) -> AppResult<Json<Task>> {
-    let task = state.store.update_task(user_id, task_id, request).await?;
+    let task = state
+        .store
+        .update_task_scoped(user_id, task_id, request.task, request.recurrence_scope)
+        .await?;
     state.sync_dispatcher.wake();
     Ok(Json(task))
 }
