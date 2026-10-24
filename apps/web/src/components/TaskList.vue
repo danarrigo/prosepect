@@ -3,6 +3,7 @@ import { computed, nextTick, ref } from 'vue'
 import type { EditableTaskFields, Project, Task, TaskStatus } from '../api/types'
 import { useWorkspaceStore } from '../stores/workspace'
 import TaskItem from './TaskItem.vue'
+import CreateTaskDialog from './CreateTaskDialog.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -25,6 +26,7 @@ const props = withDefaults(
 const emit = defineEmits<{ focusLost: [] }>()
 const store = useWorkspaceStore()
 const draggedTaskId = ref<string | null>(null)
+const duplicateDialog = ref<InstanceType<typeof CreateTaskDialog> | null>(null)
 const announcement = ref('')
 const rows = computed(() => flattenTasks(props.tasks))
 const focusTaskIds = computed(() =>
@@ -193,6 +195,7 @@ function flattenTasks(tasks: Task[]): Array<{ task: Task; depth: number }> {
         @status="changeStatus"
         @edit="edit"
         @remove="remove"
+        @duplicate="duplicateDialog?.open($event)"
         @add-subtask="addSubtask"
         @move="move"
         @focus="toggleFocus"
@@ -202,5 +205,6 @@ function flattenTasks(tasks: Task[]): Array<{ task: Task; depth: number }> {
       {{ emptyMessage }}
     </p>
     <p class="sr-only" aria-live="polite">{{ announcement }}</p>
+    <CreateTaskDialog ref="duplicateDialog" />
   </div>
 </template>

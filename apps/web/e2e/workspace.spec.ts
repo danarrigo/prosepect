@@ -470,7 +470,7 @@ test('creates and edits a standalone task with an automatic deadline', async ({ 
     await editor.getByLabel('Task title').fill(editedTaskName)
     await editor.getByLabel('Edit priority').selectOption('high')
     await editor.getByLabel('Edit status').selectOption('blocked')
-    await editor.getByRole('button', { name: 'Save' }).click()
+    await editor.getByRole('button', { name: 'Save', exact: true }).click()
     cleanupName = editedTaskName
 
     const editedTask = page

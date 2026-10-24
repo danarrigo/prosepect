@@ -12,6 +12,7 @@ pub mod file_routes;
 pub mod file_storage;
 mod file_store;
 pub mod google_auth;
+mod google_oidc;
 pub mod google_tasks;
 pub mod google_tasks_client;
 pub mod google_tasks_routes;
