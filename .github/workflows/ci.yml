@@ -9,6 +9,13 @@ permissions:
   contents: read
 
 jobs:
+  worker-http:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Worker HTTP retry and diagnostic tests (local fixtures only)
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_worker_request.py' -v
+
   backend:
     runs-on: ubuntu-latest
     services:
