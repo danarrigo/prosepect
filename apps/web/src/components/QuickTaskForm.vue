@@ -2,12 +2,16 @@
 import { computed, ref, useId, watch } from 'vue'
 import { SlidersHorizontal } from '@lucide/vue'
 import { useWorkspaceStore } from '../stores/workspace'
-import type { TaskPriority, TaskRecurrence } from '../api/types'
-import { analyzeQuickCapture } from '../quick-capture'
+import type { Task, TaskPriority, TaskRecurrence } from '../api/types'
+import { analyzeQuickCapture, type QuickCaptureAnalysis } from '../quick-capture'
 
 const props = withDefaults(
-  defineProps<{ autofocus?: boolean; defaultProjectId?: string | null }>(),
-  { autofocus: false, defaultProjectId: undefined },
+  defineProps<{
+    autofocus?: boolean
+    defaultProjectId?: string | null
+    initialTask?: Pick<Task, 'title' | 'description' | 'priority' | 'labels'>
+  }>(),
+  { autofocus: false, defaultProjectId: undefined, initialTask: undefined },
 )
 const emit = defineEmits<{ created: [] }>()
 const store = useWorkspaceStore()
@@ -16,25 +20,38 @@ const titleInputId = `quick-task-title-${componentId}`
 const labelListId = `quick-task-labels-${componentId}`
 const feedbackId = `quick-task-feedback-${componentId}`
 const detailsId = `quick-task-details-${componentId}`
-const title = ref('')
+const title = ref(props.initialTask?.title ?? '')
 const saveError = ref('')
 const titleInput = ref<HTMLInputElement | null>(null)
 const dueDate = ref('')
 const dueTime = ref('')
 const manualDeadlineForTitle = ref<string | null>(null)
 const autoDueDate = ref<string | null>(null)
-const priority = ref<TaskPriority>('medium')
-const projectId = ref('')
-const detailsOpen = ref(false)
-const description = ref('')
+const priority = ref<TaskPriority>(props.initialTask?.priority ?? 'medium')
+const projectId = ref(props.initialTask ? (props.defaultProjectId ?? '') : '')
+const detailsOpen = ref(Boolean(props.initialTask))
+const description = ref(props.initialTask?.description ?? '')
 const recurrence = ref<TaskRecurrence>('none')
-const labels = ref('')
+const labels = ref(props.initialTask?.labels.join(', ') ?? '')
 const remindAt = ref('')
 const ignoredSmartDateForTitle = ref<string | null>(null)
 
 const recognizesSmartDate = computed(() => ignoredSmartDateForTitle.value !== title.value)
-const quickCaptureAnalysis = computed(() =>
-  analyzeQuickCapture(title.value, new Date(), store.projects, recognizesSmartDate.value),
+const quickCaptureAnalysis = computed<QuickCaptureAnalysis>(() =>
+  props.initialTask
+    ? {
+        result: {
+          title: title.value.trim(),
+          dueDate: null,
+          scheduledStart: null,
+          scheduledEnd: null,
+          labels: [],
+          priority: null,
+          projectId: null,
+        },
+        temporalSuggestion: null,
+      }
+    : analyzeQuickCapture(title.value, new Date(), store.projects, recognizesSmartDate.value),
 )
 const quickCapture = computed(() => quickCaptureAnalysis.value.result)
 const deadlineSuggestion = computed(() => {
@@ -91,6 +108,16 @@ watch(deadlineSuggestion, (suggestion) => {
 watch(
   () => [props.defaultProjectId, store.selectedProjectId, store.projects] as const,
   () => {
+    if (props.initialTask) {
+      if (
+        projectId.value &&
+        !store.projects.some(
+          (project) => project.id === projectId.value && project.status !== 'archived',
+        )
+      )
+        projectId.value = ''
+      return
+    }
     const defaultProject =
       props.defaultProjectId === undefined ? store.selectedProjectId : props.defaultProjectId
     if (defaultProject) {

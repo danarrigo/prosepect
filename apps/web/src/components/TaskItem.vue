@@ -55,6 +55,7 @@ const emit = defineEmits<{
   status: [task: Task, status: TaskStatus]
   edit: [task: Task, fields: EditableTaskFields]
   remove: [task: Task]
+  duplicate: [task: Task]
   addSubtask: [task: Task, title: string]
   move: [task: Task, direction: 'up' | 'down']
   focus: [task: Task]
@@ -623,6 +624,14 @@ function submitSubtask() {
           @click="emit('remove', task)"
         >
           Delete
+        </button>
+        <button
+          class="ml-3 text-xs text-slate-500 hover:text-slate-950 dark:text-slate-400 dark:hover:text-white"
+          type="button"
+          :disabled="busy"
+          @click="emit('duplicate', editorTask)"
+        >
+          Duplicate saved task
         </button>
       </div>
       <div class="ml-auto flex gap-2">

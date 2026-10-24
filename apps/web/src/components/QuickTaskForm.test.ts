@@ -15,6 +15,76 @@ function setup() {
 afterEach(() => vi.useRealTimers())
 
 describe('QuickTaskForm creation', () => {
+  it('copies only safe fields and treats a duplicated title literally', async () => {
+    const pinia = createPinia()
+    const store = useWorkspaceStore(pinia)
+    store.selectedProjectId = 'unrelated-project'
+    const addTask = vi.spyOn(store, 'addTask').mockResolvedValue(undefined as never)
+    const source = {
+      title: 'Plan tomorrow at 3pm #work @urgent p1',
+      description: 'Source details',
+      priority: 'low' as const,
+      labels: ['reference'],
+    }
+    const wrapper = mount(QuickTaskForm, {
+      props: { initialTask: source, defaultProjectId: null },
+      global: { plugins: [pinia] },
+    })
+    await wrapper.get('form').trigger('submit')
+    expect(addTask).toHaveBeenCalledWith({
+      title: source.title,
+      description: source.description,
+      priority: 'low',
+      labels: ['reference'],
+      project_id: null,
+      parent_task_id: null,
+      due_at: null,
+      scheduled_start: null,
+      scheduled_end: null,
+      remind_at: null,
+      recurrence: 'none',
+      status: 'todo',
+    })
+    expect(source.labels).toEqual(['reference'])
+    expect(store.selectedProjectId).toBe('unrelated-project')
+    wrapper.unmount()
+  })
+
+  it('keeps a duplicate draft after failure and allows explicit new timing', async () => {
+    const pinia = createPinia()
+    const store = useWorkspaceStore(pinia)
+    const addTask = vi
+      .spyOn(store, 'addTask')
+      .mockRejectedValueOnce(new Error('Offline'))
+      .mockResolvedValue(undefined as never)
+    const wrapper = mount(QuickTaskForm, {
+      props: {
+        initialTask: {
+          title: 'Tomorrow at 3pm',
+          description: 'Keep this',
+          priority: 'high',
+          labels: ['work'],
+        },
+        defaultProjectId: null,
+      },
+      global: { plugins: [pinia] },
+    })
+    await wrapper.get('input[type=date]').setValue('2030-01-02')
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('created')).toBeUndefined()
+    expect(wrapper.get<HTMLInputElement>('input[type=text]').element.value).toBe('Tomorrow at 3pm')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('Keep this')
+    await wrapper.get('form').trigger('submit')
+    expect(addTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        due_at: new Date('2030-01-02T23:59:00').toISOString(),
+        scheduled_start: null,
+        title: 'Tomorrow at 3pm',
+      }),
+    )
+    expect(wrapper.emitted('created')).toHaveLength(1)
+    wrapper.unmount()
+  })
   it('can capture unassigned tasks without changing the selected project context', async () => {
     const pinia = createPinia()
     const store = useWorkspaceStore(pinia)
