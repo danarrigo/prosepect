@@ -212,6 +212,9 @@ impl GoogleOAuth {
             .send()
             .await?
             .error_for_status()?;
+        if response.status() != reqwest::StatusCode::OK {
+            bail!("Google signing key endpoint did not return a successful response");
+        }
         let mut body = Vec::new();
         while let Some(chunk) = response.chunk().await? {
             if body.len().saturating_add(chunk.len()) > 1024 * 1024 {
@@ -472,6 +475,114 @@ mod consent_tests {
         assert_ne!(result.encrypted_access_token, b"access-token");
         assert!(result.access_token_expires_at.unwrap() > Utc::now());
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn offline_exchange_fails_closed_without_retrying_the_code() {
+        use crate::google_oidc::tests::{claims, jwks, signed};
+        use axum::{
+            Router,
+            body::Body,
+            http::{Response, StatusCode},
+            routing::{get, post},
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for scenario in [
+            "missing-id-token",
+            "bad-nonce",
+            "unknown-key",
+            "token-error",
+            "token-redirect",
+            "keys-redirect",
+            "oversized-keys",
+        ] {
+            let requests = Arc::new(AtomicUsize::new(0));
+            let count = requests.clone();
+            let redirects = Arc::new(AtomicUsize::new(0));
+            let redirected = redirects.clone();
+            let app = Router::new()
+                .route(
+                    "/token",
+                    post(move || {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        async move {
+                            let mut identity = claims();
+                            if scenario == "bad-nonce" {
+                                identity["nonce"] = serde_json::json!("wrong");
+                            }
+                            let mut response = serde_json::json!({
+                                "access_token": "access-token", "token_type": "Bearer",
+                                "id_token": signed(&identity)
+                            });
+                            if scenario == "missing-id-token" {
+                                response.as_object_mut().unwrap().remove("id_token");
+                            }
+                            let status = match scenario {
+                                "token-error" => StatusCode::BAD_REQUEST,
+                                "token-redirect" => StatusCode::TEMPORARY_REDIRECT,
+                                _ => StatusCode::OK,
+                            };
+                            Response::builder()
+                                .status(status)
+                                .header("content-type", "application/json")
+                                .header("location", "/must-not-follow")
+                                .body(Body::from(response.to_string()))
+                                .unwrap()
+                        }
+                    }),
+                )
+                .route(
+                    "/keys",
+                    get(move || async move {
+                        let mut keys = jwks();
+                        if scenario == "unknown-key" {
+                            keys.keys.clear();
+                        }
+                        let body = if scenario == "oversized-keys" {
+                            " ".repeat(1024 * 1024 + 1)
+                        } else {
+                            serde_json::to_string(&keys).unwrap()
+                        };
+                        Response::builder()
+                            .status(if scenario == "keys-redirect" {
+                                StatusCode::TEMPORARY_REDIRECT
+                            } else {
+                                StatusCode::OK
+                            })
+                            .header("content-type", "application/json")
+                            .header("location", "/must-not-follow")
+                            .body(Body::from(body))
+                            .unwrap()
+                    }),
+                )
+                .route(
+                    "/must-not-follow",
+                    axum::routing::any(move || {
+                        redirected.fetch_add(1, Ordering::SeqCst);
+                        async { StatusCode::INTERNAL_SERVER_ERROR }
+                    }),
+                );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let result = offline_google()
+                .complete_login_at(
+                    "one-use-code".into(),
+                    "test-nonce".into(),
+                    "test-verifier".into(),
+                    &format!("http://{address}/token"),
+                    &format!("http://{address}/keys"),
+                )
+                .await;
+            assert!(result.is_err(), "accepted {scenario}");
+            assert_eq!(requests.load(Ordering::SeqCst), 1, "retried {scenario}");
+            assert_eq!(
+                redirects.load(Ordering::SeqCst),
+                0,
+                "followed redirect for {scenario}"
+            );
+            server.abort();
+        }
     }
 
     #[tokio::test]

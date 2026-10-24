@@ -21,6 +21,7 @@ pub(crate) struct GoogleClaims {
     aud: Audience,
     azp: Option<String>,
     iat: u64,
+    exp: u64,
     at_hash: Option<String>,
 }
 
@@ -107,8 +108,10 @@ pub(crate) fn verify_id_token(
     }
     if claims.sub.is_empty()
         || claims.sub.len() > 255
+        || !claims.sub.is_ascii()
         || claims.email.trim().is_empty()
         || !claims.email_verified
+        || claims.exp <= jsonwebtoken::get_current_timestamp()
         || claims.iat > jsonwebtoken::get_current_timestamp().saturating_add(60)
     {
         bail!("Google ID token identity or issued-at is invalid");
@@ -157,10 +160,9 @@ pub(crate) mod tests {
         encode(
             header,
             claims,
-            &EncodingKey::from_rsa_pem(include_bytes!(
-                "../tests/fixtures/oidc/test-only-private.pem"
-            ))
-            .unwrap(),
+            &EncodingKey::from_rsa_der(include_bytes!(
+                "../tests/fixtures/oidc/test-only-private.der"
+            )),
         )
         .unwrap()
     }
@@ -204,6 +206,8 @@ pub(crate) mod tests {
             ("email", json!(" ")),
             ("sub", json!("")),
             ("sub", json!("x".repeat(256))),
+            ("sub", json!("non-ascii-λ")),
+            ("exp", json!(jsonwebtoken::get_current_timestamp())),
         ] {
             let mut invalid = claims();
             invalid[field] = value;
