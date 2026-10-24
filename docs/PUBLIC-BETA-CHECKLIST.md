@@ -14,7 +14,7 @@ Reviewed 2026-09-11. This is a release gate, not evidence of Google approval, le
 ### 1. Release and dependency evidence
 
 - [ ] Run/review remote Rust formatting, clippy, workspace tests with PostgreSQL, generated OpenAPI/schema consistency, container checks, and end-to-end tests on the exact candidate commit. No Rust build/test/check/clippy or Docker was run locally for this review. Operations contracts were already reconciled in `8efa3fb` and merged in `c54e78b`; main CI run `34222767710` passed. That existing evidence does not validate this readiness change candidate.
-- [ ] Run the new dependency workflow remotely, inspect **both** Rust reports and the npm JSON artifact, and require `rust-audit` and `npm-audit` in merge rules. Any finding other than the exact documented RSA exception blocks release. Test Actions failure notification receipt; a checked-in workflow does not enable merge rules or prove delivery.
+- [ ] Run the new dependency workflow remotely, inspect **both** Rust reports and the npm JSON artifact, and require `rust-audit` and `npm-audit` in merge rules. Any finding blocks release; there are no dependency advisory exceptions. Test Actions failure notification receipt; a checked-in workflow does not enable merge rules or prove delivery.
 
 ### 2. Google OAuth brand, domain, scopes, and submission
 

@@ -7,18 +7,38 @@ use aes_gcm::{
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
-use openidconnect::{
-    AccessTokenHash, AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl,
-    Nonce as OidcNonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
-    Scope, TokenResponse,
-    core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata},
-    reqwest,
+use oauth2::{
+    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
+    basic::{
+        BasicErrorResponse, BasicRevocationErrorResponse, BasicTokenIntrospectionResponse,
+        BasicTokenType,
+    },
 };
-use tokio::sync::OnceCell;
+
+use crate::google_oidc::verify_id_token;
 
 use crate::config::GoogleOAuthConfig;
 
-const GOOGLE_ISSUER: &str = "https://accounts.google.com";
+// Fixed Google endpoints prevent discovery or token headers from redirecting credentials/keys.
+const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const GOOGLE_JWKS_URL: &str = "https://www.googleapis.com/oauth2/v3/certs";
+
+type GoogleClient = oauth2::Client<
+    BasicErrorResponse,
+    oauth2::StandardTokenResponse<IdTokenFields, BasicTokenType>,
+    BasicTokenIntrospectionResponse,
+    oauth2::StandardRevocableToken,
+    BasicRevocationErrorResponse,
+>;
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+struct IdTokenFields {
+    id_token: String,
+}
+
+impl oauth2::ExtraTokenFields for IdTokenFields {}
 
 #[derive(Clone)]
 pub struct GoogleOAuth {
@@ -28,7 +48,6 @@ pub struct GoogleOAuth {
 struct GoogleOAuthInner {
     config: GoogleOAuthConfig,
     http_client: reqwest::Client,
-    provider_metadata: OnceCell<CoreProviderMetadata>,
     token_cipher: Aes256Gcm,
 }
 
@@ -81,7 +100,6 @@ impl GoogleOAuth {
             inner: Arc::new(GoogleOAuthInner {
                 config,
                 http_client,
-                provider_metadata: OnceCell::new(),
                 token_cipher,
             }),
         })
@@ -104,20 +122,14 @@ impl GoogleOAuth {
         calendar_access: bool,
         tasks_access: bool,
     ) -> Result<GoogleLoginStart> {
-        let metadata = self.provider_metadata().await?.clone();
-        let client = CoreClient::from_provider_metadata(
-            metadata,
-            ClientId::new(self.inner.config.client_id.clone()),
-            Some(ClientSecret::new(self.inner.config.client_secret.clone())),
-        )
-        .set_redirect_uri(RedirectUrl::new(self.inner.config.redirect_uri.clone())?);
+        let client = GoogleClient::new(ClientId::new(self.inner.config.client_id.clone()))
+            .set_auth_uri(AuthUrl::new(GOOGLE_AUTH_URL.to_owned())?)
+            .set_redirect_uri(RedirectUrl::new(self.inner.config.redirect_uri.clone())?);
+        let nonce = CsrfToken::new_random();
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
         let request = client
-            .authorize_url(
-                CoreAuthenticationFlow::AuthorizationCode,
-                CsrfToken::new_random,
-                OidcNonce::new_random,
-            )
+            .authorize_url(CsrfToken::new_random)
+            .add_extra_param("nonce", nonce.secret())
             .add_scope(Scope::new("openid".to_owned()))
             .add_scope(Scope::new("email".to_owned()))
             .add_scope(Scope::new("profile".to_owned()))
@@ -146,7 +158,7 @@ impl GoogleOAuth {
         } else {
             request
         };
-        let (authorization_url, state, nonce) = request.set_pkce_challenge(pkce_challenge).url();
+        let (authorization_url, state) = request.set_pkce_challenge(pkce_challenge).url();
 
         Ok(GoogleLoginStart {
             authorization_url: authorization_url.to_string(),
@@ -162,54 +174,62 @@ impl GoogleOAuth {
         nonce: String,
         pkce_verifier: String,
     ) -> Result<GoogleLoginResult> {
-        let metadata = self.provider_metadata().await?.clone();
-        let client = CoreClient::from_provider_metadata(
-            metadata,
-            ClientId::new(self.inner.config.client_id.clone()),
-            Some(ClientSecret::new(self.inner.config.client_secret.clone())),
+        self.complete_login_at(
+            code,
+            nonce,
+            pkce_verifier,
+            GOOGLE_TOKEN_URL,
+            GOOGLE_JWKS_URL,
         )
-        .set_redirect_uri(RedirectUrl::new(self.inner.config.redirect_uri.clone())?);
+        .await
+    }
+
+    // Endpoints are supplied only by the fixed production wrapper or offline tests.
+    async fn complete_login_at(
+        &self,
+        code: String,
+        nonce: String,
+        pkce_verifier: String,
+        token_url: &str,
+        jwks_url: &str,
+    ) -> Result<GoogleLoginResult> {
+        let client = GoogleClient::new(ClientId::new(self.inner.config.client_id.clone()))
+            .set_client_secret(ClientSecret::new(self.inner.config.client_secret.clone()))
+            .set_token_uri(TokenUrl::new(token_url.to_owned())?)
+            .set_redirect_uri(RedirectUrl::new(self.inner.config.redirect_uri.clone())?);
         let token_response = client
-            .exchange_code(AuthorizationCode::new(code))?
+            .exchange_code(AuthorizationCode::new(code))
             .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier))
             .request_async(&self.inner.http_client)
             .await
             .context("Google rejected the authorization code")?;
-        let id_token = token_response
-            .id_token()
-            .ok_or_else(|| anyhow!("Google did not return an ID token"))?;
-        let verifier = client.id_token_verifier();
-        let claims = id_token
-            .claims(&verifier, &OidcNonce::new(nonce))
-            .context("Google returned an invalid ID token")?;
-
-        if let Some(expected_hash) = claims.access_token_hash() {
-            let actual_hash = AccessTokenHash::from_token(
-                token_response.access_token(),
-                id_token.signing_alg()?,
-                id_token.signing_key(&verifier)?,
-            )?;
-            if actual_hash != *expected_hash {
-                bail!("Google access token hash did not match the ID token");
+        // Fetch only from Google's fixed TLS endpoint on each callback. No stale-key cache,
+        // header-directed URL, or retry of the one-use authorization code is involved.
+        let mut response = self
+            .inner
+            .http_client
+            .get(jwks_url)
+            .send()
+            .await?
+            .error_for_status()?;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if body.len().saturating_add(chunk.len()) > 1024 * 1024 {
+                bail!("Google signing key response exceeded its limit");
             }
+            body.extend_from_slice(&chunk);
         }
-
-        if claims.email_verified() != Some(true) {
-            bail!("Google account email must be verified");
-        }
-        let email = claims
-            .email()
-            .map(|value| value.as_str().to_owned())
-            .ok_or_else(|| anyhow!("Google did not provide an email address"))?;
-        let display_name = claims
-            .name()
-            .and_then(|value| value.get(None))
-            .map(|value| value.as_str().to_owned())
-            .unwrap_or_else(|| email.clone());
-        let avatar_url = claims
-            .picture()
-            .and_then(|value| value.get(None))
-            .map(|value| value.as_str().to_owned());
+        let jwks = serde_json::from_slice(&body).context("Google returned invalid signing keys")?;
+        let claims = verify_id_token(
+            &token_response.extra_fields().id_token,
+            &jwks,
+            &self.inner.config.client_id,
+            &nonce,
+            token_response.access_token().secret(),
+        )?;
+        let email = claims.email;
+        let display_name = claims.name.unwrap_or_else(|| email.clone());
+        let avatar_url = claims.picture;
         let access_token_expires_at = token_response
             .expires_in()
             .and_then(|duration| chrono::Duration::from_std(duration).ok())
@@ -225,7 +245,7 @@ impl GoogleOAuth {
             .unwrap_or_default();
 
         Ok(GoogleLoginResult {
-            subject: claims.subject().as_str().to_owned(),
+            subject: claims.sub,
             email,
             display_name,
             avatar_url,
@@ -307,20 +327,6 @@ impl GoogleOAuth {
         Ok(())
     }
 
-    async fn provider_metadata(&self) -> Result<&CoreProviderMetadata> {
-        self.inner
-            .provider_metadata
-            .get_or_try_init(|| async {
-                CoreProviderMetadata::discover_async(
-                    IssuerUrl::new(GOOGLE_ISSUER.to_owned())?,
-                    &self.inner.http_client,
-                )
-                .await
-                .context("failed to discover Google OpenID configuration")
-            })
-            .await
-    }
-
     fn decrypt(&self, encrypted: &[u8]) -> Result<Vec<u8>> {
         if encrypted.len() <= 12 {
             bail!("stored Google credential is invalid");
@@ -357,26 +363,13 @@ mod consent_tests {
     use std::collections::HashMap;
 
     fn offline_google() -> GoogleOAuth {
-        let google = GoogleOAuth::new(GoogleOAuthConfig {
+        GoogleOAuth::new(GoogleOAuthConfig {
             client_id: "test-client".into(),
             client_secret: "test-secret".into(),
             redirect_uri: "http://localhost/callback".into(),
             token_encryption_key: STANDARD.encode([7_u8; 32]),
         })
-        .unwrap();
-        // Seed discovery, so consent tests cannot make live provider requests.
-        let metadata = serde_json::from_value(serde_json::json!({
-            "issuer": GOOGLE_ISSUER,
-            "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
-            "token_endpoint": "https://oauth2.googleapis.com/token",
-            "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
-            "response_types_supported": ["code"],
-            "subject_types_supported": ["public"],
-            "id_token_signing_alg_values_supported": ["RS256"]
-        }))
-        .unwrap();
-        google.inner.provider_metadata.set(metadata).unwrap();
-        google
+        .unwrap()
     }
 
     fn params(start: GoogleLoginStart) -> HashMap<String, String> {
@@ -403,6 +396,82 @@ mod consent_tests {
         assert_eq!(tasks["include_granted_scopes"], "true");
         assert_eq!(tasks["prompt"], "consent");
         assert_eq!(tasks["code_challenge_method"], "S256");
+    }
+
+    #[tokio::test]
+    async fn random_state_nonce_and_pkce_are_independent_and_bound_to_url() {
+        let google = offline_google();
+        let first = google.begin_login().await.unwrap();
+        let second = google.begin_login().await.unwrap();
+        assert_ne!(first.state, second.state);
+        assert_ne!(first.nonce, second.nonce);
+        assert_ne!(first.pkce_verifier, second.pkce_verifier);
+        assert_ne!(first.state, first.nonce);
+        let challenge = PkceCodeChallenge::from_code_verifier_sha256(&PkceCodeVerifier::new(
+            first.pkce_verifier.clone(),
+        ));
+        let expected_state = first.state.clone();
+        let expected_nonce = first.nonce.clone();
+        let url = params(first);
+        assert_eq!(url["state"], expected_state);
+        assert_eq!(url["nonce"], expected_nonce);
+        assert_eq!(url["code_challenge"], challenge.as_str());
+        assert_eq!(url["response_type"], "code");
+        assert_eq!(url["redirect_uri"], "http://localhost/callback");
+    }
+
+    #[tokio::test]
+    async fn offline_code_exchange_verifies_signed_identity_and_encrypts_credentials() {
+        use crate::google_oidc::tests::{claims, jwks, signed};
+        use axum::{
+            Json, Router,
+            routing::{get, post},
+        };
+        let token = signed(&claims());
+        let app = Router::new()
+            .route("/token", post(move |headers: axum::http::HeaderMap, axum::Form(form): axum::Form<HashMap<String, String>>| async move {
+                assert!(headers.contains_key("authorization"));
+                assert_eq!(form["code"], "one-use-code");
+                assert_eq!(form["code_verifier"], "test-verifier");
+                assert_eq!(form["grant_type"], "authorization_code");
+                assert_eq!(form["redirect_uri"], "http://localhost/callback");
+                Json(serde_json::json!({
+                    "access_token": "access-token", "refresh_token": "refresh-token",
+                    "token_type": "Bearer", "expires_in": 3600,
+                    "scope": "openid email profile", "id_token": token
+                }))
+            }))
+            .route("/keys", get(|| async { Json(jwks()) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let google = offline_google();
+        let result = google
+            .complete_login_at(
+                "one-use-code".into(),
+                "test-nonce".into(),
+                "test-verifier".into(),
+                &format!("http://{address}/token"),
+                &format!("http://{address}/keys"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.subject, "google-user");
+        assert_eq!(result.email, "test@example.com");
+        assert_eq!(result.scopes, ["openid", "email", "profile"]);
+        assert_eq!(
+            google.decrypt(&result.encrypted_access_token).unwrap(),
+            b"access-token"
+        );
+        assert_eq!(
+            google
+                .decrypt(&result.encrypted_refresh_token.unwrap())
+                .unwrap(),
+            b"refresh-token"
+        );
+        assert_ne!(result.encrypted_access_token, b"access-token");
+        assert!(result.access_token_expires_at.unwrap() > Utc::now());
+        server.abort();
     }
 
     #[tokio::test]
