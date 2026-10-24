@@ -1151,7 +1151,7 @@ export interface components {
         CreateSavedTaskView: {
             label?: string | null;
             name: string;
-            priority?: null | components["schemas"]["TaskPriority"];
+            priority?: components["schemas"]["TaskPriority"] | null;
             /** Format: uuid */
             project_id?: string | null;
             search: string;
@@ -1203,7 +1203,7 @@ export interface components {
             version: number;
         };
         DailyReviewResponse: {
-            review?: null | components["schemas"]["DailyReview"];
+            review?: components["schemas"]["DailyReview"] | null;
         };
         /** @enum {string} */
         DailyReviewStatus: "open" | "completed";
@@ -1258,7 +1258,7 @@ export interface components {
             expires_at?: string | null;
             /** Format: int64 */
             failed_synchronization_count: number;
-            latest_synchronization?: null | components["schemas"]["Synchronization"];
+            latest_synchronization?: components["schemas"]["Synchronization"] | null;
             /** Format: int64 */
             pending_synchronization_count: number;
             scopes: string[];
@@ -1395,7 +1395,7 @@ export interface components {
             as_of: string;
             database: components["schemas"]["ProbeStatus"];
             limits: components["schemas"]["OperationsLimits"];
-            metrics?: null | components["schemas"]["OperationsMetrics"];
+            metrics?: components["schemas"]["OperationsMetrics"] | null;
         };
         /** @enum {string} */
         ProbeStatus: "ok" | "unavailable";
@@ -1453,7 +1453,7 @@ export interface components {
             id: string;
             label?: string | null;
             name: string;
-            priority?: null | components["schemas"]["TaskPriority"];
+            priority?: components["schemas"]["TaskPriority"] | null;
             /** Format: uuid */
             project_id?: string | null;
             search: string;
@@ -1461,7 +1461,7 @@ export interface components {
             status: components["schemas"]["SavedTaskStatus"];
         };
         ScopedTaskUpdateRequest: components["schemas"]["UpdateTaskRequest"] & {
-            recurrence_scope?: null | components["schemas"]["RecurrenceEditScope"];
+            recurrence_scope?: components["schemas"]["RecurrenceEditScope"] | null;
         };
         SearchResult: {
             excerpt: string;
