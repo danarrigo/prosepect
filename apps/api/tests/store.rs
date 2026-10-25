@@ -16,6 +16,56 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn oauth_connection_purposes_do_not_bypass_login_legal_validation(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let user = create_user(&pool, "oauth-purpose@example.com").await?;
+    let login = GoogleLoginStart {
+        authorization_url: "https://accounts.example/authorize".to_owned(),
+        state: "purpose-state".to_owned(),
+        nonce: "purpose-nonce".to_owned(),
+        pkce_verifier: "0123456789012345678901234567890123456789012".to_owned(),
+    };
+    for purpose in ["calendar_connect", "tasks_connect"] {
+        store
+            .save_google_login_attempt(&login, Some(user), purpose, None)
+            .await?;
+        let attempt = store.consume_google_login_attempt(&login.state).await?;
+        assert_eq!(attempt.purpose, purpose);
+        assert_eq!(attempt.user_id, Some(user));
+        assert!(!attempt.age_confirmed);
+        assert!(attempt.terms_version.is_none());
+        assert!(attempt.privacy_version.is_none());
+        assert!(matches!(
+            store
+                .save_google_login_attempt(&login, Some(user), purpose, Some(("terms", "privacy")))
+                .await,
+            Err(AppError::Validation(_))
+        ));
+    }
+    for purpose in ["login", "unknown", "tasks", ""] {
+        assert!(matches!(
+            store
+                .save_google_login_attempt(&login, Some(user), purpose, None)
+                .await,
+            Err(AppError::Validation(_))
+        ));
+    }
+    assert!(matches!(
+        store
+            .save_google_login_attempt(&login, Some(user), "unknown", Some(("terms", "privacy")))
+            .await,
+        Err(AppError::Validation(_))
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_login_attempts")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(count, 0, "Rejected purposes must not persist attempts");
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_login_records_current_legal_acceptance(pool: PgPool) -> anyhow::Result<()> {
     let store = Store::from_pool(pool.clone());
     let login = GoogleLoginStart {
