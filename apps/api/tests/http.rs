@@ -52,6 +52,9 @@ async fn google_tasks_consent_start_persists_a_user_bound_single_use_attempt(
         .next()
         .unwrap()
         .to_owned();
+    let session_body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(session.into_body(), 65536).await?)?;
+    let user_id: uuid::Uuid = session_body["user"]["id"].as_str().unwrap().parse()?;
     let response = router
         .oneshot(
             Request::builder()
@@ -86,7 +89,7 @@ async fn google_tasks_consent_start_persists_a_user_bound_single_use_attempt(
     assert_eq!(params["prompt"], "consent");
     assert_eq!(params["code_challenge_method"], "S256");
     let attempt = store.consume_google_login_attempt(&params["state"]).await?;
-    assert_eq!(attempt.user_id, Some(DEVELOPMENT_USER_ID));
+    assert_eq!(attempt.user_id, Some(user_id));
     assert_eq!(attempt.purpose, "tasks_connect");
     assert_eq!(attempt.nonce, params["nonce"]);
     let challenge = oauth2::PkceCodeChallenge::from_code_verifier_sha256(

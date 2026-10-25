@@ -24,7 +24,7 @@ async fn oauth_connection_purposes_do_not_bypass_login_legal_validation(
     let login = GoogleLoginStart {
         authorization_url: "https://accounts.example/authorize".to_owned(),
         state: "purpose-state".to_owned(),
-        nonce: "purpose-nonce".to_owned(),
+        nonce: "0123456789abcdef".to_owned(),
         pkce_verifier: "0123456789012345678901234567890123456789012".to_owned(),
     };
     for purpose in ["calendar_connect", "tasks_connect"] {
