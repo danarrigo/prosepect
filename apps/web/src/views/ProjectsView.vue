@@ -470,6 +470,7 @@ function priorityRank(priority: TaskPriority) {
       </div>
 
       <TaskList
+        bulkable
         :tasks="visibleTasks"
         :projects="store.projects"
         :reorderable="sortBy === 'manual'"

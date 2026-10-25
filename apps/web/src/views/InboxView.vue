@@ -22,6 +22,7 @@ const tasks = computed(() =>
     <QuickTaskForm ref="capture" :default-project-id="null" />
     <section aria-label="Inbox tasks">
       <TaskList
+        bulkable
         :tasks="tasks"
         :projects="store.projects"
         :reorderable="false"

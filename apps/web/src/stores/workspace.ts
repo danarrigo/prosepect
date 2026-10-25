@@ -5,6 +5,7 @@ import { getOperationsCapability } from '../api/client'
 import { collectCursorPages } from '../api/pagination'
 import { localDateKey } from '../calendar'
 import { fileUploadError } from '../file-usage'
+import { bulkTaskFields, type BulkTaskAction, type BulkTaskResult } from '../bulk-tasks'
 import type {
   Calendar,
   CalendarEvent,
@@ -54,7 +55,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const labels = ref<string[]>([])
   const selectedProjectId = ref<string | null>(null)
   const loading = ref(false)
-  const saving = ref(false)
+  const mutationSaving = ref(false)
+  const bulkTaskPending = ref(false)
+  const bulkTaskResults = ref<BulkTaskResult[]>([])
+  const bulkTaskRefreshError = ref('')
+  const saving = computed({
+    get: () => mutationSaving.value || bulkTaskPending.value,
+    set: (value: boolean) => {
+      mutationSaving.value = value
+    },
+  })
   const error = ref<string | null>(null)
   const calendarMoveUndo = ref<CalendarMoveUndo | null>(null)
   const calendarMovePending = ref(false)
@@ -125,6 +135,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       error.value = null
       if (!user.value) loading.value = false
       saving.value = false
+      bulkTaskResults.value = []
+      bulkTaskRefreshError.value = ''
       resetFileUsage()
       calendarMoveGeneration += 1
       calendarReadGeneration += 1
@@ -834,6 +846,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function removeTask(task: Task) {
     if (saving.value || !user.value) return false
+    return deleteTask(task)
+  }
+
+  async function deleteTask(task: Task, refreshAfter = true) {
     saving.value = true
     taskDeletePending.value = true
     error.value = null
@@ -878,12 +894,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         (calendarMoveUndo.value?.event_id && eventIds.has(calendarMoveUndo.value.event_id))
       )
         dismissCalendarMoveFeedback()
-      try {
-        await refreshDeletedItems()
-      } catch {
-        if (operation === taskDeleteGeneration)
-          taskDeleteError.value =
-            'Deletion saved, but refresh failed. Undo is still available; retry refresh.'
+      if (refreshAfter) {
+        try {
+          await refreshDeletedItems()
+        } catch {
+          if (operation === taskDeleteGeneration)
+            taskDeleteError.value =
+              'Deletion saved, but refresh failed. Undo is still available; retry refresh.'
+        }
       }
       return operation === taskDeleteGeneration
     } catch (cause) {
@@ -895,6 +913,81 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         taskDeletePending.value = false
         saving.value = false
       }
+    }
+  }
+
+  async function applyBulkTaskAction(selected: Task[], action: BulkTaskAction) {
+    if (saving.value || !user.value || !selected.length || selected.length > 50) return
+    if (action.kind === 'label' && !action.label.trim()) return
+    const account = accountGeneration
+    const snapshots = [
+      ...new Map(selected.map((task) => [task.id, { ...task, labels: [...task.labels] }])).values(),
+    ]
+    bulkTaskPending.value = true
+    bulkTaskResults.value = []
+    bulkTaskRefreshError.value = ''
+    error.value = null
+    try {
+      for (const task of snapshots) {
+        if (account !== accountGeneration) return
+        try {
+          if (action.kind === 'delete') {
+            if (!(await deleteTask(task, false))) throw new Error('Deletion was not confirmed.')
+          } else {
+            const updated = await api.updateTask(task.id, {
+              ...bulkTaskFields(task, action),
+              expected_version: task.version,
+            })
+            if (account !== accountGeneration) return
+            replaceTask(updated)
+          }
+          if (account !== accountGeneration) return
+          bulkTaskResults.value.push({
+            id: task.id,
+            title: task.title,
+            outcome: 'saved',
+            message: '',
+          })
+        } catch (cause) {
+          if (account !== accountGeneration) return
+          bulkTaskResults.value.push({
+            id: task.id,
+            title: task.title,
+            outcome: 'unconfirmed',
+            message: messageFrom(cause),
+          })
+          // Never replay an uncertain write; subsequent tasks retain their own base versions.
+        }
+      }
+      if (action.kind === 'complete' && dailyPlan.value && account === accountGeneration) {
+        const completed = new Set(
+          bulkTaskResults.value
+            .filter((result) => result.outcome === 'saved')
+            .map((result) => result.id),
+        )
+        const remaining = dailyPlan.value.focus_tasks
+          .filter((task) => !completed.has(task.id))
+          .map((task) => task.id)
+        if (remaining.length !== dailyPlan.value.focus_tasks.length) {
+          try {
+            await api.updateDailyFocus(localDateKey(new Date()), remaining)
+          } catch {
+            if (account === accountGeneration)
+              bulkTaskRefreshError.value =
+                'Tasks saved, but daily focus could not be updated. Reload and review Today.'
+          }
+        }
+      }
+      if (account !== accountGeneration) return
+      try {
+        await refreshDeletedItems()
+      } catch {
+        if (account === accountGeneration)
+          bulkTaskRefreshError.value =
+            'Changes were submitted, but refresh failed. Reload before selecting tasks again.'
+      }
+    } finally {
+      bulkTaskPending.value = false
     }
   }
 
@@ -1040,6 +1133,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     completedToday,
     loading,
     saving,
+    bulkTaskPending,
+    bulkTaskResults,
+    bulkTaskRefreshError,
+    applyBulkTaskAction,
     error,
     bootstrap,
     refresh,
