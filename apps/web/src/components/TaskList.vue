@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { EditableTaskFields, Project, Task, TaskStatus } from '../api/types'
 import { useWorkspaceStore } from '../stores/workspace'
 import TaskItem from './TaskItem.vue'
 import CreateTaskDialog from './CreateTaskDialog.vue'
+import BulkTaskToolbar from './BulkTaskToolbar.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -13,6 +14,7 @@ const props = withDefaults(
     reorderable?: boolean
     focusable?: boolean
     preserveOrder?: boolean
+    bulkable?: boolean
   }>(),
   {
     projects: () => [],
@@ -20,6 +22,7 @@ const props = withDefaults(
     reorderable: true,
     focusable: false,
     preserveOrder: false,
+    bulkable: false,
   },
 )
 
@@ -28,6 +31,53 @@ const store = useWorkspaceStore()
 const draggedTaskId = ref<string | null>(null)
 const duplicateDialog = ref<InstanceType<typeof CreateTaskDialog> | null>(null)
 const announcement = ref('')
+const selecting = ref(false)
+const selectionButton = ref<HTMLButtonElement | null>(null)
+const listRoot = ref<HTMLElement | null>(null)
+const selection = ref(new Map<string, Task>())
+const selectedTasks = computed(() => [...selection.value.values()])
+watch(
+  () => props.tasks.map((task) => task.id),
+  (ids) => {
+    const visible = new Set(ids)
+    selection.value = new Map([...selection.value].filter(([id]) => visible.has(id)))
+  },
+)
+watch(
+  () => store.user?.id,
+  () => {
+    selection.value.clear()
+    selecting.value = false
+  },
+)
+function selectTask(task: Task) {
+  if (store.saving) return
+  if (selection.value.has(task.id)) selection.value.delete(task.id)
+  else if (selection.value.size < 50)
+    selection.value.set(task.id, { ...task, labels: [...task.labels] })
+}
+function selectVisible() {
+  if (store.saving) return
+  selection.value = new Map(
+    props.tasks
+      .slice(0, 50)
+      .map((task) => [
+        task.id,
+        selection.value.get(task.id) ?? { ...task, labels: [...task.labels] },
+      ]),
+  )
+}
+async function finishSelection() {
+  selection.value.clear()
+  selecting.value = false
+  await nextTick()
+  selectionButton.value?.focus()
+}
+async function bulkDone(savedIds: string[]) {
+  for (const id of savedIds) selection.value.delete(id)
+  await nextTick()
+  listRoot.value?.querySelector<HTMLElement>('[aria-label="Bulk task actions"] button')?.focus()
+}
 const rows = computed(() => flattenTasks(props.tasks))
 const focusTaskIds = computed(() =>
   store.dailyPlan ? store.dailyPlan.focus_tasks.map((task) => task.id) : [],
@@ -168,13 +218,41 @@ function flattenTasks(tasks: Task[]): Array<{ task: Task; depth: number }> {
 </script>
 
 <template>
-  <div>
+  <div ref="listRoot">
+    <div v-if="bulkable" class="mb-3 flex flex-wrap gap-2">
+      <button
+        v-if="!selecting"
+        ref="selectionButton"
+        type="button"
+        class="secondary-button"
+        :disabled="store.saving || !rows.length"
+        @click="selecting = true"
+      >
+        Select tasks
+      </button>
+      <button
+        v-if="selecting"
+        type="button"
+        class="secondary-button"
+        :disabled="store.saving || !rows.length"
+        @click="selectVisible"
+      >
+        Select visible (up to 50)
+      </button>
+    </div>
+    <BulkTaskToolbar
+      v-if="bulkable && selecting"
+      :selected="selectedTasks"
+      :projects="projects"
+      @done="bulkDone"
+      @cancel="finishSelection"
+    />
     <div
       v-for="(row, index) in rows"
       :key="row.task.id"
       :data-task-id="row.task.id"
-      :draggable="reorderable && !store.saving"
-      class="@container/task transition-opacity"
+      :draggable="reorderable && !selecting && !store.saving"
+      class="@container/task flex items-start gap-2 transition-opacity"
       :class="{ 'opacity-40': draggedTaskId === row.task.id }"
       :style="{ paddingLeft: `${row.depth * 1.25}rem` }"
       @dragstart="beginDrag(row.task, $event)"
@@ -182,11 +260,22 @@ function flattenTasks(tasks: Task[]): Array<{ task: Task; depth: number }> {
       @dragover.prevent
       @drop.prevent="dropOn(row.task)"
     >
+      <label v-if="bulkable && selecting" class="mt-2 grid size-11 shrink-0 place-items-center">
+        <input
+          type="checkbox"
+          class="size-4 accent-slate-900 dark:accent-white"
+          :aria-label="`Select ${row.task.title}`"
+          :checked="selection.has(row.task.id)"
+          :disabled="store.saving || (!selection.has(row.task.id) && selection.size >= 50)"
+          @change="selectTask(row.task)"
+        />
+      </label>
       <TaskItem
+        class="min-w-0 flex-1"
         :task="row.task"
         :projects="projects"
         :tasks="store.tasks"
-        :busy="store.saving"
+        :busy="store.saving || selecting"
         :can-move-up="reorderable && index > 0"
         :can-move-down="reorderable && index < rows.length - 1"
         :focusable="focusable && row.task.status !== 'completed'"
