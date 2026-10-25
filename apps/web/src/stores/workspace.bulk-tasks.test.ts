@@ -78,6 +78,7 @@ describe('bulk task writes', () => {
   it('uses selected versions and reports partial writes without replaying failures', async () => {
     const store = workspace()
     const selected = [...store.tasks]
+    store.tasks[0] = { ...store.tasks[0]!, version: 4 }
     vi.mocked(api.updateTask)
       .mockRejectedValueOnce(new Error('Version conflict'))
       .mockResolvedValueOnce({ ...selected[1]!, priority: 'high', version: 4 })

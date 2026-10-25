@@ -1,10 +1,14 @@
 import { expect, test } from '@playwright/test'
 import type { Project, Task } from '../src/api/types'
 
+// This acceptance test must pass first time, not be hidden by CI retries.
+test.describe.configure({ retries: 0 })
+
 test('real backend: bulk actions persist and deleted tasks retain individual Undo', async ({
   page,
 }) => {
   await page.goto('/inbox')
+  await expect(page.getByRole('heading', { name: 'Inbox', exact: true })).toBeVisible()
   const session = await (await page.request.get('/api/v1/session')).json()
   const headers = { 'x-csrf-token': session.csrf_token as string }
   const suffix = `${test.info().project.name}-${Date.now()}`
@@ -12,7 +16,7 @@ test('real backend: bulk actions persist and deleted tasks retain individual Und
     headers,
     data: { name: `Bulk ${suffix}`, outcome: '' },
   })
-  expect(projectResponse.status()).toBe(201)
+  expect(projectResponse.status(), await projectResponse.text()).toBe(201)
   const project: Project = await projectResponse.json()
   const created: Task[] = []
   try {
@@ -39,8 +43,12 @@ test('real backend: bulk actions persist and deleted tasks retain individual Und
     await panel.getByRole('combobox', { name: 'Priority', exact: true }).selectOption('high')
     await panel.getByRole('button', { name: 'Apply to selected' }).click()
     await expect(panel.getByText('2 saved. 0 not confirmed.')).toBeVisible()
-    for (const task of created)
-      await page.getByRole('checkbox', { name: `Select ${task.title}`, exact: true }).check()
+    await expect(panel.getByRole('button', { name: 'Done selecting', exact: true })).toBeEnabled()
+    for (const task of created) {
+      const checkbox = page.getByRole('checkbox', { name: `Select ${task.title}`, exact: true })
+      await expect(checkbox).not.toBeChecked()
+      await checkbox.check()
+    }
     await panel.getByRole('combobox', { name: 'Action', exact: true }).selectOption('project')
     await panel
       .getByRole('combobox', { name: 'Destination project', exact: true })
@@ -69,6 +77,7 @@ test('real backend: bulk actions persist and deleted tasks retain individual Und
         description: 'Keep exact details',
         labels: ['reference'],
       })
+    await expect(panel.getByRole('button', { name: 'Done selecting', exact: true })).toBeEnabled()
     await page.getByRole('combobox', { name: 'Filter by status' }).selectOption('all')
     for (const task of created)
       await page.getByRole('checkbox', { name: `Select ${task.title}`, exact: true }).check()

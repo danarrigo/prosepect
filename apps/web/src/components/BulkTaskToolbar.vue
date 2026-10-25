@@ -124,13 +124,16 @@ async function apply() {
       restrictions still apply.
     </p>
     <div role="status" aria-live="polite" class="mt-2 text-sm">
-      <p v-if="store.bulkTaskResults.length">
+      <p v-if="!store.bulkTaskPending && store.bulkTaskResults.length">
         {{ saved }} saved. {{ failures.length }} not confirmed.
       </p>
-      <p v-if="failures.length">
+      <p v-if="!store.bulkTaskPending && failures.length">
         Reload and review these tasks before trying again. Successful changes are not rolled back.
       </p>
-      <ul v-if="failures.length" class="mt-1 list-inside list-disc break-words">
+      <ul
+        v-if="!store.bulkTaskPending && failures.length"
+        class="mt-1 list-inside list-disc break-words"
+      >
         <li v-for="failure in failures" :key="failure.id">
           {{ failure.title }}: {{ failure.message }}
         </li>
