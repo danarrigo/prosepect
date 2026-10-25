@@ -15,6 +15,107 @@ use tower::ServiceExt;
 use utoipa::OpenApi;
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn google_tasks_consent_start_persists_a_user_bound_single_use_attempt(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let mut config = test_config();
+    config.google_oauth = Some(GoogleOAuthConfig {
+        client_id: "test-client".to_owned(),
+        client_secret: "test-secret".to_owned(),
+        redirect_uri: "http://localhost/callback".to_owned(),
+        token_encryption_key: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=".to_owned(),
+    });
+    let store = Store::from_pool(pool.clone());
+    let router = app::build(&config, store.clone())?;
+    let anonymous = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/google/tasks/start")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    let session = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/development/session")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(session.status(), StatusCode::OK);
+    let cookie = session.headers()[header::SET_COOKIE]
+        .to_str()?
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let session_body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(session.into_body(), 65536).await?)?;
+    let user_id: uuid::Uuid = session_body["user"]["id"].as_str().unwrap().parse()?;
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/google/tasks/start")
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = response.status();
+    let location = response.headers().get(header::LOCATION).cloned();
+    let body = to_bytes(response.into_body(), 65536).await?;
+    assert_eq!(
+        status,
+        StatusCode::TEMPORARY_REDIRECT,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    // Inspect the redirect without following it: no Google requests or grants.
+    let location = reqwest::Url::parse(location.unwrap().to_str()?)?;
+    assert_eq!(
+        location.origin().ascii_serialization(),
+        "https://accounts.google.com"
+    );
+    let params: std::collections::HashMap<_, _> = location.query_pairs().into_owned().collect();
+    assert!(
+        params["scope"]
+            .split_whitespace()
+            .any(|scope| scope == prosepect_api::google_tasks::TASKS_SCOPE)
+    );
+    assert!(!params["scope"].contains("calendar"));
+    assert_eq!(params["include_granted_scopes"], "true");
+    assert_eq!(params["prompt"], "consent");
+    assert_eq!(params["code_challenge_method"], "S256");
+    let attempt = store.consume_google_login_attempt(&params["state"]).await?;
+    assert_eq!(attempt.user_id, Some(user_id));
+    assert_eq!(attempt.purpose, "tasks_connect");
+    assert_eq!(attempt.nonce, params["nonce"]);
+    let challenge = oauth2::PkceCodeChallenge::from_code_verifier_sha256(
+        &oauth2::PkceCodeVerifier::new(attempt.pkce_verifier),
+    );
+    assert_eq!(challenge.as_str(), params["code_challenge"]);
+    assert!(attempt.terms_version.is_none());
+    assert!(attempt.privacy_version.is_none());
+    assert!(!attempt.age_confirmed);
+    assert!(
+        store
+            .consume_google_login_attempt(&params["state"])
+            .await
+            .is_err()
+    );
+    let connections: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM google_task_connections")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(
+        connections, 0,
+        "Starting consent must not enable task synchronization"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn saved_view_routes_require_authentication_and_validate_filters(
     pool: PgPool,
 ) -> anyhow::Result<()> {

@@ -226,7 +226,7 @@ impl Store {
             ("login", Some((terms_version, privacy_version))) => {
                 (Some(terms_version), Some(privacy_version), true)
             }
-            ("calendar_connect", None) => (None, None, false),
+            ("calendar_connect" | "tasks_connect", None) => (None, None, false),
             _ => return Err(AppError::Validation("invalid OAuth purpose".to_owned())),
         };
         let mut transaction = self.pool.begin().await?;
