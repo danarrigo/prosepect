@@ -2,6 +2,15 @@ import { mkdir } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 import type { OperationsSnapshot } from '../src/api/types'
 
+const badgePattern = 'https://badge.uptimerobot.com/psp/*.svg?*'
+const badgeSvg =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="181" height="24"><rect width="181" height="24" fill="#15803d"/><text x="8" y="17" fill="white">prosepect status: Up</text></svg>'
+test.beforeEach(async ({ page }) => {
+  await page.route(badgePattern, (route) =>
+    route.fulfill({ contentType: 'image/svg+xml', body: badgeSvg }),
+  )
+})
+
 const snapshot: OperationsSnapshot = {
   as_of: '2026-09-01T09:00:00Z',
   api: 'ok',
@@ -96,6 +105,123 @@ test('owner sees aggregate meanings, unknown evidence and accessible responsive 
   await page.getByRole('button', { name: 'Use dark theme' }).click()
   await expect(page.locator('html')).toHaveClass('dark')
   await screenshot(page, `owner-${info.project.name}-dark`)
+})
+
+test('external status remains independent of snapshot failures and uses a script-free badge', async ({
+  page,
+}) => {
+  await mockWorkspace(page)
+  await page.route('**/api/v1/operations', (route) =>
+    route.fulfill({ status: 503, json: { error: { message: 'unavailable' } } }),
+  )
+  await page.goto('/operations')
+  const panel = page.getByRole('region', { name: 'External uptime monitoring' })
+  await expect(panel).toBeVisible()
+  await expect(panel.getByRole('img')).toBeVisible()
+  await expect(panel.getByText('Last badge received:', { exact: false })).toBeVisible()
+  await expect(
+    panel.getByRole('link', { name: 'View uptime history ↗', exact: true }),
+  ).toHaveAttribute('href', 'https://stats.uptimerobot.com/xz23PeH80u')
+  await expect(panel.locator('iframe, script')).toHaveCount(0)
+  await expect(page.getByRole('alert')).toContainText('Service status is unknown')
+  await page.getByRole('button', { name: 'Use dark theme', exact: true }).click()
+  await expect(panel.getByRole('img')).toHaveAttribute('src', /theme=dark/)
+  await page.setViewportSize({ width: 320, height: 900 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  )
+  await screenshot(page, `uptime-320-dark-${test.info().project.name}`)
+})
+
+test('unavailable badge reports unknown and retries without changing API health', async ({
+  page,
+}) => {
+  await mockWorkspace(page)
+  let requests = 0
+  await page.route(badgePattern, (route) => {
+    requests++
+    return requests === 1
+      ? route.abort()
+      : route.fulfill({ contentType: 'image/svg+xml', body: badgeSvg })
+  })
+  await page.goto('/operations')
+  const panel = page.getByRole('region', { name: 'External uptime monitoring' })
+  await expect(panel.getByRole('status')).toContainText('External status is unknown')
+  await expect(page.getByText('API response', { exact: true })).toBeVisible()
+  await panel.getByRole('button', { name: 'Refresh external status', exact: true }).click()
+  await expect(panel.getByRole('status')).toHaveCount(0)
+  await expect(panel.getByRole('img')).toBeVisible()
+  expect(requests).toBe(2)
+})
+
+test('uptime refresh pauses in hidden tabs, resumes and stops when unmounted', async ({ page }) => {
+  await page.clock.install()
+  await mockWorkspace(page, true, false)
+  let requests = 0
+  await page.route(badgePattern, (route) => {
+    requests++
+    return route.fulfill({ contentType: 'image/svg+xml', body: badgeSvg })
+  })
+  await page.goto('/operations')
+  const panel = page.getByRole('region', { name: 'External uptime monitoring' })
+  await expect(panel.getByText('Last badge received:', { exact: false })).toBeVisible()
+  await page.clock.fastForward(60_000)
+  await expect.poll(() => requests).toBe(2)
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.clock.fastForward(180_000)
+  expect(requests).toBe(2)
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(() => requests).toBe(3)
+  await page.getByRole('button', { name: 'Open settings', exact: true }).click()
+  await expect(panel).toHaveCount(0)
+  await page.clock.fastForward(180_000)
+  expect(requests).toBe(3)
+})
+
+test('hung badge becomes unknown and a late response cannot claim fresh status', async ({
+  page,
+}) => {
+  await page.clock.install()
+  await mockWorkspace(page)
+  let requests = 0
+  let release: (() => void) | undefined
+  await page.route(badgePattern, async (route) => {
+    if (++requests === 1)
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+    await route.fulfill({ contentType: 'image/svg+xml', body: badgeSvg }).catch(() => {})
+  })
+  await page.goto('/operations')
+  const panel = page.getByRole('region', { name: 'External uptime monitoring' })
+  await expect.poll(() => requests).toBe(1)
+  await page.clock.fastForward(15_000)
+  await expect(panel.getByRole('status')).toContainText('External status is unknown')
+  release?.()
+  await expect(panel.getByText('Last badge received:', { exact: false })).toHaveCount(0)
+  await panel.getByRole('button', { name: 'Refresh external status', exact: true }).click()
+  await expect.poll(() => requests).toBe(2)
+  await expect(panel.getByText('Last badge received:', { exact: false })).toBeVisible()
+  await expect(panel.getByRole('status')).toHaveCount(0)
+})
+
+test('nonowners do not load third-party uptime resources', async ({ page }) => {
+  await mockWorkspace(page, false)
+  let requests = 0
+  await page.route(badgePattern, (route) => {
+    requests++
+    return route.fulfill({ contentType: 'image/svg+xml', body: badgeSvg })
+  })
+  await page.goto('/operations')
+  await expect(page.getByRole('alert')).toContainText('restricted to the owner')
+  await expect(page.getByRole('region', { name: 'External uptime monitoring' })).toHaveCount(0)
+  expect(requests).toBe(0)
 })
 
 test('slow capability discovery does not delay the workspace', async ({ page }) => {
