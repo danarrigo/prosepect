@@ -182,6 +182,8 @@ Unset or whitespace-only `ADMIN_USER_IDS` denies everyone. Malformed members, in
 
 The page polls every 60 seconds after a request finishes, only while mounted and visible. Requests do not overlap; hiding/unmounting cancels in-flight requests, and late results are ignored. Requests time out after 15 seconds. Failures retain the previous snapshot with a stale warning and a retry button; authorization denial clears it. A degraded response replaces old numbers with unknowns. Last successful refresh records receipt of a snapshot (which can itself be degraded), not overall service health.
 
+An independent **External uptime monitoring** panel displays the owner-configured public UptimeRobot badge for the hosted prosepect website/API and links to its uptime/outage history: <https://stats.uptimerobot.com/xz23PeH80u>. It uses the badge's SVG image, not third-party scripts or a secret API key. Its public identifiers live in `apps/web/src/components/OperationsUptime.vue`; self-hosted installations must replace them with their own monitor before treating the panel as their installation's uptime. The badge refreshes every 60 seconds while visible, follows the provider's actual check/cache intervals and switches with the app theme. A failed/15-second-timed-out image reports unknown, never Up inferred from a healthy snapshot. Receipt time is not monitor-check time. The panel remains independent of snapshot failures for an already-authorized owner; if authentication/API failure prevents Operations opening, use the external status-page link directly. External monitoring continues while this page is closed; configuring the panel does not verify email alert delivery or guarantee uptime. No monitor creation, pause, billing or provider-write controls are added.
+
 For final failures or persistent waiting work, inspect worker logs through your normal authorized operational workflow and verify Google integration configuration. Do not share raw provider errors or tokens. For capacity issues, review the relevant provider console before changing limits. This page has no job controls and sends no alerts when closed.
 
 Known static links (authentication and provider permissions still apply):
@@ -191,6 +193,7 @@ Known static links (authentication and provider permissions still apply):
 - Cloudflare/R2 storage and billing: <https://dash.cloudflare.com/>
 - Google integration configuration and quotas: <https://console.cloud.google.com/>
 - Worker workflow runs: <https://github.com/danarrigo/prosepect/actions>
+- Independent public uptime and outage history: <https://stats.uptimerobot.com/xz23PeH80u>
 
 No historical metrics pipeline, billing integration, backup verification or custom control plane is included. Aggregate scans may need revisiting if retained job volume grows substantially; this first slice intentionally adds no schema/index migration.
 

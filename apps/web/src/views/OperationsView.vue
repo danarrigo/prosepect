@@ -5,6 +5,7 @@ import { ApiError } from '../api/client'
 import { getOperationsSnapshot } from '../api/client'
 import type { OperationsSnapshot } from '../api/types'
 import { formatBytes } from '../file-usage'
+import OperationsUptime from '../components/OperationsUptime.vue'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const store = useWorkspaceStore()
@@ -127,6 +128,8 @@ onBeforeUnmount(() => {
     >
       {{ error }}
     </p>
+
+    <OperationsUptime v-if="!denied && store.operationsAllowed" />
 
     <template v-if="snapshot && !denied">
       <p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
