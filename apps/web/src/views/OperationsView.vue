@@ -193,7 +193,10 @@ onBeforeUnmount(() => {
           >
             Account cap reached. New accounts are blocked; existing users can still sign in.
           </p>
-          <p>Counts registered accounts, not active sessions. Invite-only access is unchanged.</p>
+          <p>
+            Counts registered accounts, not active sessions. Registration settings are managed
+            separately.
+          </p>
         </article>
 
         <article class="operations-card">

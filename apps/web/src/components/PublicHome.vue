@@ -86,8 +86,7 @@ function signIn() {
             {{ authenticationError }}
           </p>
           <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
-            Access is currently limited while public-launch safeguards and Google verification are
-            completed.
+            Public beta. Sign in with Google to start planning.
           </p>
           <label
             class="mt-5 flex items-start gap-2 text-xs leading-5 text-slate-500 dark:text-slate-400"

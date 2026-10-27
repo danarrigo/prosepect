@@ -222,7 +222,9 @@ function priorityRank(priority: TaskPriority) {
       <div
         class="mt-8 flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-800"
       >
-        <p class="text-xs text-slate-400">{{ visibleProjects.length }} projects</p>
+        <p class="text-xs text-slate-500 dark:text-slate-400">
+          {{ visibleProjects.length }} projects
+        </p>
         <button
           v-if="archivedCount"
           class="text-xs text-slate-400 transition hover:text-slate-950 dark:hover:text-white"
@@ -245,17 +247,17 @@ function priorityRank(priority: TaskPriority) {
             <span class="block truncate text-sm font-medium text-slate-900 dark:text-white">
               {{ project.name }}
             </span>
-            <span class="mt-1 block truncate text-xs text-slate-400">
+            <span class="mt-1 block truncate text-xs text-slate-500 dark:text-slate-400">
               {{ project.outcome || 'No outcome' }}
             </span>
           </span>
           <span class="text-xs capitalize text-slate-500 dark:text-slate-400">
             {{ project.status }}
           </span>
-          <span class="text-xs tabular-nums text-slate-400">
+          <span class="text-xs tabular-nums text-slate-500 dark:text-slate-400">
             {{ project.completed_tasks }} / {{ project.total_tasks }} tasks
           </span>
-          <span class="text-xs tabular-nums text-slate-400 sm:text-right">
+          <span class="text-xs tabular-nums text-slate-500 dark:text-slate-400 sm:text-right">
             {{ targetLabel(project.target_date) }}
           </span>
         </button>
@@ -338,7 +340,9 @@ function priorityRank(priority: TaskPriority) {
             >
               {{ selected.outcome || 'No outcome described.' }}
             </p>
-            <div class="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-400">
+            <div
+              class="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500 dark:text-slate-400"
+            >
               <span class="capitalize">{{ selected.status }}</span>
               <span>{{ targetLabel(selected.target_date) }}</span>
               <span class="tabular-nums">
@@ -406,7 +410,9 @@ function priorityRank(priority: TaskPriority) {
       >
         <div>
           <h2 class="text-sm font-semibold">{{ selected ? 'Project tasks' : 'All tasks' }}</h2>
-          <p class="mt-1 text-xs text-slate-400">{{ visibleTasks.length }} shown</p>
+          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {{ visibleTasks.length }} shown
+          </p>
         </div>
         <button
           v-if="taskFilterActive"
@@ -483,7 +489,7 @@ function priorityRank(priority: TaskPriority) {
 
     <div v-if="selected" class="mt-16 border-t border-slate-200 pt-6 dark:border-slate-800">
       <button
-        class="text-xs text-slate-400 transition hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 disabled:opacity-40"
+        class="text-xs font-medium text-rose-700 transition hover:text-rose-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 disabled:opacity-40 dark:text-rose-400 dark:hover:text-rose-300"
         type="button"
         :disabled="store.saving"
         @click="removeProject"
