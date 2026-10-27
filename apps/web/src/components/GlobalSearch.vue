@@ -92,7 +92,7 @@ defineExpose({ focus: focusSearch })
       <input
         ref="input"
         v-model="query"
-        class="h-8 w-44 rounded-md border border-slate-200 bg-transparent pl-8 pr-7 text-xs outline-none transition focus:w-64 focus:border-slate-400 dark:border-slate-800 dark:focus:border-slate-600"
+        class="h-9 w-52 rounded-lg border border-slate-300 bg-white pl-8 pr-7 text-sm outline-none transition focus:w-64 focus:border-slate-400 focus:ring-1 focus:ring-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:focus:border-slate-600 dark:focus:ring-slate-700"
         type="search"
         placeholder="Search workspace"
         autocomplete="off"

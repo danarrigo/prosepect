@@ -215,6 +215,59 @@ for (const colorScheme of ['light', 'dark'] as const) {
   }
 }
 
+test('production controls keep consistent typography, touch targets and readable narrow task rows', async ({
+  page,
+}, testInfo) => {
+  const { projects } = await mockWorkspace(page)
+  projects[0]!.name = 'Product launch'
+  await page.setViewportSize({ width: testInfo.project.use.isMobile ? 320 : 1280, height: 900 })
+  await page.goto('/projects?project=project-1')
+  if (!testInfo.project.use.isMobile)
+    await expect(page.getByRole('button', { name: 'Product launch', exact: true })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+  const title = page.locator('[data-task-id="task-0"] p').first()
+  if (testInfo.project.use.isMobile) {
+    const row = await page.locator('[data-task-id="task-0"]').boundingBox()
+    const text = await title.boundingBox()
+    expect(text!.width).toBeGreaterThan(row!.width * 0.7)
+  }
+  await page.keyboard.press('n')
+  const dialog = page.getByRole('dialog', { name: 'New task', exact: true })
+  await dialog.getByLabel('Task title', { exact: true }).fill('Prepare launch notes')
+  const submit = dialog
+    .getByRole('button', { name: 'Create task', exact: true })
+    .filter({ visible: true })
+  await expect(submit).toHaveCSS('font-size', '14px')
+  await expect(submit).toHaveCSS('font-weight', '500')
+  expect((await submit.boundingBox())!.height).toBeGreaterThanOrEqual(
+    testInfo.project.use.isMobile ? 44 : 40,
+  )
+  await dialog.getByRole('button', { name: 'Details', exact: true }).click()
+  await expect(dialog.getByLabel('Description', { exact: true })).toHaveCSS(
+    'font-size',
+    testInfo.project.use.isMobile ? '16px' : '14px',
+  )
+  await page.keyboard.press('Escape')
+  await page.screenshot({
+    path: testInfo.outputPath('production-project.png'),
+    scale: 'css',
+    fullPage: true,
+  })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Make today count.', exact: true })).toBeVisible()
+  if (!testInfo.project.use.isMobile)
+    await expect(
+      page.getByRole('button', { name: 'Product launch', exact: true }),
+    ).not.toHaveAttribute('aria-current', 'page')
+  await page.screenshot({
+    path: testInfo.outputPath('production-today.png'),
+    scale: 'css',
+    fullPage: true,
+  })
+})
+
 test('project actions and task metadata remain usable by keyboard and touch', async ({
   page,
 }, testInfo) => {

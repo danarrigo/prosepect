@@ -276,15 +276,15 @@ function submitSubtask() {
 <template>
   <article
     v-if="!editing"
-    class="group flex min-h-14 w-full min-w-0 items-center gap-2 border-b border-slate-100 py-2 dark:border-slate-900"
+    class="group flex min-h-14 w-full min-w-0 flex-wrap items-start gap-x-2 gap-y-1 border-b border-slate-200 py-3 dark:border-slate-800 @lg/task:flex-nowrap @lg/task:items-center"
   >
     <GripVertical
       :size="14"
-      class="hidden shrink-0 text-slate-300 group-hover:text-slate-500 sm:block"
+      class="hidden shrink-0 text-slate-300 group-hover:text-slate-500 @lg/task:block"
       aria-hidden="true"
     />
     <button
-      class="grid size-6 shrink-0 place-items-center rounded-full text-slate-400 transition hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:opacity-50 dark:hover:text-white"
+      class="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-slate-500 transition hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:opacity-50 dark:text-slate-400 dark:hover:text-white @lg/task:mt-0"
       type="button"
       :disabled="busy"
       :aria-label="completed ? `Mark ${task.title} incomplete` : `Complete ${task.title}`"
@@ -299,17 +299,23 @@ function submitSubtask() {
       <Circle v-else :size="21" />
     </button>
 
-    <div class="min-w-0 flex-1">
+    <div class="min-w-0 flex-1 basis-[calc(100%-2rem)] @lg/task:basis-auto">
       <p
+        :title="task.title"
         class="break-words text-sm font-medium text-slate-800 dark:text-slate-200 @3xl/task:truncate"
-        :class="{ 'text-slate-400 line-through dark:text-slate-600': completed }"
+        :class="{ 'text-slate-500 line-through dark:text-slate-400': completed }"
       >
         {{ task.title }}
       </p>
-      <p v-if="task.description" class="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
+      <p
+        v-if="task.description"
+        class="mt-1 line-clamp-2 text-xs leading-5 text-slate-500 dark:text-slate-400"
+      >
         {{ task.description }}
       </p>
-      <div class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+      <div
+        class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400"
+      >
         <span class="priority-dot" :class="`priority-${task.priority}`" />
         <span class="capitalize">{{ task.priority }}</span>
         <span
@@ -374,84 +380,92 @@ function submitSubtask() {
       </form>
     </div>
 
-    <select
-      class="hidden max-w-28 border-0 bg-transparent px-1 py-1 text-xs text-slate-500 outline-none transition focus:opacity-100 focus-visible:ring-2 focus-visible:ring-slate-400 2xl:@3xl/task:block 2xl:@3xl/task:opacity-0 2xl:@3xl/task:group-hover:opacity-100"
-      title="Change task status"
-      :value="task.status"
-      :disabled="busy"
-      :aria-label="`Status for ${task.title}`"
-      @change="emit('status', task, ($event.target as HTMLSelectElement).value as TaskStatus)"
-    >
-      <option value="todo">To do</option>
-      <option value="in_progress">In progress</option>
-      <option value="blocked">Blocked</option>
-      <option value="completed">Completed</option>
-    </select>
-
     <div
-      class="hidden items-center 2xl:@3xl/task:flex 2xl:@3xl/task:invisible 2xl:@3xl/task:group-hover:visible 2xl:@3xl/task:focus-within:visible"
+      class="ml-8 flex w-[calc(100%-2rem)] shrink-0 items-center justify-end gap-1 @lg/task:ml-0 @lg/task:w-auto"
     >
-      <button
-        class="icon-button !size-7"
-        type="button"
-        :disabled="busy || !canMoveUp"
-        :aria-label="`Move ${task.title} up`"
-        @click="emit('move', task, 'up')"
+      <select
+        class="hidden max-w-28 border-0 bg-transparent px-1 py-1 text-xs text-slate-500 outline-none transition focus:opacity-100 focus-visible:ring-2 focus-visible:ring-slate-400 2xl:@3xl/task:block 2xl:@3xl/task:opacity-0 2xl:@3xl/task:group-hover:opacity-100"
+        title="Change task status"
+        :value="task.status"
+        :disabled="busy"
+        :aria-label="`Status for ${task.title}`"
+        @change="emit('status', task, ($event.target as HTMLSelectElement).value as TaskStatus)"
       >
-        <ArrowUp :size="13" />
+        <option value="todo">To do</option>
+        <option value="in_progress">In progress</option>
+        <option value="blocked">Blocked</option>
+        <option value="completed">Completed</option>
+      </select>
+
+      <div
+        class="hidden items-center 2xl:@3xl/task:flex 2xl:@3xl/task:invisible 2xl:@3xl/task:group-hover:visible 2xl:@3xl/task:focus-within:visible"
+      >
+        <button
+          class="icon-button !size-7"
+          type="button"
+          :disabled="busy || !canMoveUp"
+          :aria-label="`Move ${task.title} up`"
+          @click="emit('move', task, 'up')"
+        >
+          <ArrowUp :size="13" />
+        </button>
+        <button
+          class="icon-button !size-7"
+          type="button"
+          :disabled="busy || !canMoveDown"
+          :aria-label="`Move ${task.title} down`"
+          @click="emit('move', task, 'down')"
+        >
+          <ArrowDown :size="13" />
+        </button>
+      </div>
+      <button
+        v-if="focusable"
+        class="icon-button"
+        :class="
+          focused
+            ? 'text-amber-600 dark:text-amber-400'
+            : 'hover:!text-amber-600 dark:hover:!text-amber-400'
+        "
+        type="button"
+        :disabled="busy || focusDisabled"
+        :aria-label="
+          focused ? `Remove ${task.title} from today's focus` : `Focus ${task.title} today`
+        "
+        :title="focusDisabled ? 'Today already has three focus tasks' : undefined"
+        @click="emit('focus', task)"
+      >
+        <Star :size="15" :fill="focused ? 'currentColor' : 'none'" />
       </button>
       <button
-        class="icon-button !size-7"
+        class="icon-button"
         type="button"
-        :disabled="busy || !canMoveDown"
-        :aria-label="`Move ${task.title} down`"
-        @click="emit('move', task, 'down')"
+        :disabled="busy || task.recurrence !== 'none'"
+        :aria-label="`Add subtask to ${task.title}`"
+        :title="task.recurrence !== 'none' ? 'Recurring tasks cannot have subtasks' : undefined"
+        @click="addingSubtask = !addingSubtask"
       >
-        <ArrowDown :size="13" />
+        <ListTree :size="14" />
+      </button>
+      <button
+        class="icon-button"
+        type="button"
+        :disabled="busy"
+        :aria-label="`Edit ${task.title}`"
+        @click="beginEditing"
+      >
+        <Pencil :size="14" />
+      </button>
+      <button
+        class="icon-button hidden text-slate-400 hover:!text-rose-600 2xl:@3xl/task:inline-grid 2xl:@3xl/task:invisible 2xl:@3xl/task:group-hover:visible 2xl:@3xl/task:focus-visible:visible"
+        type="button"
+        :disabled="busy"
+        :aria-label="`Delete ${task.title}`"
+        @click="emit('remove', task)"
+      >
+        <Trash2 :size="15" />
       </button>
     </div>
-    <button
-      v-if="focusable"
-      class="icon-button"
-      :class="focused ? 'text-amber-500' : 'text-slate-300 hover:!text-amber-500'"
-      type="button"
-      :disabled="busy || focusDisabled"
-      :aria-label="
-        focused ? `Remove ${task.title} from today's focus` : `Focus ${task.title} today`
-      "
-      :title="focusDisabled ? 'Today already has three focus tasks' : undefined"
-      @click="emit('focus', task)"
-    >
-      <Star :size="15" :fill="focused ? 'currentColor' : 'none'" />
-    </button>
-    <button
-      class="icon-button text-slate-400"
-      type="button"
-      :disabled="busy || task.recurrence !== 'none'"
-      :aria-label="`Add subtask to ${task.title}`"
-      :title="task.recurrence !== 'none' ? 'Recurring tasks cannot have subtasks' : undefined"
-      @click="addingSubtask = !addingSubtask"
-    >
-      <ListTree :size="14" />
-    </button>
-    <button
-      class="icon-button text-slate-400"
-      type="button"
-      :disabled="busy"
-      :aria-label="`Edit ${task.title}`"
-      @click="beginEditing"
-    >
-      <Pencil :size="14" />
-    </button>
-    <button
-      class="icon-button hidden text-slate-400 hover:!text-rose-600 2xl:@3xl/task:inline-grid 2xl:@3xl/task:invisible 2xl:@3xl/task:group-hover:visible 2xl:@3xl/task:focus-visible:visible"
-      type="button"
-      :disabled="busy"
-      :aria-label="`Delete ${task.title}`"
-      @click="emit('remove', task)"
-    >
-      <Trash2 :size="15" />
-    </button>
   </article>
 
   <form

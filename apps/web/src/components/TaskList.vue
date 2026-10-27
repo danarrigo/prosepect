@@ -290,7 +290,10 @@ function flattenTasks(tasks: Task[]): Array<{ task: Task; depth: number }> {
         @focus="toggleFocus"
       />
     </div>
-    <p v-if="!rows.length && emptyMessage" class="py-14 text-center text-sm text-slate-400">
+    <p
+      v-if="!rows.length && emptyMessage"
+      class="py-14 text-center text-sm text-slate-500 dark:text-slate-400"
+    >
       {{ emptyMessage }}
     </p>
     <p class="sr-only" aria-live="polite">{{ announcement }}</p>

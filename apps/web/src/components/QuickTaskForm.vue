@@ -8,10 +8,11 @@ import { analyzeQuickCapture, type QuickCaptureAnalysis } from '../quick-capture
 const props = withDefaults(
   defineProps<{
     autofocus?: boolean
+    embedded?: boolean
     defaultProjectId?: string | null
     initialTask?: Pick<Task, 'title' | 'description' | 'priority' | 'labels'>
   }>(),
-  { autofocus: false, defaultProjectId: undefined, initialTask: undefined },
+  { autofocus: false, embedded: false, defaultProjectId: undefined, initialTask: undefined },
 )
 const emit = defineEmits<{ created: [] }>()
 const store = useWorkspaceStore()
@@ -203,21 +204,24 @@ function deadlineIsoDate(value: string) {
 
 <template>
   <form
-    class="border-y border-slate-200 py-2 dark:border-slate-800"
+    class="min-w-0"
+    :class="
+      embedded
+        ? ''
+        : 'rounded-xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/30'
+    "
     @submit.prevent="submit"
     @keydown.ctrl.enter.prevent="submit"
     @keydown.meta.enter.prevent="submit"
   >
     <div class="flex items-end gap-3">
       <label class="min-w-0 flex-1" :for="titleInputId">
-        <span class="block text-[11px] font-medium text-slate-500 dark:text-slate-400">
-          Task title
-        </span>
+        <span class="field-label"> Task title </span>
         <input
           :id="titleInputId"
           ref="titleInput"
           v-model="title"
-          class="mt-1 h-9 w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-white"
+          class="field-input"
           type="text"
           required
           :aria-describedby="feedbackId"
@@ -260,10 +264,12 @@ function deadlineIsoDate(value: string) {
       Quick Add detected: {{ todoistHints.join(' · ') }}
     </p>
 
-    <div class="mt-1 flex flex-wrap items-center gap-2 pb-1">
-      <label class="min-w-0 max-w-full text-[11px] text-slate-500 dark:text-slate-400">
+    <div class="mt-3 flex flex-wrap items-end gap-3">
+      <label
+        class="min-w-0 max-w-full flex-1 basis-40 text-xs text-slate-600 dark:text-slate-300 sm:w-48 sm:flex-none"
+      >
         <span class="block">Project</span>
-        <select v-model="projectId" class="subtle-select max-w-full">
+        <select v-model="projectId" class="subtle-select w-full">
           <option value="">No project</option>
           <option
             v-for="project in store.projects.filter((item) => item.status !== 'archived')"
@@ -274,7 +280,7 @@ function deadlineIsoDate(value: string) {
           </option>
         </select>
       </label>
-      <label class="text-[11px] text-slate-500 dark:text-slate-400">
+      <label class="text-xs text-slate-600 dark:text-slate-300">
         <span class="block">Deadline</span>
         <input
           v-model="dueDate"
@@ -285,7 +291,7 @@ function deadlineIsoDate(value: string) {
           @input="markDeadlineManual"
         />
       </label>
-      <label v-if="dueDate" class="text-[11px] text-slate-500 dark:text-slate-400">
+      <label v-if="dueDate" class="text-xs text-slate-600 dark:text-slate-300">
         <span class="block">Deadline time</span>
         <input
           v-model="dueTime"
@@ -295,17 +301,17 @@ function deadlineIsoDate(value: string) {
         />
         <span v-if="!dueTime" class="block">Default: end of day</span>
       </label>
-      <label class="text-[11px] text-slate-500 dark:text-slate-400">
+      <label class="text-xs text-slate-600 dark:text-slate-300">
         <span class="block">Priority</span>
         <select v-model="priority" class="subtle-select">
-          <option value="low">Low priority</option>
-          <option value="medium">Medium priority</option>
-          <option value="high">High priority</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
           <option value="urgent">Urgent</option>
         </select>
       </label>
       <button
-        class="inline-flex h-7 items-center gap-1 text-xs text-slate-400 transition hover:text-slate-700 dark:hover:text-slate-300"
+        class="secondary-button gap-1"
         type="button"
         :aria-expanded="detailsOpen"
         :aria-controls="detailsId"
@@ -330,7 +336,7 @@ function deadlineIsoDate(value: string) {
     <div
       v-show="detailsOpen"
       :id="detailsId"
-      class="grid gap-3 border-t border-slate-100 py-3 dark:border-slate-900 sm:grid-cols-2"
+      class="grid grid-cols-1 gap-3 border-t border-slate-100 py-3 dark:border-slate-900 sm:grid-cols-2"
     >
       <label class="field-label sm:col-span-2">
         Description

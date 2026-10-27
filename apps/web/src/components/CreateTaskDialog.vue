@@ -60,7 +60,7 @@ defineExpose({ open: openTaskDialog })
     <DialogPortal>
       <DialogOverlay class="fixed inset-0 z-50 bg-slate-950/30 data-[state=open]:animate-fade-in" />
       <DialogContent
-        class="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto border border-slate-200 bg-white p-6 shadow-xl outline-none dark:border-slate-800 dark:bg-slate-950"
+        class="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl sm:p-6 outline-none dark:border-slate-800 dark:bg-slate-950"
         @open-auto-focus="focusTaskTitle"
         @close-auto-focus="restoreFocus"
       >
@@ -90,6 +90,7 @@ defineExpose({ open: openTaskDialog })
             :default-project-id="draftProjectId"
             :initial-task="duplicateSource"
             autofocus
+            embedded
             @created="open = false"
           />
         </div>

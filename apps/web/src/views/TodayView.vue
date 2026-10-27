@@ -133,7 +133,7 @@ function calendarAriaLabel(date: Date) {
   <div class="mx-auto max-w-6xl px-5 py-10 sm:px-8 lg:px-12 lg:py-14">
     <div class="flex flex-col items-start gap-5 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <p class="text-sm text-slate-400 dark:text-slate-500">{{ dateHeading }}</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400">{{ dateHeading }}</p>
         <h1
           class="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950 dark:text-white sm:text-[2.5rem]"
         >
@@ -152,15 +152,19 @@ function calendarAriaLabel(date: Date) {
       class="mt-9 grid grid-cols-3 divide-x divide-slate-200 border-y border-slate-200 text-sm dark:divide-slate-800 dark:border-slate-800"
     >
       <div class="py-4 pr-3 sm:px-8 sm:first:pl-0">
-        <dt class="min-h-8 text-xs text-slate-400 sm:min-h-0">Open</dt>
+        <dt class="min-h-8 text-xs text-slate-500 dark:text-slate-400 sm:min-h-0">Open</dt>
         <dd class="mt-1 text-lg font-medium tabular-nums">{{ store.openTasks.length }}</dd>
       </div>
       <div class="px-3 py-4 sm:px-8">
-        <dt class="min-h-8 text-xs text-slate-400 sm:min-h-0">Completed today</dt>
+        <dt class="min-h-8 text-xs text-slate-500 dark:text-slate-400 sm:min-h-0">
+          Completed today
+        </dt>
         <dd class="mt-1 text-lg font-medium tabular-nums">{{ store.completedToday }}</dd>
       </div>
       <div class="py-4 pl-3 sm:px-8">
-        <dt class="min-h-8 text-xs text-slate-400 sm:min-h-0">Active projects</dt>
+        <dt class="min-h-8 text-xs text-slate-500 dark:text-slate-400 sm:min-h-0">
+          Active projects
+        </dt>
         <dd class="mt-1 text-lg font-medium tabular-nums">{{ activeProjects.length }}</dd>
       </div>
     </dl>
@@ -192,13 +196,17 @@ function calendarAriaLabel(date: Date) {
           :aria-label="calendarAriaLabel(date)"
           @click="openCalendar(date)"
         >
-          <span class="block truncate text-[10px] uppercase tracking-wide text-slate-400">
+          <span
+            class="block truncate text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400"
+          >
             {{ weekdayLabel(date) }}
           </span>
           <span class="mt-1 block text-xs font-medium tabular-nums sm:text-sm">
             {{ compactDateLabel(date) }}
           </span>
-          <span class="mt-1 block min-h-4 text-[10px] tabular-nums text-slate-400">
+          <span
+            class="mt-1 block min-h-4 text-[11px] tabular-nums text-slate-500 dark:text-slate-400"
+          >
             {{ calendarTasks(date).length + eventsForDate(date).length || '' }}
           </span>
         </button>
@@ -264,7 +272,7 @@ function calendarAriaLabel(date: Date) {
             <TaskList :tasks="upcoming" :projects="store.projects" focusable />
           </div>
           <div v-if="!store.openTasks.length" class="py-16 text-center">
-            <p class="text-sm text-slate-400">Nothing needs your attention.</p>
+            <p class="text-sm text-slate-500 dark:text-slate-400">Nothing needs your attention.</p>
           </div>
         </div>
       </section>
@@ -299,7 +307,7 @@ function calendarAriaLabel(date: Date) {
               {{ project.completed_tasks }} / {{ project.total_tasks }} complete
             </span>
           </button>
-          <p v-if="!activeProjects.length" class="py-8 text-sm text-slate-400">
+          <p v-if="!activeProjects.length" class="py-8 text-sm text-slate-500 dark:text-slate-400">
             No active projects.
           </p>
         </div>

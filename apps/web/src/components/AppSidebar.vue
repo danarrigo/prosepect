@@ -123,18 +123,21 @@ function showAllProjects() {
     </nav>
 
     <div v-if="visibleProjects.length" class="mt-8 px-2">
-      <span class="text-[11px] font-medium text-slate-400">Your projects</span>
+      <span class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Your projects</span>
     </div>
 
     <div class="mt-2 min-h-0 flex-1 overflow-y-auto">
       <button
         v-for="project in visibleProjects"
         :key="project.id"
-        class="group flex h-9 w-full items-center rounded-md px-2 text-left text-sm text-slate-500 transition hover:text-slate-950 dark:text-slate-400 dark:hover:text-white"
+        class="group flex min-h-10 w-full items-center rounded-md px-2 text-left text-[13px] text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-white"
         :class="{
           'bg-slate-100 !text-slate-950 dark:bg-slate-900 dark:!text-white':
-            store.selectedProjectId === project.id,
+            route.name === 'projects' && store.selectedProjectId === project.id,
         }"
+        :aria-current="
+          route.name === 'projects' && store.selectedProjectId === project.id ? 'page' : undefined
+        "
         type="button"
         @click="openProject(project.id)"
       >
