@@ -4,6 +4,7 @@ import http.server
 import io
 import subprocess
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -80,10 +81,19 @@ class WorkerRequestTests(unittest.TestCase):
                 self.assertEqual(len(calls), 1)
 
     def test_retry_after_is_honored_without_exceeding_budget(self):
+        original_run = subprocess.run
+
+        def run_with_library_wait(*args, **kwargs):
+            # subprocess can sleep internally while waiting for a child. A worker
+            # clock mock must not intercept this shared standard-library clock.
+            time.sleep(0.001)
+            return original_run(*args, **kwargs)
+
         with self.endpoint([(429, {"Retry-After": "2"}, ""), (200, {}, '{"status":"ready"}')]) as (url, calls):
-            with patch.object(worker_request.time, "sleep") as sleep:
+            with patch.object(worker_request, "time") as clock, patch.object(subprocess, "run", side_effect=run_with_library_wait):
+                clock.monotonic.side_effect = time.monotonic
                 self.invoke(url)
-                sleep.assert_called_once_with(2)
+                clock.sleep.assert_called_once_with(2)
         self.assertEqual(len(calls), 2)
         with self.endpoint([(429, {"Retry-After": "999"}, "")]) as (url, calls):
             with self.assertRaisesRegex(RuntimeError, "budget exhausted"):
