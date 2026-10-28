@@ -24,16 +24,20 @@ async fn oversized_upload_stops_before_consuming_the_stream_tail(
     ]);
     let stream =
         futures_util::stream::unfold((chunks, reads.clone()), |(mut chunks, reads)| async move {
-            // Model network arrivals, not an already-buffered body: multer
-            // deliberately drains every immediately-ready chunk on each poll.
-            tokio::task::yield_now().await;
+            // Keep the tail unavailable until the request is rejected. Multer
+            // may prefetch ready chunks; an oversized field must not wait for
+            // the sender to finish the body or close the multipart boundary.
+            if chunks.len() == 1 {
+                std::future::pending::<()>().await;
+            }
             chunks.pop_front().map(|chunk| {
                 reads.fetch_add(1, Ordering::SeqCst);
                 (Ok::<_, std::io::Error>(chunk), (chunks, reads))
             })
         });
-    let response = router
-        .oneshot(
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        router.oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/api/v1/files")
@@ -43,8 +47,9 @@ async fn oversized_upload_stops_before_consuming_the_stream_tail(
                     "multipart/form-data; boundary=boundary",
                 )
                 .body(Body::from_stream(stream))?,
-        )
-        .await?;
+        ),
+    )
+    .await??;
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert!(
         reads.load(Ordering::SeqCst) < 3,
