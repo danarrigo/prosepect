@@ -11,7 +11,10 @@ use uuid::Uuid;
 
 use crate::{
     app::AppState,
-    auth::{CurrentUser, DEVELOPMENT_USER_HEADER, SESSION_COOKIE, SessionCsrf, session_token},
+    auth::{
+        CurrentUser, DEVELOPMENT_USER_HEADER, SESSION_COOKIE, SessionCsrf, oauth_browser_secret,
+        oauth_cookie_name, session_token,
+    },
     error::{AppError, AppResult, ErrorResponse},
     extract::{ApiJson, ApiPath, ApiQuery},
     models::{
@@ -265,7 +268,7 @@ pub async fn google_auth_start(
     ApiQuery(query): ApiQuery<GoogleLoginQuery>,
     headers: HeaderMap,
     ClientAddress(peer): ClientAddress,
-) -> AppResult<Redirect> {
+) -> AppResult<(HeaderMap, Redirect)> {
     state
         .login_rate_limiter
         .check(&headers, peer, state.trust_proxy_headers)?;
@@ -282,16 +285,15 @@ pub async fn google_auth_start(
         .as_ref()
         .ok_or(AppError::NotConfigured("Google OAuth"))?;
     let login = google.begin_login().await.map_err(AppError::Integration)?;
-    state
-        .store
-        .save_google_login_attempt(
-            &login,
-            None,
-            "login",
-            Some((CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION)),
-        )
-        .await?;
-    Ok(Redirect::temporary(&login.authorization_url))
+    google_authorization_redirect(
+        &state,
+        &headers,
+        login,
+        None,
+        "login",
+        Some((CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION)),
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -310,7 +312,7 @@ pub async fn google_calendar_connect_start(
     CurrentUser(user_id): CurrentUser,
     headers: HeaderMap,
     ClientAddress(peer): ClientAddress,
-) -> AppResult<Redirect> {
+) -> AppResult<(HeaderMap, Redirect)> {
     state
         .login_rate_limiter
         .check(&headers, peer, state.trust_proxy_headers)?;
@@ -322,11 +324,15 @@ pub async fn google_calendar_connect_start(
         .begin_calendar_connection()
         .await
         .map_err(AppError::Integration)?;
-    state
-        .store
-        .save_google_login_attempt(&login, Some(user_id), "calendar_connect", None)
-        .await?;
-    Ok(Redirect::temporary(&login.authorization_url))
+    google_authorization_redirect(
+        &state,
+        &headers,
+        login,
+        Some(user_id),
+        "calendar_connect",
+        None,
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -345,7 +351,7 @@ pub async fn google_tasks_connect_start(
     CurrentUser(user_id): CurrentUser,
     headers: HeaderMap,
     ClientAddress(peer): ClientAddress,
-) -> AppResult<Redirect> {
+) -> AppResult<(HeaderMap, Redirect)> {
     state
         .login_rate_limiter
         .check(&headers, peer, state.trust_proxy_headers)?;
@@ -357,11 +363,15 @@ pub async fn google_tasks_connect_start(
         .begin_tasks_connection()
         .await
         .map_err(AppError::Integration)?;
-    state
-        .store
-        .save_google_login_attempt(&login, Some(user_id), "tasks_connect", None)
-        .await?;
-    Ok(Redirect::temporary(&login.authorization_url))
+    google_authorization_redirect(
+        &state,
+        &headers,
+        login,
+        Some(user_id),
+        "tasks_connect",
+        None,
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -379,6 +389,7 @@ pub async fn google_tasks_connect_start(
 pub async fn google_auth_callback(
     State(state): State<AppState>,
     ApiQuery(query): ApiQuery<GoogleCallbackQuery>,
+    headers: HeaderMap,
 ) -> AppResult<(HeaderMap, Redirect)> {
     if query.error.is_some() {
         return Err(AppError::Forbidden("Google sign-in was not completed"));
@@ -389,10 +400,21 @@ pub async fn google_auth_callback(
     let state_value = query.state.ok_or(AppError::Forbidden(
         "Google did not return the sign-in state",
     ))?;
+    let browser_secret = oauth_browser_secret(&headers, state.secure_cookies).ok_or(
+        AppError::Forbidden("the Google sign-in request expired or is invalid"),
+    )?;
     let attempt = state
         .store
-        .consume_google_login_attempt(&state_value)
+        .consume_google_login_attempt(&state_value, browser_secret)
         .await?;
+    if let Some(user_id) = attempt.user_id {
+        let token = session_token(&headers).ok_or(AppError::Unauthorized)?;
+        if state.store.authenticate_session(token).await?.user_id != user_id {
+            return Err(AppError::Forbidden(
+                "the Google connection belongs to a different session",
+            ));
+        }
+    }
     let google = state
         .google_oauth
         .as_ref()
@@ -511,6 +533,42 @@ pub async fn google_auth_callback(
         )?,
     );
     Ok((headers, Redirect::to(&state.app_url)))
+}
+
+async fn google_authorization_redirect(
+    state: &AppState,
+    headers: &HeaderMap,
+    login: crate::google_auth::GoogleLoginStart,
+    user_id: Option<Uuid>,
+    purpose: &str,
+    legal_versions: Option<(&str, &str)>,
+) -> AppResult<(HeaderMap, Redirect)> {
+    // Reuse the protected browser secret so independent tabs can complete their
+    // own single-use flows. It is never placed in the authorization URL.
+    let secret = oauth_browser_secret(headers, state.secure_cookies)
+        .map(str::to_owned)
+        .unwrap_or_else(|| oauth2::CsrfToken::new_random_len(32).secret().clone());
+    state
+        .store
+        .save_google_login_attempt(&login, user_id, purpose, legal_versions, &secret)
+        .await?;
+    let cookie = format!(
+        "{}={secret}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600{}",
+        oauth_cookie_name(state.secure_cookies),
+        if state.secure_cookies { "; Secure" } else { "" }
+    );
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie).map_err(|_| AppError::InvalidRequest {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "could not create OAuth cookie".to_owned(),
+        })?,
+    );
+    Ok((
+        response_headers,
+        Redirect::temporary(&login.authorization_url),
+    ))
 }
 
 fn authentication_error_redirect(app_url: &str, error: &str) -> Redirect {

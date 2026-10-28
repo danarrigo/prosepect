@@ -737,8 +737,9 @@ async fn calendar_move_cleanup_does_not_deadlock_event_delete_cascade(
         .bind(event.id)
         .execute(&mut *deletion)
         .await?;
-    let other = store
-        .create_calendar_event(
+    let other = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        store.create_calendar_event(
             user,
             CreateCalendarEventRequest {
                 calendar_id: event.calendar_id,
@@ -753,8 +754,9 @@ async fn calendar_move_cleanup_does_not_deadlock_event_delete_cascade(
                 recurrence: EventRecurrence::None,
                 recurrence_until: None,
             },
-        )
-        .await?;
+        ),
+    )
+    .await??;
     tokio::time::timeout(
         std::time::Duration::from_secs(2),
         store.list_calendar_move_undos(user),

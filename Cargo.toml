@@ -16,6 +16,7 @@ base64 = "0.22.1"
 bytes = "1.11.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 http = "1.4.0"
+futures-util = "=0.3.34"
 metrics = "0.24.3"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 mime = "0.3.17"

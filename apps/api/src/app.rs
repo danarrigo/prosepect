@@ -59,6 +59,7 @@ pub struct AppState {
     pub trust_proxy_headers: bool,
     pub login_rate_limiter: LoginRateLimiter,
     pub action_rate_limiter: LoginRateLimiter,
+    pub request_limits: crate::request_limits::RequestLimits,
     pub secure_cookies: bool,
     pub app_url: String,
     pub google_oauth: Option<GoogleOAuth>,
@@ -330,6 +331,7 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         trust_proxy_headers: config.trust_proxy_headers,
         login_rate_limiter: LoginRateLimiter::default(),
         action_rate_limiter: LoginRateLimiter::with_limit(60),
+        request_limits: Default::default(),
         secure_cookies: config.environment == Environment::Production,
         app_url: config.app_url.clone(),
         google_oauth,
@@ -415,7 +417,10 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         )
         .route("/exports/json", get(export_routes::export_json))
         .route("/exports/tasks.csv", get(export_routes::export_tasks_csv))
-        .route("/imports/todoist", post(import_routes::import_todoist))
+        .route(
+            "/imports/todoist",
+            post(import_routes::import_todoist).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
         .route(
             "/exports/notes.md",
             get(export_routes::export_notes_markdown),
@@ -480,7 +485,11 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         )
         .route(
             "/files",
-            get(file_routes::list_files).post(file_routes::upload_file),
+            get(file_routes::list_files)
+                .post(file_routes::upload_file)
+                .layer(DefaultBodyLimit::max(
+                    config.max_file_size_bytes.saturating_add(16 * 1024),
+                )),
         )
         .route("/files/usage", get(file_routes::file_usage))
         .route("/files/{file_id}/download", get(file_routes::download_file))
@@ -543,15 +552,52 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
             "/webhooks/google/calendar",
             post(sync_routes::google_calendar_webhook),
         )
-        .nest("/api/v1", api)
+        .nest(
+            "/api/v1",
+            api.layer(middleware::from_fn_with_state(
+                state.clone(),
+                crate::request_limits::limit_requests,
+            )),
+        )
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", ApiDoc::openapi()))
         .fallback(routes::route_not_found)
         .method_not_allowed_fallback(routes::method_not_allowed)
-        .with_state(state)
-        .layer(DefaultBodyLimit::max(101 * 1024 * 1024))
+        .with_state(state.clone())
+        .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(observability::track_http_metrics))
-        .layer(cors))
+        .layer(cors)
+        .layer(middleware::from_fn_with_state(state, security_headers)))
+}
+
+async fn security_headers(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    if state.secure_cookies {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000"),
+        );
+    }
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("frame-ancestors 'none'; object-src 'none'; base-uri 'none'"),
+    );
+    response
 }

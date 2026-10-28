@@ -1582,6 +1582,7 @@ async fn delete_with_provider(
         trust_proxy_headers: false,
         login_rate_limiter: LoginRateLimiter::default(),
         action_rate_limiter: LoginRateLimiter::default(),
+        request_limits: Default::default(),
         secure_cookies: false,
         app_url: "http://localhost".into(),
         google_oauth: None,

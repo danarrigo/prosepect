@@ -88,6 +88,16 @@ impl IntoResponse for AppError {
                     "An external integration failed".to_owned(),
                 )
             }
+            Self::Database(ref error) if error.as_database_error().is_some_and(|error| error.constraint() == Some("workspace_content_quota")) => (
+                StatusCode::FORBIDDEN,
+                "content_quota_exceeded",
+                "workspace content limit reached; delete unused content or contact the operator".to_owned(),
+            ),
+            Self::Database(ref error) if error.as_database_error().is_some_and(|error| error.code().is_some_and(|code| matches!(code.as_ref(), "40P01" | "40001"))) => (
+                StatusCode::CONFLICT,
+                "conflict",
+                "a concurrent workspace update was rolled back; refresh before trying again".to_owned(),
+            ),
             Self::Database(error) => {
                 tracing::error!(error = ?error, "database operation failed");
                 (

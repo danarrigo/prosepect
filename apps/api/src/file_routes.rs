@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderValue, Response, StatusCode, header},
     response::Json,
 };
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use uuid::Uuid;
 
 use crate::{
@@ -70,52 +70,68 @@ pub async fn upload_file(
     state
         .login_rate_limiter
         .check_key(&format!("upload:{user_id}"))?;
+    let _permit = state.request_limits.large_request()?;
     let mut upload: Option<Upload> = None;
     let mut project_id = None;
     let mut task_id = None;
     let mut note_id = None;
     let mut event_id = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(invalid_multipart)? {
-        let name = field.name().unwrap_or_default().to_owned();
-        if name == "file" {
-            let filename = field
-                .file_name()
-                .map(clean_filename)
-                .filter(|name| !name.is_empty())
-                .ok_or_else(|| AppError::Validation("file must have a filename".to_owned()))?;
-            let content_type = field
-                .content_type()
-                .map(str::to_owned)
-                .unwrap_or_else(|| "application/octet-stream".to_owned());
-            content_type
-                .parse::<mime::Mime>()
-                .map_err(|_| AppError::Validation("file content type is invalid".to_owned()))?;
-            let bytes = field.bytes().await.map_err(invalid_multipart)?;
-            if bytes.len() > state.max_file_size_bytes {
-                return Err(AppError::InvalidRequest {
-                    status: StatusCode::PAYLOAD_TOO_LARGE,
-                    message: format!("file must not exceed {} bytes", state.max_file_size_bytes),
-                });
+    let mut seen = std::collections::HashSet::new();
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while let Some(field) = multipart.next_field().await.map_err(invalid_multipart)? {
+            let name = field.name().unwrap_or_default().to_owned();
+            if !matches!(
+                name.as_str(),
+                "file" | "project_id" | "task_id" | "note_id" | "event_id"
+            ) || !seen.insert(name.clone())
+            {
+                return Err(AppError::Validation(
+                    "unexpected or duplicate upload field".to_owned(),
+                ));
             }
-            upload = Some(Upload {
-                filename,
-                content_type,
-                bytes,
-            });
-        } else {
-            let value = field.text().await.map_err(invalid_multipart)?;
-            let id = parse_optional_id(&value)?;
-            match name.as_str() {
-                "project_id" => project_id = id,
-                "task_id" => task_id = id,
-                "note_id" => note_id = id,
-                "event_id" => event_id = id,
-                _ => {}
+            if name == "file" {
+                let filename = field
+                    .file_name()
+                    .map(clean_filename)
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(|| AppError::Validation("file must have a filename".to_owned()))?;
+                let content_type = field
+                    .content_type()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| "application/octet-stream".to_owned());
+                content_type
+                    .parse::<mime::Mime>()
+                    .map_err(|_| AppError::Validation("file content type is invalid".to_owned()))?;
+                let bytes = bounded_field(field, state.max_file_size_bytes).await?;
+                upload = Some(Upload {
+                    filename,
+                    content_type,
+                    bytes,
+                });
+            } else {
+                let bytes = bounded_field(field, 64).await?;
+                let value = std::str::from_utf8(&bytes).map_err(|_| {
+                    AppError::Validation("file link identifier must be UTF-8".to_owned())
+                })?;
+                let id = parse_optional_id(value)?;
+                match name.as_str() {
+                    "project_id" => project_id = id,
+                    "task_id" => task_id = id,
+                    "note_id" => note_id = id,
+                    "event_id" => event_id = id,
+                    _ => {}
+                }
             }
         }
-    }
 
+        Ok::<_, AppError>(())
+    })
+    .await
+    .map_err(|_| AppError::InvalidRequest {
+        status: StatusCode::REQUEST_TIMEOUT,
+        message: "file upload timed out".to_owned(),
+    })??;
     let upload = upload.ok_or_else(|| AppError::Validation("file is required".to_owned()))?;
     let file_id = Uuid::now_v7();
     let object_key = format!("{user_id}-{file_id}");
@@ -232,6 +248,23 @@ struct Upload {
     bytes: Bytes,
 }
 
+async fn bounded_field(
+    mut field: axum::extract::multipart::Field<'_>,
+    maximum: usize,
+) -> AppResult<Bytes> {
+    let mut bytes = BytesMut::new();
+    while let Some(chunk) = field.chunk().await.map_err(invalid_multipart)? {
+        if chunk.len() > maximum.saturating_sub(bytes.len()) {
+            return Err(AppError::InvalidRequest {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                message: format!("upload field must not exceed {maximum} bytes"),
+            });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes.freeze())
+}
+
 fn parse_optional_id(value: &str) -> AppResult<Option<Uuid>> {
     if value.trim().is_empty() {
         return Ok(None);
@@ -253,9 +286,15 @@ fn clean_filename(value: &str) -> String {
         .collect()
 }
 
-fn invalid_multipart(error: impl std::fmt::Debug) -> AppError {
-    tracing::warn!(error = ?error, "invalid multipart upload");
-    AppError::Validation("invalid multipart file upload".to_owned())
+fn invalid_multipart(error: axum::extract::multipart::MultipartError) -> AppError {
+    if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        AppError::InvalidRequest {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            message: "multipart upload exceeds the request limit".to_owned(),
+        }
+    } else {
+        AppError::Validation("invalid multipart file upload".to_owned())
+    }
 }
 
 fn storage_error(error: impl std::fmt::Debug) -> AppError {
