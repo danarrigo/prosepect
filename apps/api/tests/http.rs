@@ -14,6 +14,9 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use utoipa::OpenApi;
 
+#[path = "http/security_regressions.rs"]
+mod security_regressions;
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn google_tasks_consent_start_persists_a_user_bound_single_use_attempt(
     pool: PgPool,
