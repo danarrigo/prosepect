@@ -93,13 +93,19 @@ https=("${http_client[@]}" --silent --show-error --max-time 10 --noproxy '*' --c
 status() {
   local expected=$1; shift
   local actual
-  actual=$("${https[@]}" -o "$work/body" -w '%{http_code}' "$@")
+  actual=$("${https[@]}" -D "$work/headers" -o "$work/body" -w '%{http_code}' "$@")
   [[ "$actual" == "$expected" ]] || { echo "Expected HTTP $expected; got $actual" >&2; exit 1; }
 }
 status 200 https://app.prosepect.test/ready
+grep -iq '^Strict-Transport-Security: max-age=31536000' "$work/headers"
+grep -iq '^X-Content-Type-Options: nosniff' "$work/headers"
 status 200 https://app.prosepect.test/health
 status 200 https://app.prosepect.test/api-doc/openapi.json
 status 200 https://app.prosepect.test/settings
+grep -iq "^Content-Security-Policy: .*script-src 'self'.*frame-ancestors 'none'" "$work/headers"
+grep -iq '^X-Frame-Options: DENY' "$work/headers"
+grep -iq '^X-Content-Type-Options: nosniff' "$work/headers"
+grep -iq '^Referrer-Policy: strict-origin-when-cross-origin' "$work/headers"
 [[ $("${http_client[@]}" --silent --max-time 10 --noproxy '*' --resolve "app.prosepect.test:80:$web_address" -o /dev/null -w '%{http_code}' http://app.prosepect.test/ready) == 308 ]]
 status 401 https://app.prosepect.test/api/v1/session
 status 401 https://app.prosepect.test/api/v1/operations

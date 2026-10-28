@@ -562,22 +562,29 @@ pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", ApiDoc::openapi()))
         .fallback(routes::route_not_found)
         .method_not_allowed_fallback(routes::method_not_allowed)
-        .with_state(state)
+        .with_state(state.clone())
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(observability::track_http_metrics))
         .layer(cors)
-        .layer(middleware::from_fn(security_headers)))
+        .layer(middleware::from_fn_with_state(state, security_headers)))
 }
 
 async fn security_headers(
+    axum::extract::State(state): axum::extract::State<AppState>,
     request: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
+    if state.secure_cookies {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000"),
+        );
+    }
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),

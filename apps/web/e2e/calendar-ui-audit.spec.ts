@@ -93,7 +93,7 @@ async function mockCalendar(page: Page, populated = true) {
   })
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url())
-    if (url.origin !== 'http://127.0.0.1:5173') {
+    if (url.origin !== new URL(test.info().project.use.baseURL ?? 'http://127.0.0.1:5173').origin) {
       await route.abort()
       throw new Error(`Unexpected external request: ${url.origin}`)
     }
