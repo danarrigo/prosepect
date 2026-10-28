@@ -547,7 +547,7 @@ async fn google_authorization_redirect(
     // own single-use flows. It is never placed in the authorization URL.
     let secret = oauth_browser_secret(headers, state.secure_cookies)
         .map(str::to_owned)
-        .unwrap_or_else(|| oauth2::CsrfToken::new_random().secret().clone());
+        .unwrap_or_else(|| oauth2::CsrfToken::new_random_len(32).secret().clone());
     state
         .store
         .save_google_login_attempt(&login, user_id, purpose, legal_versions, &secret)

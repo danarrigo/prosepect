@@ -24,6 +24,9 @@ async fn oversized_upload_stops_before_consuming_the_stream_tail(
     ]);
     let stream =
         futures_util::stream::unfold((chunks, reads.clone()), |(mut chunks, reads)| async move {
+            // Model network arrivals, not an already-buffered body: multer
+            // deliberately drains every immediately-ready chunk on each poll.
+            tokio::task::yield_now().await;
             chunks.pop_front().map(|chunk| {
                 reads.fetch_add(1, Ordering::SeqCst);
                 (Ok::<_, std::io::Error>(chunk), (chunks, reads))
