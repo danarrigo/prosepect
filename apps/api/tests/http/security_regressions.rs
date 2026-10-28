@@ -1,5 +1,149 @@
 use super::*;
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn slow_account_writes_do_not_consume_every_accounts_capacity(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool);
+    store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let other = uuid::Uuid::now_v7();
+    store.ensure_development_user(other).await?;
+    let router = app::build(&test_config(), store)?;
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(5));
+    let mut pending = Vec::new();
+    for _ in 0..4 {
+        let router = router.clone();
+        let barrier = barrier.clone();
+        let body = Body::from_stream(futures_util::stream::once(async move {
+            barrier.wait().await;
+            std::future::pending::<Result<bytes::Bytes, std::io::Error>>().await
+        }));
+        pending.push(tokio::spawn(async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/notes")
+                        .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(body)
+                        .unwrap(),
+                )
+                .await
+        }));
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(5), barrier.wait()).await?;
+    let busy = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/notes")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"title":"Busy"}"#))?,
+        )
+        .await?;
+    assert_eq!(busy.status(), StatusCode::TOO_MANY_REQUESTS);
+    let available = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/notes")
+                .header(DEVELOPMENT_USER_HEADER, other.to_string())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"title":"Other account"}"#))?,
+        )
+        .await?;
+    assert_eq!(available.status(), StatusCode::CREATED);
+    for task in pending {
+        task.abort();
+        let _ = task.await;
+    }
+    let available = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/notes")
+                .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"title":"Released"}"#))?,
+        )
+        .await?;
+    assert_eq!(available.status(), StatusCode::CREATED);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn write_admission_is_charged_once_and_keeps_csrf_protected_logout_available(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool);
+    let user = store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let session = store.create_session(user).await?;
+    let cookie = format!("prosepect_session={}", session.token);
+    let csrf = session.response.csrf_token;
+    let mut config = test_config();
+    config.allow_insecure_dev_auth = false;
+    let router = app::build(&config, store)?;
+    for index in 0..241 {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/notes")
+                    .header(header::COOKIE, &cookie)
+                    .header("x-csrf-token", &csrf)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("not-json"))?,
+            )
+            .await?;
+        assert_eq!(
+            response.status(),
+            if index < 240 {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::TOO_MANY_REQUESTS
+            }
+        );
+    }
+    let denied = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/session/logout")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let logout = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/session/logout")
+                .header(header::COOKIE, &cookie)
+                .header("x-csrf-token", csrf)
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+    let expired = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/session")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(expired.status(), StatusCode::UNAUTHORIZED);
+    Ok(())
+}
+
 fn oauth_config() -> Config {
     let mut config = test_config();
     config.google_oauth = Some(GoogleOAuthConfig {

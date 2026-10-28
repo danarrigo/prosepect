@@ -38,6 +38,13 @@ async fn assert_counters(pool: &PgPool) -> anyhow::Result<()> {
     let owners: (i64, i64) = sqlx::query_as("SELECT COALESCE(SUM(bytes), 0)::BIGINT, COALESCE(SUM(records), 0)::BIGINT FROM workspace_content_usage").fetch_one(pool).await?;
     assert_eq!(total, (bytes, records));
     assert_eq!(owners, total);
+    let pending: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspace_content_pending")
+        .fetch_one(pool)
+        .await?;
+    assert_eq!(
+        pending, 0,
+        "commits and rollbacks must not retain private deltas"
+    );
     Ok(())
 }
 
@@ -55,20 +62,21 @@ async fn quota_writes_and_counter_updates_rollback_together(pool: PgPool) -> any
         .bind(DEVELOPMENT_USER_ID)
         .execute(&mut *transaction)
         .await?;
-    let result = sqlx::query("INSERT INTO notes (id, user_id, title) VALUES ($1, $2, 'Rejected')")
+    sqlx::query("INSERT INTO notes (id, user_id, title) VALUES ($1, $2, 'Rejected')")
         .bind(Uuid::now_v7())
         .bind(DEVELOPMENT_USER_ID)
         .execute(&mut *transaction)
-        .await;
+        .await?;
     assert_eq!(
-        result
+        transaction
+            .commit()
+            .await
             .unwrap_err()
             .as_database_error()
             .unwrap()
             .constraint(),
         Some("workspace_content_quota")
     );
-    transaction.rollback().await?;
     assert_counters(&pool).await?;
     let total: i64 = sqlx::query_scalar("SELECT records FROM workspace_content_total")
         .fetch_one(&pool)
@@ -139,6 +147,33 @@ async fn concurrent_writers_cannot_overrun_shared_or_owner_budgets(
         }
     }
     assert_eq!(succeeded, 1);
+    assert_counters(&pool).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn quota_checks_the_final_transaction_not_temporary_growth(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    Store::from_pool(pool.clone())
+        .ensure_development_user(DEVELOPMENT_USER_ID)
+        .await?;
+    insert_note(&pool, DEVELOPMENT_USER_ID, "Original").await?;
+    sqlx::query("UPDATE workspace_content_limits SET user_records = 1, total_records = 1")
+        .execute(&pool)
+        .await?;
+    let replacement = Uuid::now_v7();
+    let mut transaction = pool.begin().await?;
+    sqlx::query("INSERT INTO notes (id, user_id, title) VALUES ($1,$2,'Replacement')")
+        .bind(replacement)
+        .bind(DEVELOPMENT_USER_ID)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("DELETE FROM notes WHERE id <> $1")
+        .bind(replacement)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
     assert_counters(&pool).await?;
     Ok(())
 }

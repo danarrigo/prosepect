@@ -36,8 +36,10 @@ pub fn oauth_browser_secret(headers: &HeaderMap, secure: bool) -> Option<&str> {
         })
 }
 
-fn limit_write(state: &AppState, method: &Method, user_id: Uuid) -> Result<(), AppError> {
-    if requires_csrf(method) {
+fn limit_write(state: &AppState, parts: &Parts, user_id: Uuid) -> Result<(), AppError> {
+    let logout = parts.method == Method::POST
+        && parts.uri.path().trim_start_matches("/api/v1") == "/session/logout";
+    if requires_csrf(&parts.method) && !logout {
         state.request_limits.check_write(user_id)?;
     }
     Ok(())
@@ -45,6 +47,11 @@ fn limit_write(state: &AppState, method: &Method, user_id: Uuid) -> Result<(), A
 
 #[derive(Debug, Clone, Copy)]
 pub struct CurrentUser(pub Uuid);
+
+// Only server-side middleware can populate this extension. Method binding
+// prevents a later method-changing middleware from bypassing CSRF validation.
+#[derive(Clone)]
+struct AuthenticatedUser(Uuid, Method);
 
 #[derive(Debug, Clone)]
 pub struct SessionCsrf(pub String);
@@ -56,12 +63,20 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        if let Some(AuthenticatedUser(user, method)) = parts.extensions.get::<AuthenticatedUser>()
+            && method == &parts.method
+        {
+            return Ok(Self(*user));
+        }
         if state.allow_insecure_dev_auth
             && let Some(value) = parts.headers.get(DEVELOPMENT_USER_HEADER)
         {
             let value = value.to_str().map_err(|_| AppError::Unauthorized)?;
             let user_id = value.parse::<Uuid>().map_err(|_| AppError::Unauthorized)?;
-            limit_write(state, &parts.method, user_id)?;
+            limit_write(state, parts, user_id)?;
+            parts
+                .extensions
+                .insert(AuthenticatedUser(user_id, parts.method.clone()));
             return Ok(Self(user_id));
         }
 
@@ -77,7 +92,10 @@ impl FromRequestParts<AppState> for CurrentUser {
                     return Err(AppError::Forbidden("a valid CSRF token is required"));
                 }
             }
-            limit_write(state, &parts.method, session.user_id)?;
+            limit_write(state, parts, session.user_id)?;
+            parts
+                .extensions
+                .insert(AuthenticatedUser(session.user_id, parts.method.clone()));
             parts.extensions.insert(SessionCsrf(session.csrf_token));
             return Ok(Self(session.user_id));
         }

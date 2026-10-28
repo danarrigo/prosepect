@@ -21,11 +21,12 @@ There are no accepted npm or Rust advisory exceptions. All dependency advisories
 
 Google sign-in uses `oauth2` for authorization-code exchange and PKCE, and `jsonwebtoken` with its AWS-LC backend for RS256 verification. The previous `openidconnect` dependency pulled in affected `crypto-bigint` and `rsa` versions. Removing that dependency removes both RUSTSEC-2026-0387 and the former RUSTSEC-2023-0071 exception, rather than suppressing either warning. See `docs/GOOGLE-SIGN-IN-VERIFICATION.md` for validation boundaries and tests.
 
-## Automated dependency gates
+## Automated security gates
 
 `.github/workflows/security.yml` audits both committed lockfiles on pushes to `main`, pull requests, manual runs, and a daily best-effort schedule so newly published advisories are checked without code changes. No production credentials or issue creation permissions are used.
 
 - Rust runs only on GitHub-hosted CI using `cargo-audit`. An unfiltered JSON artifact records every advisory. The **mandatory subsequent gate** denies every advisory and warning (including unmaintained/unsound/yanked findings), without ignores. `rust-dependency-audit` retains both the full report and the acceptance-gate log for 14 days. A diagnostic step marked allowed-to-fail does not waive the mandatory gate.
 - npm audits the complete lockfile, including development dependencies, at `--audit-level=low`. There are no npm exceptions. `npm-dependency-audit` retains the JSON report for 14 days, including failures.
+- Gitleaks scans full Git history using a version/checksum-pinned binary and fully redacted output. `.gitleaksignore` contains only the exact historical fingerprints of the documented disposable OIDC signing fixture and synthetic webhook token. No whole path, rule or commit is excluded; newly committed secrets still fail. These fixture fingerprints do not waive any dependency gate. Redacted `secret-scan` evidence is retained for 14 days.
 
-Require both audit jobs in repository merge rules and enable failure notifications. Workflow definitions alone do not configure branch protection or verify notification delivery. Network/database/tooling failures must be investigated, not treated as a clean security result. Schedules are not guaranteed to run on time; run the workflow manually against the release commit before publication.
+Require all three security jobs in repository merge rules and enable failure notifications. Workflow definitions alone do not configure branch protection or verify notification delivery. Network/database/tooling failures must be investigated, not treated as a clean security result. Schedules are not guaranteed to run on time; run the workflow manually against the release commit before publication.

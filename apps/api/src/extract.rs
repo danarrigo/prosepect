@@ -17,13 +17,20 @@ where
     type Rejection = AppError;
 
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(request, state)
-            .await
-            .map(|Json(value)| Self(value))
-            .map_err(|rejection| AppError::InvalidRequest {
-                status: rejection.status(),
-                message: rejection.body_text(),
-            })
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            Json::<T>::from_request(request, state),
+        )
+        .await
+        .map_err(|_| AppError::InvalidRequest {
+            status: axum::http::StatusCode::REQUEST_TIMEOUT,
+            message: "JSON request body timed out".to_owned(),
+        })?
+        .map(|Json(value)| Self(value))
+        .map_err(|rejection| AppError::InvalidRequest {
+            status: rejection.status(),
+            message: rejection.body_text(),
+        })
     }
 }
 
@@ -64,5 +71,24 @@ where
                 status: rejection.status(),
                 message: rejection.body_text(),
             })
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_json_body_times_out_before_the_handler() {
+        let request = Request::builder()
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from_stream(
+                futures_util::stream::pending::<Result<bytes::Bytes, std::io::Error>>(),
+            ))
+            .unwrap();
+        let result = ApiJson::<serde_json::Value>::from_request(request, &()).await;
+        assert!(
+            matches!(result, Err(AppError::InvalidRequest { status, .. }) if status == axum::http::StatusCode::REQUEST_TIMEOUT)
+        );
     }
 }

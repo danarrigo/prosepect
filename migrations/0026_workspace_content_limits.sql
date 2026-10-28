@@ -1,3 +1,9 @@
+-- Block legacy writers during the backfill/trigger installation so no writes
+-- can fall into the gap. SQLx runs this migration in one transaction.
+SET LOCAL lock_timeout = '10s';
+LOCK TABLE projects, tasks, calendars, calendar_events, notes, files, labels, saved_task_views
+    IN SHARE ROW EXCLUSIVE MODE;
+
 -- Logical content budgets complement object-storage quotas and HTTP limits.
 -- Counters are transactional, cover every writer (including imports/provider
 -- sync), and are maintained in O(1) per row. Existing content is not deleted.
@@ -19,6 +25,17 @@ CREATE TABLE workspace_content_total (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
     bytes BIGINT NOT NULL CHECK (bytes >= 0),
     records BIGINT NOT NULL CHECK (records >= 0)
+);
+
+-- Each transaction accumulates private deltas without locking shared counters.
+-- Apply them only at commit, after all content/FK/Undo operations have finished.
+-- This preserves unrelated writers while a deletion or Undo transaction is open.
+CREATE TABLE workspace_content_pending (
+    transaction_id XID8 NOT NULL,
+    user_id UUID NOT NULL,
+    byte_delta BIGINT NOT NULL,
+    record_delta BIGINT NOT NULL,
+    PRIMARY KEY (transaction_id, user_id)
 );
 
 -- Future migrations changing tracked row shapes must recount these derived
@@ -45,11 +62,6 @@ DECLARE
     owner_id UUID;
     byte_delta BIGINT;
     record_delta BIGINT;
-    user_bytes BIGINT;
-    user_records BIGINT;
-    total_bytes BIGINT;
-    total_records BIGINT;
-    limits workspace_content_limits%ROWTYPE;
 BEGIN
     IF TG_OP = 'INSERT' THEN
         owner_id := NEW.user_id;
@@ -68,27 +80,56 @@ BEGIN
         record_delta := 0;
     END IF;
 
-    -- Always take the global counter before the owner counter. Both changes
-    -- roll back with the content write on quota, version, or transaction errors.
-    UPDATE workspace_content_total SET bytes = bytes + byte_delta, records = records + record_delta
-    WHERE singleton RETURNING bytes, records INTO total_bytes, total_records;
-    IF TG_OP <> 'DELETE' THEN
-        INSERT INTO workspace_content_usage (user_id, bytes, records) VALUES (owner_id, 0, 0)
-        ON CONFLICT (user_id) DO NOTHING;
-    END IF;
-    UPDATE workspace_content_usage SET bytes = bytes + byte_delta, records = records + record_delta
-    WHERE user_id = owner_id RETURNING bytes, records INTO user_bytes, user_records;
-
-    SELECT * INTO limits FROM workspace_content_limits WHERE singleton;
-    -- Deletion and shrinking remain possible even if an older installation
-    -- already exceeds the new budgets. Never remove existing user content.
-    IF (byte_delta > 0 AND (user_bytes > limits.user_bytes OR total_bytes > limits.total_bytes))
-       OR (record_delta > 0 AND (user_records > limits.user_records OR total_records > limits.total_records)) THEN
-        RAISE EXCEPTION 'workspace content limit reached' USING ERRCODE = '23514', CONSTRAINT = 'workspace_content_quota';
-    END IF;
+    INSERT INTO workspace_content_pending AS pending (transaction_id, user_id, byte_delta, record_delta)
+    VALUES (pg_current_xact_id(), owner_id, byte_delta, record_delta)
+    ON CONFLICT (transaction_id, user_id) DO UPDATE
+    SET byte_delta = pending.byte_delta + EXCLUDED.byte_delta,
+        record_delta = pending.record_delta + EXCLUDED.record_delta;
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
 END $$;
+
+CREATE FUNCTION apply_workspace_content_usage() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    change workspace_content_pending%ROWTYPE;
+    user_bytes BIGINT;
+    user_records BIGINT;
+    total_bytes BIGINT;
+    total_records BIGINT;
+    limits workspace_content_limits%ROWTYPE;
+BEGIN
+    -- The first deferred event applies the final net delta once. Subsequent
+    -- events for this transaction/owner find no pending row and do nothing.
+    DELETE FROM workspace_content_pending
+    WHERE transaction_id = NEW.transaction_id AND user_id = NEW.user_id
+    RETURNING * INTO change;
+    IF NOT FOUND OR (change.byte_delta = 0 AND change.record_delta = 0) THEN
+        RETURN NULL;
+    END IF;
+    UPDATE workspace_content_total
+    SET bytes = bytes + change.byte_delta, records = records + change.record_delta
+    WHERE singleton RETURNING bytes, records INTO total_bytes, total_records;
+    -- Account deletion may already have cascaded the owner's counter. Never
+    -- recreate it, or retain a FK to the now-deleted user in the pending queue.
+    IF EXISTS (SELECT 1 FROM users WHERE id = change.user_id) THEN
+        INSERT INTO workspace_content_usage (user_id, bytes, records) VALUES (change.user_id, 0, 0)
+        ON CONFLICT (user_id) DO NOTHING;
+        UPDATE workspace_content_usage
+        SET bytes = bytes + change.byte_delta, records = records + change.record_delta
+        WHERE user_id = change.user_id RETURNING bytes, records INTO user_bytes, user_records;
+    END IF;
+    SELECT * INTO limits FROM workspace_content_limits WHERE singleton;
+    IF (change.byte_delta > 0 AND (user_bytes > limits.user_bytes OR total_bytes > limits.total_bytes))
+       OR (change.record_delta > 0 AND (user_records > limits.user_records OR total_records > limits.total_records)) THEN
+        RAISE EXCEPTION 'workspace content limit reached' USING ERRCODE = '23514', CONSTRAINT = 'workspace_content_quota';
+    END IF;
+    RETURN NULL;
+END $$;
+
+CREATE CONSTRAINT TRIGGER workspace_content_apply
+AFTER INSERT OR UPDATE ON workspace_content_pending
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION apply_workspace_content_usage();
 
 DO $$
 DECLARE

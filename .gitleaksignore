@@ -1,0 +1,4 @@
+# Exact historical fingerprints for documented, disposable test fixtures only.
+# No paths, rules, current secrets, or entire commits are excluded.
+118b71444b06d6d28628b9265888f00777a423a1:apps/api/tests/fixtures/oidc/test-only-private.pem:private-key:1
+640acc0275af8e699d193397aa040c6f692522e0:apps/api/tests/http.rs:generic-api-key:170
