@@ -16,6 +16,8 @@ use utoipa::OpenApi;
 
 #[path = "http/security_regressions.rs"]
 mod security_regressions;
+#[path = "http/upload_stream_regression.rs"]
+mod upload_stream_regression;
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn google_tasks_consent_start_persists_a_user_bound_single_use_attempt(
@@ -68,6 +70,13 @@ async fn google_tasks_consent_start_persists_a_user_bound_single_use_attempt(
         .await?;
     let status = response.status();
     let location = response.headers().get(header::LOCATION).cloned();
+    let oauth_cookie = response.headers()[header::SET_COOKIE]
+        .to_str()?
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let browser_secret = oauth_cookie.split_once('=').unwrap().1;
     let body = to_bytes(response.into_body(), 65536).await?;
     assert_eq!(
         status,
@@ -91,7 +100,9 @@ async fn google_tasks_consent_start_persists_a_user_bound_single_use_attempt(
     assert_eq!(params["include_granted_scopes"], "true");
     assert_eq!(params["prompt"], "consent");
     assert_eq!(params["code_challenge_method"], "S256");
-    let attempt = store.consume_google_login_attempt(&params["state"]).await?;
+    let attempt = store
+        .consume_google_login_attempt(&params["state"], browser_secret)
+        .await?;
     assert_eq!(attempt.user_id, Some(user_id));
     assert_eq!(attempt.purpose, "tasks_connect");
     assert_eq!(attempt.nonce, params["nonce"]);
@@ -104,7 +115,7 @@ async fn google_tasks_consent_start_persists_a_user_bound_single_use_attempt(
     assert!(!attempt.age_confirmed);
     assert!(
         store
-            .consume_google_login_attempt(&params["state"])
+            .consume_google_login_attempt(&params["state"], browser_secret)
             .await
             .is_err()
     );

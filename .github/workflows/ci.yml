@@ -139,3 +139,6 @@ jobs:
           cat /tmp/prosepect-api.log
           exit 1
       - run: npm run test:e2e
+      - name: Production browser security policies
+        working-directory: apps/web
+        run: npx playwright test --config playwright.security.config.ts

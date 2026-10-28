@@ -1,5 +1,245 @@
 use super::*;
 
+fn oauth_config() -> Config {
+    let mut config = test_config();
+    config.google_oauth = Some(GoogleOAuthConfig {
+        client_id: "test-client".to_owned(),
+        client_secret: "test-secret".to_owned(),
+        redirect_uri: "http://localhost/callback".to_owned(),
+        token_encryption_key: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=".to_owned(),
+    });
+    config
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn content_quota_is_an_actionable_error_without_partial_writes(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    sqlx::query("UPDATE workspace_content_limits SET user_records = 1")
+        .execute(&pool)
+        .await?;
+    let router = app::build(&test_config(), store)?;
+    for expected in [StatusCode::CREATED, StatusCode::FORBIDDEN] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/notes")
+                    .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"title":"Quota","markdown":"Text"}"#))?,
+            )
+            .await?;
+        assert_eq!(response.status(), expected);
+        if expected == StatusCode::FORBIDDEN {
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 65536).await?)?;
+            assert_eq!(body["error"]["code"], "content_quota_exceeded");
+        }
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(count, 1);
+    Ok(())
+}
+
+const LOGIN_START: &str = "/api/v1/auth/google/start?terms_version=2026-10-04&privacy_version=2026-10-04&age_confirmed=true";
+
+fn oauth_response(response: &axum::response::Response) -> anyhow::Result<(String, String)> {
+    let cookie = response.headers()[header::SET_COOKIE]
+        .to_str()?
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let url = reqwest::Url::parse(response.headers()[header::LOCATION].to_str()?)?;
+    let state = url
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .unwrap()
+        .1
+        .into_owned();
+    assert!(!url.as_str().contains(cookie.split_once('=').unwrap().1));
+    Ok((cookie, state))
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn oauth_callback_rejects_other_browsers_without_burning_the_attempt(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    let router = app::build(&oauth_config(), store.clone())?;
+    let first = router
+        .clone()
+        .oneshot(Request::builder().uri(LOGIN_START).body(Body::empty())?)
+        .await?;
+    let (cookie, first_state) = oauth_response(&first)?;
+    let second = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(LOGIN_START)
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())?,
+        )
+        .await?;
+    let (second_cookie, second_state) = oauth_response(&second)?;
+    assert_eq!(
+        cookie, second_cookie,
+        "independent tabs must share the protected browser binding"
+    );
+    assert_ne!(first_state, second_state);
+    for supplied in [
+        String::new(),
+        "prosepect_oauth=short".to_owned(),
+        format!("prosepect_oauth={}", "A".repeat(43)),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/auth/google/callback?state={first_state}&code=offline-unused"
+                    ))
+                    .header(header::COOKIE, supplied)
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(!response.headers().contains_key(header::SET_COOKIE));
+    }
+    let binding = cookie.split_once('=').unwrap().1;
+    store
+        .consume_google_login_attempt(&first_state, binding)
+        .await?;
+    store
+        .consume_google_login_attempt(&second_state, binding)
+        .await?;
+    assert!(
+        store
+            .consume_google_login_attempt(&first_state, binding)
+            .await
+            .is_err()
+    );
+    let third = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(LOGIN_START)
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())?,
+        )
+        .await?;
+    let (_, expired_state) = oauth_response(&third)?;
+    sqlx::query("UPDATE oauth_login_attempts SET expires_at = NOW() - INTERVAL '1 second'")
+        .execute(&pool)
+        .await?;
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/auth/google/callback?state={expired_state}&code=offline-unused"
+                ))
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn oauth_production_binding_uses_host_only_secure_cookie(pool: PgPool) -> anyhow::Result<()> {
+    let mut config = oauth_config();
+    config.environment = Environment::Production;
+    config.allow_insecure_dev_auth = false;
+    let router = app::build(&config, Store::from_pool(pool))?;
+    let response = router
+        .oneshot(Request::builder().uri(LOGIN_START).body(Body::empty())?)
+        .await?;
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    let cookie = response.headers()[header::SET_COOKIE].to_str()?;
+    assert!(cookie.starts_with("__Host-prosepect_oauth="));
+    assert!(cookie.contains("; Secure"));
+    assert!(cookie.contains("; HttpOnly"));
+    assert!(cookie.contains("; Path=/"));
+    assert!(!cookie.to_lowercase().contains("domain="));
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn incremental_consent_rejects_changed_login_session_before_exchange(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool);
+    let owner = store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let other = store.ensure_development_user(uuid::Uuid::now_v7()).await?;
+    let owner = store.create_session(owner).await?;
+    let other = store.create_session(other).await?;
+    let router = app::build(&oauth_config(), store)?;
+    for purpose in ["tasks", "calendar"] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/auth/google/{purpose}/start"))
+                    .header(header::COOKIE, format!("prosepect_session={}", owner.token))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        let (binding, state) = oauth_response(&response)?;
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/v1/auth/google/callback?state={state}&code=offline-unused"
+                    ))
+                    .header(
+                        header::COOKIE,
+                        format!("{binding}; prosepect_session={}", other.token),
+                    )
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn multipart_fields_are_bounded_and_rejected_before_metadata_creation(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    let store = Store::from_pool(pool.clone());
+    store.ensure_development_user(DEVELOPMENT_USER_ID).await?;
+    let mut config = test_config();
+    config.max_file_size_bytes = 8;
+    let router = app::build(&config, store)?;
+    for (fields, expected) in [
+        ("Content-Disposition: form-data; name=\"file\"; filename=\"large.txt\"\r\n\r\n123456789".to_owned(), StatusCode::PAYLOAD_TOO_LARGE),
+        (format!("Content-Disposition: form-data; name=\"project_id\"\r\n\r\n{}", "x".repeat(65)), StatusCode::PAYLOAD_TOO_LARGE),
+        ("Content-Disposition: form-data; name=\"unexpected\"\r\n\r\nx".to_owned(), StatusCode::UNPROCESSABLE_ENTITY),
+        ("Content-Disposition: form-data; name=\"file\"; filename=\"one.txt\"\r\n\r\nx\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"two.txt\"\r\n\r\ny".to_owned(), StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        let response = router.clone().oneshot(Request::builder().method("POST").uri("/api/v1/files")
+            .header(DEVELOPMENT_USER_HEADER, DEVELOPMENT_USER_ID.to_string())
+            .header(header::CONTENT_TYPE, "multipart/form-data; boundary=boundary")
+            .body(Body::from(format!("--boundary\r\n{fields}\r\n--boundary--\r\n")))?).await?;
+        assert_eq!(response.status(), expected);
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(count, 0);
+    Ok(())
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn oauth_start_sets_a_short_lived_browser_binding(pool: PgPool) -> anyhow::Result<()> {
     let mut config = test_config();

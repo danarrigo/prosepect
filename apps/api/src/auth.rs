@@ -10,6 +10,39 @@ pub const DEVELOPMENT_USER_HEADER: &str = "x-prosepect-user-id";
 pub const SESSION_COOKIE: &str = "prosepect_session";
 pub const CSRF_HEADER: &str = "x-csrf-token";
 
+pub fn oauth_cookie_name(secure: bool) -> &'static str {
+    if secure {
+        "__Host-prosepect_oauth"
+    } else {
+        "prosepect_oauth"
+    }
+}
+
+pub fn oauth_browser_secret(headers: &HeaderMap, secure: bool) -> Option<&str> {
+    let name = oauth_cookie_name(secure);
+    headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .filter_map(|cookie| cookie.trim().split_once('='))
+        .find_map(|(key, value)| {
+            (key == name
+                && value.len() == 43
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+            .then_some(value)
+        })
+}
+
+fn limit_write(state: &AppState, method: &Method, user_id: Uuid) -> Result<(), AppError> {
+    if requires_csrf(method) {
+        state.request_limits.check_write(user_id)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct CurrentUser(pub Uuid);
 
@@ -28,6 +61,7 @@ impl FromRequestParts<AppState> for CurrentUser {
         {
             let value = value.to_str().map_err(|_| AppError::Unauthorized)?;
             let user_id = value.parse::<Uuid>().map_err(|_| AppError::Unauthorized)?;
+            limit_write(state, &parts.method, user_id)?;
             return Ok(Self(user_id));
         }
 
@@ -43,6 +77,7 @@ impl FromRequestParts<AppState> for CurrentUser {
                     return Err(AppError::Forbidden("a valid CSRF token is required"));
                 }
             }
+            limit_write(state, &parts.method, session.user_id)?;
             parts.extensions.insert(SessionCsrf(session.csrf_token));
             return Ok(Self(session.user_id));
         }

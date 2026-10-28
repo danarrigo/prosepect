@@ -221,6 +221,7 @@ impl Store {
         user_id: Option<Uuid>,
         purpose: &str,
         legal_versions: Option<(&str, &str)>,
+        browser_secret: &str,
     ) -> AppResult<()> {
         let (terms_version, privacy_version, age_confirmed) = match (purpose, legal_versions) {
             ("login", Some((terms_version, privacy_version))) => {
@@ -237,9 +238,9 @@ impl Store {
             r#"
             INSERT INTO oauth_login_attempts (
                 state_hash, nonce, pkce_verifier, expires_at, user_id, purpose,
-                terms_version, privacy_version, age_confirmed
+                terms_version, privacy_version, age_confirmed, browser_binding_hash
             )
-            VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes', $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes', $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(token_hash(&login.state))
@@ -250,22 +251,28 @@ impl Store {
         .bind(terms_version)
         .bind(privacy_version)
         .bind(age_confirmed)
+        .bind(token_hash(browser_secret))
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
         Ok(())
     }
 
-    pub async fn consume_google_login_attempt(&self, state: &str) -> AppResult<OAuthLoginAttempt> {
+    pub async fn consume_google_login_attempt(
+        &self,
+        state: &str,
+        browser_secret: &str,
+    ) -> AppResult<OAuthLoginAttempt> {
         sqlx::query_as::<_, OAuthLoginAttempt>(
             r#"
             DELETE FROM oauth_login_attempts
-            WHERE state_hash = $1 AND expires_at > NOW()
+            WHERE state_hash = $1 AND browser_binding_hash = $2 AND expires_at > NOW()
             RETURNING nonce, pkce_verifier, user_id, purpose,
                       terms_version, privacy_version, age_confirmed
             "#,
         )
         .bind(token_hash(state))
+        .bind(token_hash(browser_secret))
         .fetch_optional(&self.pool)
         .await?
         .ok_or(AppError::Forbidden(

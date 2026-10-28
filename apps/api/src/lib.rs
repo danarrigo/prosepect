@@ -25,6 +25,7 @@ mod note_store;
 pub mod observability;
 pub mod operations;
 pub mod rate_limit;
+pub mod request_limits;
 pub mod routes;
 pub mod saved_views;
 pub mod store;

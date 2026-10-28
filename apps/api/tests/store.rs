@@ -29,9 +29,11 @@ async fn oauth_connection_purposes_do_not_bypass_login_legal_validation(
     };
     for purpose in ["calendar_connect", "tasks_connect"] {
         store
-            .save_google_login_attempt(&login, Some(user), purpose, None)
+            .save_google_login_attempt(&login, Some(user), purpose, None, "test-browser-secret")
             .await?;
-        let attempt = store.consume_google_login_attempt(&login.state).await?;
+        let attempt = store
+            .consume_google_login_attempt(&login.state, "test-browser-secret")
+            .await?;
         assert_eq!(attempt.purpose, purpose);
         assert_eq!(attempt.user_id, Some(user));
         assert!(!attempt.age_confirmed);
@@ -39,7 +41,13 @@ async fn oauth_connection_purposes_do_not_bypass_login_legal_validation(
         assert!(attempt.privacy_version.is_none());
         assert!(matches!(
             store
-                .save_google_login_attempt(&login, Some(user), purpose, Some(("terms", "privacy")))
+                .save_google_login_attempt(
+                    &login,
+                    Some(user),
+                    purpose,
+                    Some(("terms", "privacy")),
+                    "test-browser-secret"
+                )
                 .await,
             Err(AppError::Validation(_))
         ));
@@ -47,14 +55,20 @@ async fn oauth_connection_purposes_do_not_bypass_login_legal_validation(
     for purpose in ["login", "unknown", "tasks", ""] {
         assert!(matches!(
             store
-                .save_google_login_attempt(&login, Some(user), purpose, None)
+                .save_google_login_attempt(&login, Some(user), purpose, None, "test-browser-secret")
                 .await,
             Err(AppError::Validation(_))
         ));
     }
     assert!(matches!(
         store
-            .save_google_login_attempt(&login, Some(user), "unknown", Some(("terms", "privacy")))
+            .save_google_login_attempt(
+                &login,
+                Some(user),
+                "unknown",
+                Some(("terms", "privacy")),
+                "test-browser-secret"
+            )
             .await,
         Err(AppError::Validation(_))
     ));
@@ -75,9 +89,17 @@ async fn oauth_login_records_current_legal_acceptance(pool: PgPool) -> anyhow::R
         pkce_verifier: "0123456789012345678901234567890123456789012".to_owned(),
     };
     store
-        .save_google_login_attempt(&login, None, "login", Some(("2026-09-04", "2026-09-04")))
+        .save_google_login_attempt(
+            &login,
+            None,
+            "login",
+            Some(("2026-09-04", "2026-09-04")),
+            "test-browser-secret",
+        )
         .await?;
-    let attempt = store.consume_google_login_attempt(&login.state).await?;
+    let attempt = store
+        .consume_google_login_attempt(&login.state, "test-browser-secret")
+        .await?;
     assert_eq!(attempt.terms_version.as_deref(), Some("2026-09-04"));
     assert_eq!(attempt.privacy_version.as_deref(), Some("2026-09-04"));
     assert!(attempt.age_confirmed);

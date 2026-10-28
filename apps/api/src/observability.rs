@@ -26,7 +26,12 @@ pub fn initialize_metrics() -> PrometheusHandle {
 
 pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     let started = Instant::now();
-    let method = request.method().to_string();
+    let method = match request.method().as_str() {
+        method @ ("GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "TRACE"
+        | "CONNECT") => method,
+        _ => "OTHER",
+    }
+    .to_owned();
     let path = request
         .extensions()
         .get::<MatchedPath>()

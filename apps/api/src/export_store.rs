@@ -235,11 +235,53 @@ fn optional_display<T: ToString>(value: Option<T>) -> String {
     value.map(|value| value.to_string()).unwrap_or_default()
 }
 
+#[cfg(test)]
+mod security_tests {
+    use super::csv_field;
+
+    #[test]
+    fn csv_guards_formulas_control_prefixes_and_delimiters() {
+        for value in [
+            "=1+1",
+            "+1",
+            "-1",
+            "@SUM(1,2)",
+            "\ttext",
+            "\rtext",
+            "\ntext",
+            "  =1+1",
+            "\u{feff}=1",
+            "\0=1",
+            "＝1",
+            "＋1",
+            "－1",
+            "＠SUM(1,2)",
+        ] {
+            assert!(csv_field(value).starts_with("\"'"));
+        }
+        for value in ["", "text", "42", "  text", "person@example.test", "'=1"] {
+            assert_eq!(csv_field(value), value);
+        }
+        assert_eq!(csv_field("a,\"b\"\r\nc"), "\"a,\"\"b\"\"\r\nc\"");
+    }
+}
+
 fn csv_field(value: &str) -> String {
-    if value.contains([',', '"', '\r', '\n']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
+    // CSV quoting alone does not stop spreadsheet evaluation. Neutralize the
+    // exported cell, never the canonical task, including hidden prefixes.
+    let trimmed =
+        value.trim_start_matches(|c: char| c.is_whitespace() || c.is_control() || c == '\u{feff}');
+    let unsafe_cell = value.starts_with(['\t', '\r', '\n'])
+        || trimmed.starts_with(['=', '+', '-', '@', '＝', '＋', '－', '＠']);
+    let value = if unsafe_cell {
+        format!("'{value}")
     } else {
         value.to_owned()
+    };
+    if unsafe_cell || value.contains([',', '"', '\r', '\n']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value
     }
 }
 
