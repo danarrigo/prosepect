@@ -25,4 +25,14 @@ test('production headers contain framing and script injection while preserving s
     document.body.append(script)
   })
   expect(await page.evaluate('window.__prosepectInlineProbe')).toBeUndefined()
+  const framingBlocked = await page.evaluate(
+    () =>
+      new Promise<boolean>((resolve) => {
+        const frame = document.createElement('iframe')
+        frame.src = '/privacy'
+        frame.onload = () => resolve(frame.contentDocument === null)
+        document.body.append(frame)
+      }),
+  )
+  expect(framingBlocked).toBe(true)
 })

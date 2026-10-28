@@ -15,24 +15,23 @@ async fn insert_note(pool: &PgPool, owner: Uuid, markdown: &str) -> Result<(), s
 }
 
 async fn assert_counters(pool: &PgPool) -> anyhow::Result<()> {
-    let mut bytes = 0_i64;
-    let mut records = 0_i64;
-    for table in [
-        "projects",
-        "tasks",
-        "calendars",
-        "calendar_events",
-        "notes",
-        "files",
-        "labels",
-        "saved_task_views",
-    ] {
-        // Relation names are a fixed test fixture, never request input.
-        let (row_bytes, row_count): (i64, i64) = sqlx::query_as(&format!("SELECT COALESCE(SUM(octet_length(to_jsonb(row_data)::text)), 0)::BIGINT, COUNT(*) FROM {table} row_data"))
-            .fetch_one(pool).await?;
-        bytes += row_bytes;
-        records += row_count;
-    }
+    let (bytes, records): (i64, i64) = sqlx::query_as(
+        r#"
+        SELECT COALESCE(SUM(octet_length(payload::text)), 0)::BIGINT, COUNT(*)
+        FROM (
+            SELECT to_jsonb(row_data) AS payload FROM projects row_data
+            UNION ALL SELECT to_jsonb(row_data) FROM tasks row_data
+            UNION ALL SELECT to_jsonb(row_data) FROM calendars row_data
+            UNION ALL SELECT to_jsonb(row_data) FROM calendar_events row_data
+            UNION ALL SELECT to_jsonb(row_data) FROM notes row_data
+            UNION ALL SELECT to_jsonb(row_data) FROM files row_data
+            UNION ALL SELECT to_jsonb(row_data) FROM labels row_data
+            UNION ALL SELECT to_jsonb(row_data) FROM saved_task_views row_data
+        ) content
+    "#,
+    )
+    .fetch_one(pool)
+    .await?;
     let total: (i64, i64) = sqlx::query_as("SELECT bytes, records FROM workspace_content_total")
         .fetch_one(pool)
         .await?;
@@ -150,7 +149,7 @@ async fn migration_backfills_existing_content_without_removing_it(
 ) -> anyhow::Result<()> {
     let migrator = sqlx::migrate!("../../migrations");
     for migration in migrator.iter().filter(|migration| migration.version < 26) {
-        sqlx::raw_sql(&migration.sql).execute(&pool).await?;
+        sqlx::raw_sql(migration.sql.clone()).execute(&pool).await?;
     }
     Store::from_pool(pool.clone())
         .ensure_development_user(DEVELOPMENT_USER_ID)
