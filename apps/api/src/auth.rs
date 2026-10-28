@@ -64,7 +64,7 @@ impl FromRequestParts<AppState> for CurrentUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         if let Some(AuthenticatedUser(user, method)) = parts.extensions.get::<AuthenticatedUser>()
-            && method == &parts.method
+            && method == parts.method
         {
             return Ok(Self(*user));
         }

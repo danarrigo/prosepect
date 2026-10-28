@@ -24,6 +24,7 @@ pub struct RequestLimits {
     writes: LoginRateLimiter,
     reads: LoginRateLimiter,
     requests: Arc<Semaphore>,
+    authentication: Arc<Semaphore>,
     large: Arc<Semaphore>,
     accounts: Arc<Mutex<HashMap<Uuid, Arc<AccountSlots>>>>,
 }
@@ -47,6 +48,7 @@ impl Default for RequestLimits {
             writes: LoginRateLimiter::with_limit(240),
             reads: LoginRateLimiter::with_limit(600),
             requests: Arc::new(Semaphore::new(32)),
+            authentication: Arc::new(Semaphore::new(4)),
             large: Arc::new(Semaphore::new(2)),
             accounts: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -129,17 +131,21 @@ pub async fn limit_requests(
     request: Request,
     next: Next,
 ) -> Response {
-    let admission = match acquire(&state.request_limits.requests).await {
-        Ok(permit) => permit,
-        Err(error) => return error.into_response(),
-    };
     let path = request.uri().path().trim_start_matches("/api/v1");
     if matches!(
         path,
         "/auth/google/start" | "/auth/google/callback" | "/development/session"
     ) {
+        let _permit = match acquire(&state.request_limits.authentication).await {
+            Ok(permit) => permit,
+            Err(error) => return error.into_response(),
+        };
         return next.run(request).await;
     }
+    let admission = match acquire(&state.request_limits.requests).await {
+        Ok(permit) => permit,
+        Err(error) => return error.into_response(),
+    };
     let logout = request.method() == Method::POST && path == "/session/logout";
     let upload = request.method() == Method::POST && path == "/files";
     let large = upload
