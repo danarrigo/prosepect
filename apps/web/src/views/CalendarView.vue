@@ -1530,7 +1530,7 @@ function monthDays(cursor: Date) {
             <option disabled value="">Choose a calendar</option>
             <option v-for="calendar in store.calendars" :key="calendar.id" :value="calendar.id">
               {{ calendar.name }} ·
-              {{ calendar.source === 'google' ? 'Google Calendar' : 'Prosepect only' }}
+              {{ calendar.source === 'google' ? 'Google Calendar' : 'rakkio only' }}
             </option>
           </select>
         </label>

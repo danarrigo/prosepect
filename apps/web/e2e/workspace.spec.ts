@@ -64,12 +64,12 @@ test('publishes a descriptive signed-out homepage and legal policies', async ({ 
   await expect(page.getByRole('alert')).toContainText('registrations are temporarily paused')
 
   await page.goto('/privacy')
-  await expect(page).toHaveTitle('Privacy Policy | prosepect')
+  await expect(page).toHaveTitle('Privacy Policy | rakkio')
   await expect(page.getByRole('heading', { name: 'Privacy Policy', level: 1 })).toBeVisible()
   await expect(page.getByText('Google API Services User Data Policy')).toBeVisible()
 
   await page.goto('/terms')
-  await expect(page).toHaveTitle('Terms of Service | prosepect')
+  await expect(page).toHaveTitle('Terms of Service | rakkio')
   await expect(page.getByRole('heading', { name: 'Terms of Service', level: 1 })).toBeVisible()
   await expect(page.getByText('laws of the Republic of Indonesia')).toBeVisible()
 })
@@ -78,7 +78,7 @@ test('does not render demo identity or unfinished feature placeholders', async (
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Make today count.' })).toBeVisible()
   await expect(page.locator('body')).not.toContainText(
-    /Soon|Calendar foundation comes next|Prosepect Developer/i,
+    /Soon|Calendar foundation comes next|rakkio Developer/i,
   )
 })
 

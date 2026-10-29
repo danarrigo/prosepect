@@ -31,7 +31,7 @@ const disabled = computed(() => loading.value || busy.value || disconnecting.val
 function disconnectGoogle() {
   if (
     !window.confirm(
-      'Disconnect Google? This revokes both Calendar and Tasks access. Existing Google Tasks copies and prosepect tasks are kept.',
+      'Disconnect Google? This revokes both Calendar and Tasks access. Existing Google Tasks copies and rakkio tasks are kept.',
     )
   )
     return
@@ -192,8 +192,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <p class="mt-4 max-w-3xl text-xs leading-5 text-slate-500 dark:text-slate-400">
-      Connecting lets Prosepect view your Google calendar list and access roles and read, create,
-      update, or delete events on calendars allowed by your Google permissions. Prosepect stores
+      Connecting lets rakkio view your Google calendar list and access roles and read, create,
+      update, or delete events on calendars allowed by your Google permissions. rakkio stores
       synchronized event fields and encrypted OAuth credentials only to provide calendar and
       scheduled-task synchronization. It does not use Google data for advertising, sale, or AI
       training. You can disconnect at any time. See the
@@ -263,7 +263,7 @@ onBeforeUnmount(() => {
           :disabled="disabled"
           @click="resolve(conflict, 'prosepect')"
         >
-          Use Prosepect
+          Use rakkio
         </button>
         <button
           v-if="conflict.allowed_resolutions.includes('latest')"

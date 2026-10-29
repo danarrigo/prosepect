@@ -333,7 +333,7 @@ onBeforeUnmount(() => {
           >
           <br />
           <a
-            href="https://github.com/danarrigo/prosepect/actions"
+            href="https://github.com/danarrigo/rakkio/actions"
             target="_blank"
             rel="noopener noreferrer"
             >Open workflow runs ↗</a

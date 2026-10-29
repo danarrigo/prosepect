@@ -67,7 +67,7 @@ impl Store {
         .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
-        let mut markdown = String::from("# Prosepect notes\n\n");
+        let mut markdown = String::from("# rakkio notes\n\n");
         for note in notes {
             markdown.push_str(&format!(
                 "## {}\n\n{}\n\n---\n\n",
@@ -90,7 +90,7 @@ impl Store {
         .fetch_all(&self.pool)
         .await?;
         let mut ics = String::from(
-            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Prosepect//EN\r\nCALSCALE:GREGORIAN\r\n",
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//rakkio//EN\r\nCALSCALE:GREGORIAN\r\n",
         );
         for event in events {
             ics.push_str("BEGIN:VEVENT\r\n");

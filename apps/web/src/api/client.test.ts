@@ -3,8 +3,8 @@ import { apiUrl } from './client'
 
 describe('apiUrl', () => {
   it('targets the configured production API origin', () => {
-    expect(apiUrl('/api/v1/auth/google/start', 'https://api.prosepect.com/')).toBe(
-      'https://api.prosepect.com/api/v1/auth/google/start',
+    expect(apiUrl('/api/v1/auth/google/start', 'https://api.rakkio.com/')).toBe(
+      'https://api.rakkio.com/api/v1/auth/google/start',
     )
   })
 

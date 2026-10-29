@@ -68,7 +68,7 @@ jobs:
       - run: npm run lint:web
       - run: npm run test:web
       - run: npm run build:web
-      - run: npm run generate:api --workspace @prosepect/web
+      - run: npm run generate:api --workspace @rakkio/web
       - run: git diff --exit-code -- apps/web/src/api/schema.d.ts
 
   containers:

@@ -97,10 +97,10 @@ describe('Google Tasks settings', () => {
       list_create_attempted: true,
       version: 1,
     })
-    await button(wrapper, 'Create prosepect list').trigger('click')
+    await button(wrapper, 'Create rakkio list').trigger('click')
     await flushPromises()
     expect(api.createGoogleTaskList).toHaveBeenCalledTimes(1)
-    expect(button(wrapper, 'Create prosepect list').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, 'Create rakkio list').attributes('disabled')).toBeDefined()
     expect(wrapper.get('[role="alert"]').text()).toContain('may have created')
     expect(wrapper.text()).toContain('choose the existing list')
   })
@@ -147,7 +147,7 @@ describe('Google Tasks settings', () => {
     const wrapper = panel()
     await flushPromises()
     expect(wrapper.text()).toContain('Google rename')
-    await button(wrapper, 'Keep prosepect edits').trigger('click')
+    await button(wrapper, 'Keep rakkio edits').trigger('click')
     await flushPromises()
     expect(api.resolveGoogleTaskConflict).toHaveBeenCalledWith('link', {
       conflict_id: 'snapshot',

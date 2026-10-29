@@ -78,9 +78,9 @@ pub struct AppState {
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "Prosepect API",
+        title = "rakkio API",
         version = "0.1.0",
-        description = "Personal productivity API for Prosepect"
+        description = "Personal productivity API for rakkio"
     ),
     paths(
         saved_views::list,
@@ -293,10 +293,27 @@ impl Modify for DevelopmentSecurity {
 }
 
 pub fn build(config: &Config, store: Store) -> anyhow::Result<Router> {
-    let origin: HeaderValue = config.cors_allowed_origin.parse()?;
+    let origins = config
+        .cors_allowed_origin
+        .split(',')
+        .map(|origin| {
+            let url = reqwest::Url::parse(origin.trim())?;
+            anyhow::ensure!(
+                matches!(url.scheme(), "http" | "https")
+                    && url.host_str().is_some_and(|host| !host.contains('*'))
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.path() == "/"
+                    && url.query().is_none()
+                    && url.fragment().is_none(),
+                "CORS_ALLOWED_ORIGIN must contain exact HTTP(S) origins, not paths or wildcards"
+            );
+            Ok::<HeaderValue, anyhow::Error>(url.origin().ascii_serialization().parse()?)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let request_id_header = HeaderName::from_static("x-request-id");
     let cors = CorsLayer::new()
-        .allow_origin(origin)
+        .allow_origin(origins)
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([
             header::CONTENT_TYPE,

@@ -57,13 +57,13 @@ async function noOverflow(page: Page) {
 }
 
 async function checkLogo(link: Locator, dark: boolean) {
-  await expect(link).toHaveAccessibleName('prosepect')
+  await expect(link).toHaveAccessibleName('rakkio')
   await expect(link).toHaveAttribute('href', '/')
   await expect(link).toBeInViewport()
-  const logo = link.getByRole('img', { name: 'prosepect', exact: true })
+  const logo = link.getByRole('img', { name: 'rakkio', exact: true })
   await expect(logo).toHaveCount(1)
   await expect(logo).toBeVisible()
-  await expect(logo).toHaveAttribute('viewBox', '0 0 229 80')
+  await expect(logo).toHaveAttribute('viewBox', '0 0 97 40')
   await expect(logo.locator('title, text, [id]')).toHaveCount(0)
   // Use the rendered theme color (Tailwind uses OKLCH) rather than hard-coded RGB.
   expect(await logo.evaluate((svg) => getComputedStyle(svg).color)).toBe(
@@ -93,13 +93,13 @@ for (const colorScheme of ['light', 'dark'] as const) {
           await expect(page.locator('h1')).toHaveText(
             path === '/privacy' ? 'Privacy Policy' : 'Terms of Service',
           )
-        const home = page.getByRole('link', { name: 'prosepect', exact: true })
+        const home = page.getByRole('link', { name: 'rakkio', exact: true })
         await expect(home).toHaveCount(1)
         await checkLogo(home, colorScheme === 'dark')
         await expect(page).toHaveTitle(
           path === '/'
-            ? 'prosepect'
-            : `${path === '/privacy' ? 'Privacy Policy' : 'Terms of Service'} | prosepect`,
+            ? 'rakkio'
+            : `${path === '/privacy' ? 'Privacy Policy' : 'Terms of Service'} | rakkio`,
         )
         await noOverflow(page)
         await screenshot(page, testInfo, 'brand')
@@ -124,16 +124,16 @@ for (const colorScheme of ['light', 'dark'] as const) {
         await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible()
         const sidebar = page.getByRole('complementary', { name: 'Primary navigation' })
         const header = page.locator('header')
-        const home = page.getByRole('link', { name: 'prosepect', exact: true })
+        const home = page.getByRole('link', { name: 'rakkio', exact: true })
         await expect(home).toHaveCount(1)
         await checkLogo(home, colorScheme === 'dark')
         if (sidebarVisible && !testInfo.project.use.isMobile) {
           await expect(sidebar).toBeVisible()
-          await expect(sidebar.getByRole('link', { name: 'prosepect', exact: true })).toBeVisible()
-          await expect(header.getByRole('link', { name: 'prosepect', exact: true })).toHaveCount(0)
+          await expect(sidebar.getByRole('link', { name: 'rakkio', exact: true })).toBeVisible()
+          await expect(header.getByRole('link', { name: 'rakkio', exact: true })).toHaveCount(0)
         } else {
           await expect(sidebar).toHaveCount(0)
-          await expect(header.getByRole('link', { name: 'prosepect', exact: true })).toBeVisible()
+          await expect(header.getByRole('link', { name: 'rakkio', exact: true })).toBeVisible()
         }
         await noOverflow(page)
         await screenshot(page, testInfo, 'brand')
@@ -157,7 +157,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
           await expect(sidebar).toBeVisible()
           await expect(page.getByRole('button', { name: 'Close navigation' })).toBeFocused()
           await checkLogo(
-            sidebar.getByRole('link', { name: 'prosepect', exact: true }),
+            sidebar.getByRole('link', { name: 'rakkio', exact: true }),
             colorScheme === 'dark',
           )
           await screenshot(page, testInfo, 'brand-navigation-open')
@@ -169,7 +169,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
           await expect(page).toHaveURL('/notes')
           await expect(toggle).toBeFocused()
           await toggle.click()
-          await sidebar.getByRole('link', { name: 'prosepect', exact: true }).click()
+          await sidebar.getByRole('link', { name: 'rakkio', exact: true }).click()
           await expect(page).toHaveURL('/')
           await expect(toggle).toBeFocused()
           await expect(sidebar).toHaveCount(0)
@@ -232,7 +232,7 @@ for (const sidebarVisible of [true, false]) {
         await expect(search).toHaveCSS('width', '256px')
       }
       await noOverflow(page)
-      const brand = page.getByRole('link', { name: 'prosepect', exact: true })
+      const brand = page.getByRole('link', { name: 'rakkio', exact: true })
       await expect(brand).toHaveCount(1)
       await expect(brand).toBeInViewport()
       if (width === 320 || width === 640)

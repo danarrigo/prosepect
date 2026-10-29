@@ -1,12 +1,12 @@
-# Prosepect
+# rakkio
 
-Prosepect is an open-source, self-hostable personal productivity workspace that combines daily planning, tasks, outcome-oriented projects, notes, calendars, files, and priorities in one calm command center.
+rakkio is an open-source, self-hostable personal productivity workspace that combines daily planning, tasks, outcome-oriented projects, notes, calendars, files, and priorities in one calm command center.
 
 The application is designed both as a useful personal system and as a production-oriented reference project. PostgreSQL owns product and operational state, Google Calendar synchronization is conflict-aware and retryable, and files use local or S3-compatible object storage.
 
 ## Features
 
-- Google OpenID Connect login with encrypted credentials, secure cookie sessions, CSRF protection, invite-only hosted access, and authentication rate limits
+- Google OpenID Connect login with encrypted credentials, secure cookie sessions, CSRF protection, capped public-beta hosted access, and authentication rate limits
 - Today view with events, due and scheduled tasks, up to three focus tasks, automatic or manual daily review, and carry-forward decisions
 - Standalone and project tasks with subtasks, labels, reminders, recurrence, sparse manual ordering, quick capture, and optimistic concurrency
 - Outcome-oriented projects with progress, target dates, lifecycle states, archival, notes, tasks, and files
@@ -19,7 +19,9 @@ The application is designed both as a useful personal system and as a production
 - Portable JSON, CSV, Markdown, and ICS exports plus complete account and integration deletion
 - Responsive keyboard-accessible UI with system-aware and manual light or dark themes
 
-See [PRD.md](PRD.md) for the product contract.
+Hosted app: <https://rakkio.com>. Source: <https://github.com/danarrigo/rakkio>.
+
+See [PRD.md](PRD.md) for the product contract. The public name is rakkio; legacy Rust crate, cookie, database, provider-provenance and deployment-resource identifiers are deliberately retained for compatibility. Existing data and Google mappings are not renamed or recreated.
 
 ## Architecture
 

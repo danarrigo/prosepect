@@ -48,7 +48,7 @@ function signIn() {
           </RouterLink>
           <a
             class="hidden hover:text-slate-950 dark:hover:text-white sm:inline"
-            href="https://github.com/danarrigo/prosepect"
+            href="https://github.com/danarrigo/rakkio"
             rel="noreferrer"
             target="_blank"
           >
@@ -70,9 +70,9 @@ function signIn() {
             Plan what matters without scattering your attention.
           </h1>
           <p class="mt-6 max-w-xl text-base leading-8 text-slate-500 dark:text-slate-400">
-            prosepect brings tasks, projects, notes, priorities, and calendars into one calm
-            workspace. Schedule work directly on your day and keep optional Google Calendar
-            synchronization under your control.
+            rakkio brings tasks, projects, notes, priorities, and calendars into one calm workspace.
+            Schedule work directly on your day and keep optional Google Calendar synchronization
+            under your control.
           </p>
         </div>
 
@@ -122,8 +122,8 @@ function signIn() {
           </button>
           <p class="mt-5 text-xs leading-5 text-slate-400">
             Sign-in shares your Google account identifier, email, name, and profile image with
-            Prosepect. Google Calendar access is optional and requested separately when you connect
-            it in Settings.
+            rakkio. Google Calendar access is optional and requested separately when you connect it
+            in Settings.
           </p>
         </div>
       </section>

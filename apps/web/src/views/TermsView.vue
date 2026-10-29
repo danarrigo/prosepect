@@ -6,14 +6,14 @@ import PublicPageShell from '../components/PublicPageShell.vue'
 <template>
   <PublicPageShell
     title="Terms of Service"
-    summary="The rules that apply when you access or use the hosted Prosepect service."
+    summary="The rules that apply when you access or use the hosted rakkio service."
     last-updated="October 4, 2026"
   >
     <section>
       <h2>1. Agreement</h2>
       <p>
-        These Terms govern your use of the hosted Prosepect service operated independently by Daniel
-        in Indonesia. By creating an account or using the service, you agree to these Terms and the
+        These Terms govern your use of the hosted rakkio service operated independently by Daniel in
+        Indonesia. By creating an account or using the service, you agree to these Terms and the
         <RouterLink to="/privacy">Privacy Policy</RouterLink>. If you do not agree, do not use the
         service.
       </p>
@@ -36,14 +36,14 @@ import PublicPageShell from '../components/PublicPageShell.vue'
     <section>
       <h2>3. The service</h2>
       <p>
-        Prosepect provides personal task, project, note, calendar, attachment, import, export, and
+        rakkio provides personal task, project, note, calendar, attachment, import, export, and
         daily-planning tools. Features may change as the service is improved. Reasonable notice will
         be provided when a material change would significantly reduce core functionality or affect
         how personal data is processed.
       </p>
       <p>
         The hosted service is currently provided without charge. This does not guarantee that every
-        feature or capacity level will remain free indefinitely. Prosepect will not impose a charge
+        feature or capacity level will remain free indefinitely. rakkio will not impose a charge
         without clearly presenting the price and obtaining any consent required by law.
       </p>
     </section>
@@ -52,37 +52,37 @@ import PublicPageShell from '../components/PublicPageShell.vue'
       <h2>4. Google services</h2>
       <p>
         Google sign-in is required for the hosted service. Google Calendar connection is optional
-        and uses incremental authorization. If enabled, you instruct Prosepect to read and
-        synchronize calendar information and to create, update, or delete Google events for the
-        features you use.
+        and uses incremental authorization. If enabled, you instruct rakkio to read and synchronize
+        calendar information and to create, update, or delete Google events for the features you
+        use.
       </p>
       <p>
         Google Tasks is separately optional. After additional permission and explicit enablement,
-        you instruct Prosepect to synchronize titles, calendar dates, and completion states with
-        your selected list. Precise local deadlines and Calendar work blocks remain separate.
-        Deleting a task in either app preserves its Google Tasks counterpart. You can disable Tasks
+        you instruct rakkio to synchronize titles, calendar dates, and completion states with your
+        selected list. Precise local deadlines and Calendar work blocks remain separate. Deleting a
+        task in either app preserves its Google Tasks counterpart. You can disable Tasks
         synchronization without revoking Calendar access.
       </p>
       <p>
         Your use of Google services remains subject to Google's terms and policies. You can
-        disconnect Google in Prosepect Settings or revoke authorization from your Google Account;
-        this revokes shared Calendar and Tasks access. Changes made in Prosepect may change or
-        delete synchronized events in Google, and changes made in Google may change Prosepect
-        records according to your synchronization settings.
+        disconnect Google in rakkio Settings or revoke authorization from your Google Account; this
+        revokes shared Calendar and Tasks access. Changes made in rakkio may change or delete
+        synchronized events in Google, and changes made in Google may change rakkio records
+        according to your synchronization settings.
       </p>
     </section>
 
     <section>
       <h2>5. Your content</h2>
       <p>
-        You retain ownership of content you enter or upload. You grant Prosepect a limited right to
+        You retain ownership of content you enter or upload. You grant rakkio a limited right to
         host, process, reproduce, and transmit that content only as needed to operate, secure, and
         improve the user-facing service you request and to comply with law.
       </p>
       <p>
         You are responsible for having the right to store and synchronize your content, including
-        personal data about attendees or other people. Do not use Prosepect to store unlawful
-        content or highly sensitive information when loss or disclosure could cause severe harm.
+        personal data about attendees or other people. Do not use rakkio to store unlawful content
+        or highly sensitive information when loss or disclosure could cause severe harm.
       </p>
     </section>
 
@@ -110,14 +110,14 @@ import PublicPageShell from '../components/PublicPageShell.vue'
     <section>
       <h2>7. Service limits and availability</h2>
       <p>
-        Prosepect may enforce file-size, storage, request, synchronization, and account-capacity
-        limits to protect the service and control operating costs. Requests may be delayed or
-        rejected when a limit is reached.
+        rakkio may enforce file-size, storage, request, synchronization, and account-capacity limits
+        to protect the service and control operating costs. Requests may be delayed or rejected when
+        a limit is reached.
       </p>
       <p>
         The service depends on external providers, including Google, Vercel, Render, Neon, and
         Cloudflare. Interruptions, delayed synchronization, provider limits, maintenance, or feature
-        changes may affect availability. Prosepect will make reasonable efforts to preserve data and
+        changes may affect availability. rakkio will make reasonable efforts to preserve data and
         restore service but does not promise uninterrupted or error-free operation.
       </p>
     </section>
@@ -125,7 +125,7 @@ import PublicPageShell from '../components/PublicPageShell.vue'
     <section>
       <h2>8. Exports and backups</h2>
       <p>
-        Prosepect provides data-export tools, and you should periodically export information that is
+        rakkio provides data-export tools, and you should periodically export information that is
         important to you. Service backups are intended for operational disaster recovery and are not
         a substitute for your own copies. Backup restoration may restore the service as a whole and
         may not support recovery of one item or one account.
@@ -135,9 +135,9 @@ import PublicPageShell from '../components/PublicPageShell.vue'
     <section>
       <h2>9. Suspension and termination</h2>
       <p>
-        You may stop using Prosepect, disconnect Google, export data, or delete your account through
-        Settings. Prosepect may restrict or suspend access when reasonably necessary to address
-        abuse, security risks, legal requirements, serious or repeated violations of these Terms, or
+        You may stop using rakkio, disconnect Google, export data, or delete your account through
+        Settings. rakkio may restrict or suspend access when reasonably necessary to address abuse,
+        security risks, legal requirements, serious or repeated violations of these Terms, or
         service-capacity limits.
       </p>
       <p>
@@ -150,9 +150,9 @@ import PublicPageShell from '../components/PublicPageShell.vue'
     <section>
       <h2>10. Open-source software</h2>
       <p>
-        Prosepect's source code is available under the GNU Affero General Public License version 3.
-        The software license governs use, copying, and modification of the source code. These Terms
-        separately govern access to the hosted service at prosepect.com.
+        rakkio's source code is available under the GNU Affero General Public License version 3. The
+        software license governs use, copying, and modification of the source code. These Terms
+        separately govern access to the hosted service at rakkio.com.
       </p>
     </section>
 

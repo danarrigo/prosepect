@@ -50,7 +50,7 @@ it('uses server capabilities, never null canonical identity, for special vs ordi
     .find((row) => row.element.textContent?.startsWith('Ordinary conflict'))!
   expect(ordinaryRow.findAll('button').map((button) => button.text())).toEqual([
     'Use Google',
-    'Use Prosepect',
+    'Use rakkio',
     'Use latest',
   ])
   wrapper.unmount()
