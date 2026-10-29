@@ -14,6 +14,8 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use utoipa::OpenApi;
 
+#[path = "http/rebrand.rs"]
+mod rebrand;
 #[path = "http/security_regressions.rs"]
 mod security_regressions;
 #[path = "http/upload_stream_regression.rs"]
@@ -718,7 +720,7 @@ async fn settings_exports_and_account_deletion_work_end_to_end(pool: PgPool) -> 
     assert_eq!(export.status(), StatusCode::OK);
     assert_eq!(
         export.headers()[header::CONTENT_DISPOSITION],
-        "attachment; filename=\"prosepect-export.json\""
+        "attachment; filename=\"rakkio-export.json\""
     );
     let export_body = to_bytes(export.into_body(), 1024 * 1024).await?;
     let export_json: serde_json::Value = serde_json::from_slice(&export_body)?;

@@ -1,5 +1,5 @@
 {
-  "name": "prosepect",
+  "name": "rakkio",
   "private": true,
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
@@ -10,14 +10,14 @@
     "apps/web"
   ],
   "scripts": {
-    "dev:web": "npm run dev --workspace @prosepect/web",
-    "build:web": "npm run build --workspace @prosepect/web",
-    "lint:web": "npm run lint --workspace @prosepect/web",
-    "test:web": "npm run test --workspace @prosepect/web",
-    "test:e2e": "npm run test:e2e --workspace @prosepect/web",
-    "typecheck:web": "npm run typecheck --workspace @prosepect/web",
-    "format:web": "npm run format --workspace @prosepect/web",
-    "format:check:web": "npm run format:check --workspace @prosepect/web",
-    "generate:api": "cargo run --quiet -p prosepect-api --bin export-openapi > openapi/openapi.json && npm run generate:api --workspace @prosepect/web"
+    "dev:web": "npm run dev --workspace @rakkio/web",
+    "build:web": "npm run build --workspace @rakkio/web",
+    "lint:web": "npm run lint --workspace @rakkio/web",
+    "test:web": "npm run test --workspace @rakkio/web",
+    "test:e2e": "npm run test:e2e --workspace @rakkio/web",
+    "typecheck:web": "npm run typecheck --workspace @rakkio/web",
+    "format:web": "npm run format --workspace @rakkio/web",
+    "format:check:web": "npm run format:check --workspace @rakkio/web",
+    "generate:api": "cargo run --quiet -p prosepect-api --bin export-openapi > openapi/openapi.json && npm run generate:api --workspace @rakkio/web"
   }
 }

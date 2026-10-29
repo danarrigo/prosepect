@@ -1,4 +1,4 @@
-# Prosepect operations
+# rakkio operations
 
 For one owner on one private Linux VPS, follow [Personal self-hosting](PERSONAL-SELF-HOSTING.md): its separate production Compose package includes one HTTPS hostname, a private persistent local files volume, owner invite bootstrap and matched backup/isolated restore procedures. The root `compose.yaml` remains development-only.
 
@@ -40,8 +40,8 @@ For public registration, keep `INVITE_ONLY=true` until the Privacy Policy and Te
 
 The supported hosted-beta topology is:
 
-- Vercel serves the Vue application at `https://prosepect.com`.
-- Render Free runs the Axum API at `https://api.prosepect.com`.
+- Vercel serves the Vue application at `https://rakkio.com`.
+- Render Free runs the Axum API at `https://api.rakkio.com`.
 - Local mutations wake an in-process synchronization dispatcher and Google webhooks enqueue inbound changes.
 - GitHub Actions is configured to call an authenticated recovery and watch-renewal endpoint every 15 minutes, but execution is best-effort and can be delayed by hours.
 - Neon PostgreSQL stores all canonical and operational state.
@@ -66,10 +66,10 @@ The wizard opens each required dashboard, captures secrets with hidden input, st
 Render must receive these canonical public values:
 
 ```text
-APP_URL                         https://prosepect.com
-CORS_ALLOWED_ORIGIN             https://prosepect.com
-GOOGLE_REDIRECT_URI             https://api.prosepect.com/api/v1/auth/google/callback
-GOOGLE_CALENDAR_WEBHOOK_URL     https://api.prosepect.com/webhooks/google/calendar
+APP_URL                         https://rakkio.com
+CORS_ALLOWED_ORIGIN             https://rakkio.com,https://prosepect.com
+GOOGLE_REDIRECT_URI             https://api.rakkio.com/api/v1/auth/google/callback
+GOOGLE_CALENDAR_WEBHOOK_URL     https://api.rakkio.com/webhooks/google/calendar
 BIND_ADDRESS                    0.0.0.0:10000
 MAX_USER_ACCOUNTS               100
 MAX_USER_FILE_STORAGE_BYTES     104857600
@@ -78,7 +78,7 @@ MAX_TOTAL_FILE_STORAGE_BYTES    5368709120
 
 Generate `WORKER_TRIGGER_TOKEN` with `openssl rand -hex 32`, store the same value in Render and the GitHub secret `PROSEPECT_WORKER_TRIGGER_TOKEN`, and never put it in source control.
 
-Attach `api.prosepect.com` as a Render custom domain and add the DNS record Render displays. Managed TLS provisioning can take time.
+Attach `api.rakkio.com` as a Render custom domain and add the DNS record Render displays. Managed TLS provisioning can take time.
 
 ### Scheduled worker
 
@@ -93,22 +93,22 @@ The repository is public, so standard GitHub-hosted runners are free. Actual rec
 Use these canonical values:
 
 ```text
-Frontend                  https://prosepect.com
-API                       https://api.prosepect.com
-Google redirect           https://api.prosepect.com/api/v1/auth/google/callback
-Google Calendar webhook   https://api.prosepect.com/webhooks/google/calendar
-CORS allowed origin       https://prosepect.com
+Frontend                  https://rakkio.com
+API                       https://api.rakkio.com
+Google redirect           https://api.rakkio.com/api/v1/auth/google/callback
+Google Calendar webhook   https://api.rakkio.com/webhooks/google/calendar
+CORS allowed origins      https://rakkio.com,https://prosepect.com
 ```
 
-The Google OAuth client must use the redirect URI exactly. The Vercel production environment must set `VITE_API_URL=https://api.prosepect.com`.
+The Google OAuth client must use the redirect URI exactly. The Vercel production environment must set `VITE_API_URL=https://api.rakkio.com`.
 
 A public Google OAuth application must configure:
 
 ```text
-Application homepage     https://prosepect.com
-Privacy Policy           https://prosepect.com/privacy
-Terms of Service         https://prosepect.com/terms
-Authorized domain        prosepect.com
+Application homepage     https://rakkio.com
+Privacy Policy           https://rakkio.com/privacy
+Terms of Service         https://rakkio.com/terms
+Authorized domain        rakkio.com
 ```
 
 Verify domain ownership using a Google Cloud project owner or editor in Google Search Console. Submit brand and sensitive-scope verification with an English-language video showing the full OAuth consent screen, the exact requested Calendar scopes, and the user-facing synchronization workflow. Keep production in Testing and `INVITE_ONLY=true` until Google approves it.
@@ -206,7 +206,7 @@ Known static links (authentication and provider permissions still apply):
 - Hosted database and recovery settings: <https://console.neon.tech/>
 - Cloudflare/R2 storage and billing: <https://dash.cloudflare.com/>
 - Google integration configuration and quotas: <https://console.cloud.google.com/>
-- Worker workflow runs: <https://github.com/danarrigo/prosepect/actions>
+- Worker workflow runs: <https://github.com/danarrigo/rakkio/actions>
 - Independent public uptime and outage history: <https://stats.uptimerobot.com/xz23PeH80u>
 
 No historical metrics pipeline, billing integration, backup verification or custom control plane is included. Aggregate scans may need revisiting if retained job volume grows substantially; this first slice intentionally adds no schema/index migration.

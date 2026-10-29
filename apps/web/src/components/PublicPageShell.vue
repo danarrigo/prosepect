@@ -47,7 +47,7 @@ defineProps<{
       <div
         class="mx-auto flex max-w-5xl flex-col gap-3 px-5 py-8 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-8"
       >
-        <span>Prosepect is independently operated by Daniel in Indonesia.</span>
+        <span>rakkio is independently operated by Daniel in Indonesia.</span>
         <a
           class="hover:text-slate-950 dark:hover:text-white"
           href="mailto:daniel.manurung.dev@gmail.com"

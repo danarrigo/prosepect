@@ -1,20 +1,20 @@
-# Prosepect Product Requirements Document
+# rakkio Product Requirements Document
 
 ## 1. Product summary
 
-Prosepect is an open-source, self-hostable personal productivity web application that combines calendar planning, tasks, projects, notes, files, and daily prioritization in one workspace.
+rakkio is an open-source, self-hostable personal productivity web application that combines calendar planning, tasks, projects, notes, files, and daily prioritization in one workspace.
 
 The product serves two goals:
 
 1. Be genuinely useful as the creator's daily productivity system.
 2. Demonstrate production-quality product, backend, frontend, integration, data-modeling, testing, and deployment skills.
 
-The official product domain is `prosepect.com`. The spelling "Prosepect" is intentional.
+The official product domain is `rakkio.com`. The public brand is lowercase `rakkio`.
 
 ## 2. Product principles
 
 1. **One actionable view:** events, scheduled work, deadlines, and daily priorities belong in one command center.
-2. **User ownership:** users can self-host Prosepect and export their data in portable formats.
+2. **User ownership:** users can self-host rakkio and export their data in portable formats.
 3. **Reliable synchronization:** external calendar synchronization must not silently destroy changes.
 4. **Focused defaults:** built-in workflows should be useful without extensive configuration.
 5. **Portable architecture:** core product behavior must not depend on the official hosted infrastructure.
@@ -53,7 +53,7 @@ The creator first, followed by invited individual beta users.
 4. The user captures work through forms or deterministic command input.
 5. The user organizes tasks and notes into outcome-oriented projects.
 6. The user schedules a task into a calendar time block.
-7. Prosepect synchronizes linked Google calendar data and surfaces true conflicts.
+7. rakkio synchronizes linked Google calendar data and surfaces true conflicts.
 8. The user reviews unfinished focus tasks during the next daily review.
 
 ## 6. Functional requirements
@@ -129,9 +129,9 @@ A rich-text document editor and wiki-style backlinks are outside v1.
 
 ### 6.6 Calendars and events
 
-Prosepect must support:
+rakkio must support:
 
-- Prosepect-native calendars
+- rakkio-native calendars
 - Selected connected Google calendars
 - Two-way synchronization
 - Day, week, month, and agenda views
@@ -145,19 +145,19 @@ Task recurrence and calendar-event recurrence are modeled separately. Completing
 
 ### 6.7 Synchronization conflicts
 
-Prosepect must detect when an event changed in both Prosepect and Google after the last synchronized version.
+rakkio must detect when an event changed in both rakkio and Google after the last synchronized version.
 
 The default global conflict policy is `ask`. The user may change it to:
 
 - Keep the most recently edited version
 - Prefer Google
-- Prefer Prosepect
+- Prefer rakkio
 
 Conflict policy is global in v1, not per-calendar. Every synchronization decision and failure must be recorded in activity history.
 
 ### 6.8 Quick capture
 
-Prosepect must provide deterministic command capture for inputs such as:
+rakkio must provide deterministic command capture for inputs such as:
 
 ```text
 Submit report tomorrow #work
@@ -233,7 +233,7 @@ The following are not part of v1:
 
 ### 7.1 Repository
 
-Prosepect uses one monorepo containing:
+rakkio uses one monorepo containing:
 
 - Rust backend and shared crates
 - Vue frontend
@@ -265,7 +265,7 @@ Business logic must not depend directly on Render, GitHub Actions, Vercel, Neon,
 - Accessible headless Vue components
 - Generated TypeScript client from OpenAPI
 
-The frontend is a single-page application because Prosepect is an authenticated dashboard and does not require search-engine rendering.
+The frontend is a single-page application because rakkio is an authenticated dashboard and does not require search-engine rendering.
 
 ### 7.4 Storage responsibilities
 
@@ -322,7 +322,7 @@ Raw provider payloads are processed transiently and are not retained as duplicat
 
 ### 8.1 Official hosted beta
 
-- Domain: `prosepect.com`
+- Domain: `rakkio.com`
 - Frontend: Vercel
 - Backend: Axum container on Render Free
 - Scheduled work: GitHub Actions invokes an authenticated one-shot synchronization endpoint every 15 minutes without compiling Rust per run
@@ -338,8 +338,8 @@ The beta must not require an upfront payment authorization. Render may sleep the
 
 v1 officially supports Docker Compose on one machine. The deployment must include or configure:
 
-- Prosepect web frontend
-- Prosepect API
+- rakkio web frontend
+- rakkio API
 - Background worker
 - PostgreSQL
 - S3-compatible object storage
@@ -354,11 +354,11 @@ The managed and self-hosted editions expose the same product features. Future ma
 
 - Intended license: GNU Affero General Public License v3.0
 - Final license choice should receive legal review before public release.
-- Users may self-host Prosepect.
+- Users may self-host rakkio.
 - The official managed service will eventually charge for hosting convenience.
 - The first hosted beta has no payments.
 
-AGPL requires source availability for modified versions offered over a network. It does not prohibit third parties from selling hosted Prosepect services.
+AGPL requires source availability for modified versions offered over a network. It does not prohibit third parties from selling hosted rakkio services.
 
 ## 10. Observability and quality
 

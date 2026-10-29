@@ -26,9 +26,9 @@ services:
       - key: DATABASE_MAX_CONNECTIONS
         value: "5"
       - key: APP_URL
-        value: https://prosepect.com
+        value: https://rakkio.com
       - key: CORS_ALLOWED_ORIGIN
-        value: https://prosepect.com
+        value: https://rakkio.com,https://prosepect.com
       - key: ALLOW_INSECURE_DEV_AUTH
         value: "false"
       - key: INVITE_ONLY
@@ -38,9 +38,9 @@ services:
       - key: TRUST_PROXY_HEADERS
         value: "true"
       - key: GOOGLE_REDIRECT_URI
-        value: https://api.prosepect.com/api/v1/auth/google/callback
+        value: https://api.rakkio.com/api/v1/auth/google/callback
       - key: GOOGLE_CALENDAR_WEBHOOK_URL
-        value: https://api.prosepect.com/webhooks/google/calendar
+        value: https://api.rakkio.com/webhooks/google/calendar
       - key: S3_REGION
         value: auto
       - key: S3_PUBLIC_ENDPOINT

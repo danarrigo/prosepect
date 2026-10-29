@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest release on `main`. Prosepect has not yet committed to support windows for older releases.
+Security fixes are applied to the latest release on `main`. rakkio has not yet committed to support windows for older releases.
 
 ## Reporting a vulnerability
 

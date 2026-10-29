@@ -81,7 +81,7 @@ onBeforeUnmount(() => {
       target="_blank"
       rel="noopener noreferrer"
       class="mt-4 inline-block max-w-full rounded focus-visible:outline-2 focus-visible:outline-offset-4"
-      aria-label="Open prosepect service status and uptime history"
+      aria-label="Open rakkio service status and uptime history"
     >
       <img
         v-if="source"

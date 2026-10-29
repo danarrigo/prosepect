@@ -136,7 +136,7 @@ async function deleteAccount() {
             <option value="ask">Always ask</option>
             <option value="latest">Keep most recently edited</option>
             <option value="google">Prefer Google</option>
-            <option value="prosepect">Prefer Prosepect</option>
+            <option value="prosepect">Prefer rakkio</option>
           </select>
         </label>
       </div>
@@ -266,7 +266,7 @@ async function deleteAccount() {
     <section class="border-b border-slate-200 py-8 dark:border-slate-800">
       <h2 class="text-sm font-semibold">Legal and privacy</h2>
       <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
-        Review how Prosepect handles your data and the terms for using the hosted service.
+        Review how rakkio handles your data and the terms for using the hosted service.
       </p>
       <div class="mt-4 flex gap-4 text-sm">
         <RouterLink class="underline underline-offset-4" to="/privacy">Privacy Policy</RouterLink>

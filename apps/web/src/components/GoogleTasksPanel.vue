@@ -201,9 +201,8 @@ onBeforeUnmount(() => {
   >
     <h2 id="google-tasks-heading" class="text-sm font-semibold">Google Tasks</h2>
     <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-      Sync titles, deadline dates, and completion both ways. Precise deadline times stay in
-      prosepect; scheduled work blocks still use Calendar. Deleting in either app keeps the other
-      copy.
+      Sync titles, deadline dates, and completion both ways. Precise deadline times stay in rakkio;
+      scheduled work blocks still use Calendar. Deleting in either app keeps the other copy.
     </p>
     <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
       Google Tasks is optional. We use its data only for sync, not advertising or AI training.
@@ -253,7 +252,7 @@ onBeforeUnmount(() => {
             class="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium disabled:opacity-50 dark:border-slate-700"
             @click="createList"
           >
-            Create prosepect list
+            Create rakkio list
           </button>
         </div>
         <p class="text-sm text-slate-500 dark:text-slate-400">
@@ -307,7 +306,7 @@ onBeforeUnmount(() => {
       <h3 class="text-sm font-semibold">Unconfirmed task creation</h3>
       <p class="max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
         Google may already have created these tasks. Check again to find their existing copies
-        without creating duplicates. Or leave them unlinked to stop syncing them. Keep the prosepect
+        without creating duplicates. Or leave them unlinked to stop syncing them. Keep the rakkio
         reference in Google task notes so existing copies can still be recognized.
       </p>
       <button
@@ -350,7 +349,7 @@ onBeforeUnmount(() => {
         <h4 class="break-words text-sm font-semibold">{{ conflict.local.title }}</h4>
         <dl class="mt-3 grid min-w-0 gap-3 text-sm sm:grid-cols-2">
           <div class="min-w-0">
-            <dt class="font-medium">prosepect</dt>
+            <dt class="font-medium">rakkio</dt>
             <dd class="mt-1 break-words">{{ conflict.local.title }}</dd>
             <dd>Deadline date: {{ conflict.local.date ?? 'None' }}</dd>
             <dd>{{ conflict.local.completed ? 'Completed' : 'Not completed' }}</dd>
@@ -369,7 +368,7 @@ onBeforeUnmount(() => {
             :disabled="busy || !status.authorized || queuedChoices.has(conflict.id)"
             @click="resolveConflict(conflict, 'prosepect')"
           >
-            Keep prosepect edits
+            Keep rakkio edits
           </button>
           <button
             type="button"

@@ -1,17 +1,11 @@
-# Prosepect paragraph-p brand
+# rakkio brand
 
-Approved source: `design/paragraph-p-logo`, commit `2691782`, under
-`apps/web/public/brand/prototype/`. No prototype preview is shipped.
+The lowercase wordmark uses outlined Inter SemiBold glyphs for `rakkio`. The standalone icon and adaptive favicon use the same typeface's lowercase `r`.
 
-- `src/components/BrandLogo.vue` compiles the approved integrated wordmark inline
-  so `currentColor` follows the application theme, without runtime SVG injection.
-  Path data, transforms and viewBox are unchanged from `logo.svg`.
-- `icon.svg` is the approved standalone icon geometry (96 × 96), with a production
-  accessible name. It can be used as a source for provider-specific icon exports.
-- `/favicon.svg` uses the same standalone geometry and switches its foreground
-  with the browser's light/dark preference; it does not depend on page CSS.
+- `src/components/BrandLogo.vue` renders the wordmark inline with `currentColor`, a single accessible name, and no external font request or duplicate SVG IDs.
+- `icon.svg` provides a standalone 96 x 96 icon for provider-specific exports.
+- `/favicon.svg` uses the same icon geometry and adapts to the browser's light/dark preference.
 
-The outlined wordmark uses Inter by The Inter Project Authors
-(https://github.com/rsms/inter), licensed under SIL OFL 1.1.
-The complete original license is included in `Inter-OFL.txt`. No font download
-is needed to render the logo.
+The artwork is derived from Inter by The Inter Project Authors (https://github.com/rsms/inter), licensed under SIL OFL 1.1. The complete license is included in `Inter-OFL.txt`. Geometry and accessible naming are covered by `BrandLogo.test.ts`.
+
+The former paragraph-p artwork is retained in Git history, not shipped as the rakkio logo.

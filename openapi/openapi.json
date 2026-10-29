@@ -1,8 +1,8 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Prosepect API",
-    "description": "Personal productivity API for Prosepect",
+    "title": "rakkio API",
+    "description": "Personal productivity API for rakkio",
     "license": {
       "name": "AGPL-3.0-only",
       "identifier": "AGPL-3.0-only"

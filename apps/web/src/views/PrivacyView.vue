@@ -5,32 +5,32 @@ import PublicPageShell from '../components/PublicPageShell.vue'
 <template>
   <PublicPageShell
     title="Privacy Policy"
-    summary="How Prosepect collects, uses, stores, and protects personal data, including information received through Google APIs."
+    summary="How rakkio collects, uses, stores, and protects personal data, including information received through Google APIs."
     last-updated="October 4, 2026"
   >
     <section>
-      <h2>1. Who operates Prosepect</h2>
+      <h2>1. Who operates rakkio</h2>
       <p>
-        Prosepect is an independently operated productivity service based in Indonesia. The data
-        controller is Daniel, the independent operator of Prosepect. Questions and personal-data
+        rakkio is an independently operated productivity service based in Indonesia. The data
+        controller is Daniel, the independent operator of rakkio. Questions and personal-data
         requests can be sent to
         <a href="mailto:daniel.manurung.dev@gmail.com">daniel.manurung.dev@gmail.com</a>.
       </p>
     </section>
 
     <section>
-      <h2>2. Data Prosepect collects</h2>
+      <h2>2. Data rakkio collects</h2>
       <h3>Account information</h3>
       <p>
-        When you sign in with Google, Prosepect receives your Google account identifier, email
-        address, display name, and profile image. This information creates and secures your account.
-        Prosepect also records the accepted Terms and Privacy Policy versions, acceptance time, and
+        When you sign in with Google, rakkio receives your Google account identifier, email address,
+        display name, and profile image. This information creates and secures your account. rakkio
+        also records the accepted Terms and Privacy Policy versions, acceptance time, and
         confirmation that the account holder meets the stated age requirement.
       </p>
 
       <h3>Workspace content</h3>
       <p>
-        Prosepect stores content you choose to create or import, including tasks, projects, notes,
+        rakkio stores content you choose to create or import, including tasks, projects, notes,
         labels, schedules, reminders, daily plans, calendar events, recurrence information,
         attendees, locations, time zones, comments, and attachments. Content may include personal
         data about other people if you enter it.
@@ -38,14 +38,14 @@ import PublicPageShell from '../components/PublicPageShell.vue'
 
       <h3>Google Calendar data</h3>
       <p>
-        Connecting Google Calendar is optional. If you connect it, Prosepect receives your calendar
+        Connecting Google Calendar is optional. If you connect it, rakkio receives your calendar
         list and access roles and reads, creates, updates, and deletes calendar events as needed to
         provide the synchronization features you request. This can include event titles,
         descriptions, dates and times, recurrence, attendees, locations, time zones, calendar
         identifiers, and synchronization metadata.
       </p>
       <p>
-        Prosepect stores encrypted Google access and refresh credentials, provider identifiers, and
+        rakkio stores encrypted Google access and refresh credentials, provider identifiers, and
         synchronization state so synchronization can continue while you are not actively using the
         site. Raw Google API responses are processed transiently rather than retained as duplicate
         payloads.
@@ -54,41 +54,41 @@ import PublicPageShell from '../components/PublicPageShell.vue'
       <h3>Google Tasks data</h3>
       <p>
         Google Tasks is a separate, optional connection. Granting its permission does not start
-        copying tasks: you choose a list and enable synchronization in Settings. Prosepect reads
-        your task-list names and identifiers to let you select a list, then reads and synchronizes
-        task titles, calendar dates, and completion states in that list. It may create the prosepect
-        list and task copies you request. Exact deadline times and scheduled Calendar work blocks
-        remain separate.
+        copying tasks: you choose a list and enable synchronization in Settings. rakkio reads your
+        task-list names and identifiers to let you select a list, then reads and synchronizes task
+        titles, calendar dates, and completion states in that list. It may create the rakkio list
+        and task copies you request. Exact deadline times and scheduled Calendar work blocks remain
+        separate.
       </p>
       <p>
-        Prosepect stores task identifiers, synchronization baselines, recovery references, and
+        rakkio stores task identifiers, synchronization baselines, recovery references, and
         conflicting versions of these shared fields to avoid duplicate creation and unintended
-        overwrites. Google task notes are read transiently to recognize recovery references;
-        Prosepect adds a reference to newly created copies but does not synchronize your private
-        descriptions, notes, or attachments to Google Tasks. These data are used only for the
-        synchronization you enable, not advertising, sale, or AI training.
+        overwrites. Google task notes are read transiently to recognize recovery references; rakkio
+        adds a reference to newly created copies but does not synchronize your private descriptions,
+        notes, or attachments to Google Tasks. These data are used only for the synchronization you
+        enable, not advertising, sale, or AI training.
       </p>
 
       <h3>Technical and security information</h3>
       <p>
-        Prosepect and its hosting providers process request information needed to deliver and secure
+        rakkio and its hosting providers process request information needed to deliver and secure
         the service, such as network address, browser and device metadata, request route, response
-        status, timestamps, and diagnostic errors. Prosepect uses short-lived network identifiers
-        for rate limiting and records limited account activity for synchronization and security
+        status, timestamps, and diagnostic errors. rakkio uses short-lived network identifiers for
+        rate limiting and records limited account activity for synchronization and security
         visibility. It does not use third-party advertising or behavioral analytics.
       </p>
 
       <h3>Browser storage</h3>
       <p>
-        Prosepect uses a secure session cookie for authentication and browser storage for interface
+        rakkio uses a secure session cookie for authentication and browser storage for interface
         preferences, dismissed reminders, and development-only authentication when running a local
         development build.
       </p>
     </section>
 
     <section>
-      <h2>3. Why Prosepect processes data</h2>
-      <p>Prosepect processes personal data to:</p>
+      <h2>3. Why rakkio processes data</h2>
+      <p>rakkio processes personal data to:</p>
       <ul>
         <li>authenticate you and maintain your account;</li>
         <li>
@@ -112,9 +112,9 @@ import PublicPageShell from '../components/PublicPageShell.vue'
     <section>
       <h2>4. How Google user data is used</h2>
       <p>
-        Prosepect uses Google user data only to provide prominent, user-facing account, calendar,
-        and task functionality. Prosepect's use and transfer to any other app of information
-        received from Google APIs adheres to the
+        rakkio uses Google user data only to provide prominent, user-facing account, calendar, and
+        task functionality. rakkio's use and transfer to any other app of information received from
+        Google APIs adheres to the
         <a href="https://developers.google.com/terms/api-services-user-data-policy"
           >Google API Services User Data Policy</a
         >, including the Limited Use requirements.
@@ -135,24 +135,23 @@ import PublicPageShell from '../components/PublicPageShell.vue'
 
     <section>
       <h2>5. When data is shared</h2>
-      <p>Prosepect does not sell personal data. Data is shared only:</p>
+      <p>rakkio does not sell personal data. Data is shared only:</p>
       <ul>
         <li>
-          with Google when you sign in or direct Prosepect to synchronize calendar or task
-          information;
+          with Google when you sign in or direct rakkio to synchronize calendar or task information;
         </li>
         <li>
           with infrastructure providers that host or deliver the service: Vercel for the web
           application, Render for the API, Neon for PostgreSQL, and Cloudflare R2 for attachments;
         </li>
-        <li>when you direct Prosepect to place information on a shared Google calendar;</li>
+        <li>when you direct rakkio to place information on a shared Google calendar;</li>
         <li>when necessary to protect the service or investigate abuse; or</li>
         <li>when required by applicable law.</li>
       </ul>
       <p>
-        These providers may process data outside Indonesia. Prosepect uses provider terms and
+        These providers may process data outside Indonesia. rakkio uses provider terms and
         safeguards intended to protect data transferred across borders. Where applicable law
-        requires additional consent for a transfer, Prosepect will request it before that transfer.
+        requires additional consent for a transfer, rakkio will request it before that transfer.
       </p>
     </section>
 
@@ -175,13 +174,13 @@ import PublicPageShell from '../components/PublicPageShell.vue'
         Disconnect Google in Settings revokes the shared Google authorization once the queued
         disconnection completes. This stops both Calendar and Tasks access and removes stored Google
         credentials and Google-sourced calendar records. It does not delete your Google Tasks copies
-        or imported prosepect tasks. You can also revoke access from your Google Account. Retained
-        task mappings and recovery data are removed when your prosepect account is deleted.
+        or imported rakkio tasks. You can also revoke access from your Google Account. Retained task
+        mappings and recovery data are removed when your rakkio account is deleted.
       </p>
       <p>
-        You can delete your Prosepect account from Settings. Account deletion revokes stored Google
+        You can delete your rakkio account from Settings. Account deletion revokes stored Google
         authorization, removes attachment objects, and deletes your account and user-owned records
-        from active Prosepect systems. Limited security or provider records may remain until their
+        from active rakkio systems. Limited security or provider records may remain until their
         normal retention period expires or when retention is legally required.
       </p>
     </section>
@@ -198,7 +197,7 @@ import PublicPageShell from '../components/PublicPageShell.vue'
         <li>raise a complaint with the competent personal-data protection authority.</li>
       </ul>
       <p>
-        Prosepect provides JSON, CSV, Markdown, and iCalendar exports in Settings. For requests not
+        rakkio provides JSON, CSV, Markdown, and iCalendar exports in Settings. For requests not
         available in the interface, email the address above from your account email. Identity may
         need to be verified before a request is completed.
       </p>
@@ -207,18 +206,18 @@ import PublicPageShell from '../components/PublicPageShell.vue'
     <section>
       <h2>8. Security</h2>
       <p>
-        Prosepect uses HTTPS, tenant-scoped database access, opaque hashed sessions, CSRF
-        protection, encrypted Google credentials, private object storage, signed download links,
-        rate limiting, and restricted production configuration. No service can guarantee absolute
-        security. Please report suspected security problems privately using the contact address
-        above rather than publishing personal data in a public issue.
+        rakkio uses HTTPS, tenant-scoped database access, opaque hashed sessions, CSRF protection,
+        encrypted Google credentials, private object storage, signed download links, rate limiting,
+        and restricted production configuration. No service can guarantee absolute security. Please
+        report suspected security problems privately using the contact address above rather than
+        publishing personal data in a public issue.
       </p>
     </section>
 
     <section>
       <h2>9. Children</h2>
       <p>
-        Prosepect is not directed to children under 18 and does not knowingly collect their personal
+        rakkio is not directed to children under 18 and does not knowingly collect their personal
         data. If you believe a child has provided personal data, contact the operator so it can be
         investigated and removed where required.
       </p>

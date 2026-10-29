@@ -91,7 +91,14 @@ impl Config {
 
         let cors_allowed_origin =
             env::var("CORS_ALLOWED_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".to_owned());
-        let app_url = env::var("APP_URL").unwrap_or_else(|_| cors_allowed_origin.clone());
+        let app_url = env::var("APP_URL").unwrap_or_else(|_| {
+            cors_allowed_origin
+                .split(',')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_owned()
+        });
         let allow_insecure_dev_auth = env::var("ALLOW_INSECURE_DEV_AUTH")
             .unwrap_or_else(|_| "true".to_owned())
             .parse()

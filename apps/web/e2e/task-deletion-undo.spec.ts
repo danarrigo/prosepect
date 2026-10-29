@@ -419,7 +419,7 @@ test('Google conflict controls use capabilities and keep authoritative 409 error
   })
   await page.goto('/settings')
   await expect(page.getByRole('button', { name: 'Use Google', exact: true })).toHaveCount(1)
-  await expect(page.getByRole('button', { name: 'Use Prosepect', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Use rakkio', exact: true })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Use latest', exact: true })).toHaveCount(1)
   await expect(page.getByText(/The task stays deleted. Keep Google/)).toBeVisible()
   await page.getByRole('button', { name: 'Keep Google', exact: true }).click()

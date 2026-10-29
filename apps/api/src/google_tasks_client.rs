@@ -300,7 +300,7 @@ impl GoogleTasksClient {
     }
 
     pub async fn create_list(&self, token: &str) -> Result<GoogleTaskList> {
-        let body = serde_json::json!({"title":"prosepect"});
+        let body = serde_json::json!({"title":"rakkio"});
         let bytes = self
             .request(
                 token,

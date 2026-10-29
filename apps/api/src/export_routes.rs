@@ -26,7 +26,7 @@ pub async fn export_json(
     download(
         state.store.export_json(user_id).await?,
         "application/json; charset=utf-8",
-        "prosepect-export.json",
+        "rakkio-export.json",
     )
 }
 
@@ -44,7 +44,7 @@ pub async fn export_tasks_csv(
     download(
         state.store.export_tasks_csv(user_id).await?,
         "text/csv; charset=utf-8",
-        "prosepect-tasks.csv",
+        "rakkio-tasks.csv",
     )
 }
 
@@ -62,7 +62,7 @@ pub async fn export_notes_markdown(
     download(
         state.store.export_notes_markdown(user_id).await?,
         "text/markdown; charset=utf-8",
-        "prosepect-notes.md",
+        "rakkio-notes.md",
     )
 }
 
@@ -80,7 +80,7 @@ pub async fn export_calendars_ics(
     download(
         state.store.export_calendars_ics(user_id).await?,
         "text/calendar; charset=utf-8",
-        "prosepect-calendars.ics",
+        "rakkio-calendars.ics",
     )
 }
 
